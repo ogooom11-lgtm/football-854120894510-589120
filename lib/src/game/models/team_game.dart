@@ -1,0 +1,265 @@
+import 'dart:math' as math;
+import 'dart:ui';
+
+import '../config/game_constants.dart';
+import '../enums/player_role.dart';
+import '../enums/team_id.dart';
+import '../math/vec2.dart';
+import 'formation.dart';
+import 'jersey_kit.dart';
+import 'match_event.dart';
+import 'player_game.dart';
+import 'player_profile.dart';
+import 'team_setup.dart';
+
+class TeamGame {
+  TeamGame({
+    required this.id,
+    required this.name,
+    required this.side,
+    required this.color,
+    required this.formation,
+    required this.players,
+    required this.bench,
+    this.storageTeamId,
+    this.rating = 50,
+  });
+
+  final TeamId id;
+  final String? storageTeamId;
+  final double rating;
+  String name;
+  TeamSide side;
+  Color color;
+  JerseyKit? jerseyKit;
+  JerseyKit? goalkeeperKit;
+  FormationType formation;
+  List<PlayerGame> players;
+  final List<PlayerGame> bench;
+  final List<PlayerGame> substitutedOut = [];
+  int score = 0;
+  int substitutionsUsed = 0;
+  final List<GoalEvent> goals = [];
+
+  factory TeamGame.fromSetup({
+    required TeamSetup setup,
+    required TeamSide side,
+    required Color color,
+    math.Random? random,
+  }) {
+    final rng = random ?? math.Random();
+    final plan = formationPlan(setup.formation);
+    final selected = [
+      ...setup.players.where((profile) => !profile.isInjured),
+    ];
+    final selectedById = {for (final profile in selected) profile.id: profile};
+    final starterProfiles = <PlayerProfile>[
+      for (final id in setup.starterPlayerIds)
+        if (selectedById[id] != null) selectedById[id]!,
+    ];
+    for (final profile in selected) {
+      if (starterProfiles.length >= 11) {
+        break;
+      }
+      if (!starterProfiles.contains(profile)) {
+        starterProfiles.add(profile);
+      }
+    }
+    final starters = starterProfiles.take(11).toList(growable: true);
+    final benchProfiles = selected
+        .where((profile) => !starters.contains(profile))
+        .toList(growable: true);
+    final keeperProfile =
+        _takeProfileOrNull(starters, (profile) => profile.isGoalkeeper) ??
+        _takeProfileOrNull(benchProfiles, (profile) => profile.isGoalkeeper) ??
+        PlayerProfile.generated(
+          name: '${setup.name} Kaleci',
+          isGoalkeeper: true,
+          random: rng,
+        );
+
+    final players = <PlayerGame>[];
+    for (final spot in plan.spots) {
+      final profile = spot.role.isGoalkeeper
+          ? keeperProfile
+          : _takeProfileOrNull(
+                  starters,
+                  (profile) =>
+                      !profile.isGoalkeeper &&
+                      setup.roleByPlayerId[profile.id] == spot.role,
+                ) ??
+                _takeProfileOrNull(
+                  starters,
+                  (profile) => !profile.isGoalkeeper,
+                ) ??
+                PlayerProfile.generated(
+                  name: '${setup.name} ${spot.number}',
+                  isGoalkeeper: false,
+                  random: rng,
+                );
+      players.add(
+        PlayerGame(
+          profile: profile,
+          teamId: setup.id,
+          role: spot.role,
+          number: profile.number ?? spot.number,
+          position: pitchPoint(spot.x, spot.y, side),
+        )..stamina = profile.fitness,
+      );
+    }
+    final bench = <PlayerGame>[];
+    for (var i = 0; i < benchProfiles.length; i++) {
+      final profile = benchProfiles[i];
+      bench.add(
+        PlayerGame(
+          profile: profile,
+          teamId: setup.id,
+          role: profile.isGoalkeeper
+              ? PlayerRole.goalkeeper
+              : setup.roleByPlayerId[profile.id] ?? PlayerRole.midfieldLeft,
+          number: profile.number ?? 20 + i,
+          position: pitchPoint(0.5, 0.5, side),
+        )..stamina = profile.fitness,
+      );
+    }
+    final team =
+        TeamGame(
+            id: setup.id,
+            storageTeamId: setup.storageTeamId,
+            rating: setup.rating,
+            name: setup.name.trim().isEmpty
+                ? setup.id.turkishName
+                : setup.name.trim(),
+            side: side,
+            color: color,
+            formation: setup.formation,
+            players: players,
+            bench: bench,
+          )
+          ..jerseyKit = setup.jerseyKit
+          ..goalkeeperKit = setup.goalkeeperKit;
+    team.resetDirections();
+    return team;
+  }
+
+  static PlayerProfile? _takeProfileOrNull(
+    List<PlayerProfile> profiles,
+    bool Function(PlayerProfile profile) test,
+  ) {
+    final index = profiles.indexWhere(test);
+    if (index == -1) {
+      return null;
+    }
+    return profiles.removeAt(index);
+  }
+
+  static Vec2 pitchPoint(double x, double y, TeamSide side) {
+    final mirroredX = side == TeamSide.right ? 1 - x : x;
+    return Vec2(
+      GameConstants.leftBound + GameConstants.pitchWidth * mirroredX,
+      GameConstants.topBound + GameConstants.pitchHeight * y,
+    );
+  }
+
+  int get attackDirection => side == TeamSide.left ? 1 : -1;
+
+  PlayerGame get goalkeeper =>
+      players.firstWhere((player) => player.role == PlayerRole.goalkeeper);
+
+  PlayerGame? playerById(String id) {
+    for (final player in players) {
+      if (player.id == id) {
+        return player;
+      }
+    }
+    return null;
+  }
+
+  PlayerGame closestTo(Vec2 point, {bool includeGoalkeeper = false}) {
+    final candidates = includeGoalkeeper
+        ? players
+        : players.where((player) => !player.isGoalkeeper);
+    return candidates.reduce(
+      (a, b) => a.pos.distanceTo(point) <= b.pos.distanceTo(point) ? a : b,
+    );
+  }
+
+  void resetPositions() {
+    final plan = formationPlan(formation);
+    for (var i = 0; i < players.length; i++) {
+      final spot = plan.spots[i];
+      players[i]
+        ..role = spot.role
+        ..number = spot.number
+        ..homePos = pitchPoint(spot.x, spot.y, side)
+        ..pos.setFrom(pitchPoint(spot.x, spot.y, side))
+        ..aiCooldown = 0
+        ..manualOverride = 0
+        ..jumpBoostMeters = 0
+        ..keeperGroundTimer = 0
+        ..keeperDiveCooldown = 0
+        ..keeperState = 'hazir';
+    }
+    resetDirections();
+  }
+
+  void updateHomePositionsOnly() {
+    final plan = formationPlan(formation);
+    for (var i = 0; i < players.length; i++) {
+      final spot = plan.spots[i];
+      players[i]
+        ..role = spot.role
+        ..number = spot.number
+        ..homePos = pitchPoint(spot.x, spot.y, side);
+    }
+    resetDirections();
+  }
+
+  void switchSide() {
+    side = side.opposite;
+    updateHomePositionsOnly();
+  }
+
+  void resetDirections() {
+    for (final player in players) {
+      player.lastDirection = Vec2(attackDirection.toDouble(), 0);
+      player.controlled = false;
+    }
+  }
+
+  bool substitute(int outIndex, int benchIndex) {
+    if (substitutionsUsed >= 5 ||
+        outIndex < 0 ||
+        outIndex >= players.length ||
+        benchIndex < 0 ||
+        benchIndex >= bench.length) {
+      return false;
+    }
+    final outgoing = players[outIndex];
+    final incoming = bench[benchIndex];
+    if (outgoing.isGoalkeeper != incoming.profile.isGoalkeeper) {
+      return false;
+    }
+    final role = outgoing.role;
+    final number = incoming.profile.number ?? outgoing.number;
+    final position = outgoing.pos.copy();
+    final home = outgoing.homePos.copy();
+    final replacement =
+        PlayerGame(
+            profile: incoming.profile,
+            teamId: id,
+            role: role,
+            number: number,
+            position: position,
+          )
+          ..homePos = home
+          ..lastDirection = Vec2(attackDirection.toDouble(), 0)
+          ..stamina = 1.0;
+    players[outIndex] = replacement;
+    substitutedOut.add(outgoing);
+    bench.removeAt(benchIndex);
+    substitutionsUsed += 1;
+    resetDirections();
+    return true;
+  }
+}
