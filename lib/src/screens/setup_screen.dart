@@ -3340,16 +3340,17 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
           );
           if (player == null) return content;
+          final assignedPlayer = player;
           return Draggable<PlayerProfile>(
-            data: player,
+            data: assignedPlayer,
             feedback: Material(
               color: Colors.transparent,
-              child: _dragPlayerCard(player),
+              child: _dragPlayerCard(assignedPlayer),
             ),
             childWhenDragging: Opacity(opacity: 0.28, child: content),
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: () => onSelected(player.id),
+              onTap: () => onSelected(assignedPlayer.id),
               child: content,
             ),
           );
