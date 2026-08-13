@@ -1034,6 +1034,15 @@ class MatchEngine {
         : type == KickType.shoot
         ? 0.22
         : 0.24;
+    if (player.isGoalkeeper) {
+      // Do not allow the keeper to chase and immediately collect his own
+      // distribution. The lock ends early in practice as soon as another
+      // player touches the ball because lastTouch then changes.
+      player.keeperRehandleCooldown = math.max(
+        player.keeperRehandleCooldown,
+        1.35,
+      );
+    }
     player.lastDirection = adjustedDirection.normalized(
       Vec2(team.attackDirection.toDouble(), 0),
     );
@@ -1198,6 +1207,10 @@ class MatchEngine {
         0,
         player.keeperParryCooldown - dt,
       );
+      player.keeperRehandleCooldown = math.max(
+        0,
+        player.keeperRehandleCooldown - dt,
+      );
       player.jumpAnimationTimer = math.max(0, player.jumpAnimationTimer - dt);
       if (player.isGoalkeeper) {
         if (player.keeperGroundTimer <= 0) {
@@ -1320,7 +1333,10 @@ class MatchEngine {
     }
 
     for (final player in sorted) {
-      if (player.isGoalkeeper && player.keeperParryCooldown > 0) {
+      if (player.isGoalkeeper &&
+          (player.keeperParryCooldown > 0 ||
+              (player.keeperRehandleCooldown > 0 &&
+                  ball.lastTouch == player))) {
         continue;
       }
       if (player.pos.distanceTo(ball.pos) >

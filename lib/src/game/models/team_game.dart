@@ -213,6 +213,8 @@ class TeamGame {
         ..jumpBoostMeters = 0
         ..keeperGroundTimer = 0
         ..keeperDiveCooldown = 0
+        ..keeperParryCooldown = 0
+        ..keeperRehandleCooldown = 0
         ..keeperState = 'hazir';
     }
     resetDirections();

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
+import 'package:new_football/src/game/logic/match_engine.dart';
 import 'package:new_football/src/game/math/vec2.dart';
 import 'package:new_football/src/game/models/formation.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
@@ -89,6 +90,30 @@ void main() {
 
       keeper.keeperGroundTimer = 0;
       expect(keeper.speed, standingSpeed);
+    });
+
+    test('keeper cannot distribute while down or recollect his own release', () {
+      final setup = LeagueFactory.createDefaultSeason().createCurrentMatchSetup();
+      expect(setup, isNotNull);
+      final engine = MatchEngine(setup!);
+      final keeper = engine.blueTeam.goalkeeper;
+      engine.ball.attachTo(keeper);
+
+      keeper.keeperGroundTimer = 1.2;
+      expect(
+        engine.distributeFromGoalkeeper(keeper, high: false),
+        isFalse,
+      );
+      expect(engine.ball.owner, keeper);
+
+      keeper.keeperGroundTimer = 0;
+      expect(
+        engine.distributeFromGoalkeeper(keeper, high: false),
+        isTrue,
+      );
+      expect(engine.ball.owner, isNull);
+      expect(engine.ball.lastTouch, keeper);
+      expect(keeper.keeperRehandleCooldown, greaterThanOrEqualTo(1.35));
     });
   });
 

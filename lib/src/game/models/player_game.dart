@@ -42,6 +42,7 @@ class PlayerGame {
   double keeperGroundTimer = 0;
   double keeperDiveCooldown = 0;
   double keeperParryCooldown = 0;
+  double keeperRehandleCooldown = 0;
 
   // Per-match stats
   int matchGoals = 0;

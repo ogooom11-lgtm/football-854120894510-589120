@@ -36,9 +36,11 @@ class GoalkeeperAi {
       final waitingForHumanGoalKick =
           engine.isGoalKickPendingFor(team) &&
           engine.isRestartWaitingForHuman(team);
-      // A human may take the goal kick manually. If no input arrives, the
-      // keeper must still release the ball instead of holding it forever.
-      if (!waitingForHumanGoalKick || keeper.catchTimer >= 3.2) {
+      final humanControlled = !engine.isTeamAiControlled(team.id);
+      final humanDecisionSeconds = waitingForHumanGoalKick ? 3.2 : 2.8;
+      // Human teams get a realistic window to choose a ground or high
+      // distribution. The automatic fallback still prevents time-wasting.
+      if (!humanControlled || keeper.catchTimer >= humanDecisionSeconds) {
         _distribute(keeper, team, engine);
       }
       return;
@@ -58,6 +60,8 @@ class GoalkeeperAi {
     final goalBottom =
         GameConstants.virtualHeight / 2 + GameConstants.goalPixelHeight / 2;
     final ballInBox = engine.isInPenaltyBox(ball.pos, team.id);
+    final cannotRehandleOwnRelease =
+        keeper.keeperRehandleCooldown > 0 && ball.lastTouch == keeper;
 
     final yFromBall =
         GameConstants.virtualHeight / 2 +
@@ -108,6 +112,7 @@ class GoalkeeperAi {
               150;
       final looseBallToClaim =
           ball.owner == null &&
+          !cannotRehandleOwnRelease &&
           ballInBox &&
           keeper.pos.distanceTo(ball.pos) <
               (82 + keeperSkill * 42) * difficulty.aggressionFactor;
@@ -140,12 +145,12 @@ class GoalkeeperAi {
       }
     }
 
+    // Catch only at genuine body/arm contact. Skill changes anticipation and
+    // success probability, not the physical length of the keeper's arms.
     final handlingReach =
-        keeper.radius +
-        GameConstants.ballRadius +
-        10 +
-        keeperSkill * 22 * difficulty.anticipationFactor;
-    if (keeper.keeperState != 'yerde' &&
+        keeper.radius + GameConstants.ballRadius + 4 + keeperSkill * 8;
+    if (!cannotRehandleOwnRelease &&
+        keeper.keeperState != 'yerde' &&
         keeper.keeperParryCooldown <= 0 &&
         keeper.pos.distanceTo(ball.pos) < handlingReach &&
         ball.heightMeters <= keeper.bodyReachMeters) {
