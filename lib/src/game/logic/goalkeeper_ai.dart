@@ -73,21 +73,34 @@ class GoalkeeperAi {
           ? ball.pos.y + (goalX - ball.pos.x) * (ball.vel.y / ball.vel.x)
           : ball.pos.y;
       final saveY = clampDoubleValue(projectedY, goalTop + 10, goalBottom - 10);
+      final lateralGap = (saveY - keeper.pos.y).abs();
+      final distanceToBall = keeper.pos.distanceTo(ball.pos);
+      final centralStandingSave =
+          lateralGap <= 10 + keeperSkill * 11 &&
+          ball.heightMeters <= keeper.profile.heightMeters + 0.22;
+      final needsDive = !centralStandingSave;
       basePos = Vec2(goalX + team.attackDirection * 8, saveY);
-      if (keeper.keeperDiveCooldown <= 0 && keeper.keeperGroundTimer <= 0) {
+      if (needsDive &&
+          keeper.keeperDiveCooldown <= 0 &&
+          keeper.keeperGroundTimer <= 0) {
         keeper
           ..keeperState = 'atlayis'
-          ..jumpBoostMeters = 0.12 + keeperSkill * 0.08
+          ..jumpBoostMeters = 0.10 + keeperSkill * 0.08
           ..jumpAnimationTimer = 0.62
-          ..keeperGroundTimer = 1.08 - keeperSkill * 0.22
-          ..keeperDiveCooldown = 1.42 - keeperSkill * 0.18;
+          ..keeperGroundTimer = 0.94 - keeperSkill * 0.18
+          ..keeperDiveCooldown = 1.25 - keeperSkill * 0.16;
+      } else if (centralStandingSave && keeper.keeperGroundTimer <= 0) {
+        keeper
+          ..keeperState = distanceToBall < 42 ? 'hazir' : 'yuruyor'
+          ..jumpBoostMeters = 0
+          ..jumpAnimationTimer = 0;
       }
       engine.moveTowards(
         keeper,
         basePos,
-        keeper.keeperGroundTimer > 0
-            ? 0.78 + keeperSkill * 0.18
-            : 0.66 + keeperSkill * 0.24,
+        needsDive
+            ? 0.80 + keeperSkill * 0.20
+            : 0.48 + keeperSkill * 0.16,
         dt,
       );
     } else {
@@ -138,27 +151,59 @@ class GoalkeeperAi {
         GameConstants.ballRadius +
         10 +
         keeperSkill * 22 * difficulty.anticipationFactor;
-    if (keeper.pos.distanceTo(ball.pos) < handlingReach &&
+    final contactDistance = keeper.pos.distanceTo(ball.pos);
+    if (contactDistance < handlingReach &&
         ball.heightMeters <= keeper.bodyReachMeters) {
       final isShot = ball.lastKickType == KickType.shoot;
-      final speedPenalty = math.max(0.0, ball.vel.length - 6.5) * 0.025;
-      final catchChance = (isShot
-              ? 0.10 + keeperSkill * 0.66 - speedPenalty
-              : (ball.vel.length < 6.8 ? 0.40 : 0.24) +
-                    keeperSkill * 0.48)
-          .clamp(0.08, 0.92) *
-          difficulty.anticipationFactor;
-      if (random.nextDouble() < catchChance.clamp(0.06, 0.94)) {
+      final lateralContact = (keeper.pos.y - ball.pos.y).abs();
+      final centralContact = lateralContact <= 11 + keeperSkill * 11;
+      final closeControl =
+          contactDistance <= 21 + keeperSkill * 11 &&
+          centralContact &&
+          ball.heightMeters <= keeper.profile.heightMeters + 0.24;
+      final speedPenalty = math.max(0.0, ball.vel.length - 6.8) * 0.025;
+      var catchChance = isShot
+          ? 0.14 +
+                keeperSkill * 0.58 -
+                speedPenalty +
+                (centralContact ? 0.10 : 0) +
+                (closeControl ? 0.24 + keeperSkill * 0.08 : 0) -
+                (keeper.keeperState == 'atlayis' ? 0.10 : 0)
+          : (ball.vel.length < 6.8 ? 0.44 : 0.26) + keeperSkill * 0.48;
+      catchChance = (catchChance * difficulty.anticipationFactor)
+          .clamp(0.08, 0.97)
+          .toDouble();
+      if (closeControl) {
+        catchChance = math.max(
+          catchChance,
+          0.58 + keeperSkill * 0.40,
+        ).clamp(0.18, 0.97).toDouble();
+      }
+      if (random.nextDouble() < catchChance) {
         if (isShot) {
           keeper.profile.saves += 1;
           keeper.matchSaves += 1;
         }
         ball.attachTo(keeper);
-        keeper.catchTimer = 0;
-        keeper.keeperState = 'top elde';
+        keeper
+          ..catchTimer = 0
+          ..keeperState = 'top elde';
+        if (closeControl) {
+          keeper
+            ..keeperGroundTimer = 0
+            ..jumpBoostMeters = 0
+            ..jumpAnimationTimer = 0;
+        }
       } else {
         if (isShot) {
           engine.parryFromGoalkeeper(keeper);
+          if (closeControl) {
+            keeper
+              ..keeperState = 'hazir'
+              ..keeperGroundTimer = 0
+              ..jumpBoostMeters = 0
+              ..jumpAnimationTimer = 0;
+          }
           return;
         }
         final clearY = keeper.pos.y > GameConstants.virtualHeight / 2

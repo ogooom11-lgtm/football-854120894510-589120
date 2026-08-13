@@ -1639,6 +1639,33 @@ class MatchEngine {
       return false;
     }
     final speedPenalty = math.max(0.0, ball.vel.length - 7.0) * 0.035;
+    final centralBall =
+        lateralGap <= 10 + skill * 9 &&
+        ball.heightMeters <= keeper.profile.heightMeters + 0.22;
+    ball.pos.x = crossedLeft
+        ? GameConstants.leftBound + GameConstants.ballRadius + 2
+        : GameConstants.rightBound - GameConstants.ballRadius - 2;
+
+    if (centralBall) {
+      final catchChance = (0.38 + skill * 0.58 - speedPenalty)
+          .clamp(0.18, 0.96)
+          .toDouble();
+      if (random.nextDouble() <= catchChance) {
+        keeper.pos.y += (ball.pos.y - keeper.pos.y) * 0.68;
+        keeper.profile.saves += 1;
+        keeper.matchSaves += 1;
+        ball.attachTo(keeper);
+        keeper
+          ..keeperState = 'top elde'
+          ..catchTimer = 0
+          ..keeperGroundTimer = 0
+          ..jumpBoostMeters = 0
+          ..jumpAnimationTimer = 0;
+        return true;
+      }
+      return false;
+    }
+
     final saveChance = (0.05 + skill * 0.80 - speedPenalty)
         .clamp(0.04, 0.88)
         .toDouble();
@@ -1653,9 +1680,6 @@ class MatchEngine {
       ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.14)
       ..jumpAnimationTimer = 0.62
       ..keeperGroundTimer = math.max(keeper.keeperGroundTimer, 0.42);
-    ball.pos.x = crossedLeft
-        ? GameConstants.leftBound + GameConstants.ballRadius + 2
-        : GameConstants.rightBound - GameConstants.ballRadius - 2;
     parryFromGoalkeeper(keeper);
     return true;
   }
