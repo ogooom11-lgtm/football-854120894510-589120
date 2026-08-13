@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../game/enums/ai_play_style.dart';
+import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
+import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
@@ -28,7 +30,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _load();
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _adminShortcutFocus.requestFocus(),
@@ -79,6 +81,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
             Tab(text: 'Takimlarim'),
             Tab(text: 'Oyuncularim'),
             Tab(text: 'Tum Takimlar'),
+            Tab(text: 'Mac Arsivi'),
           ],
         ),
       ),
@@ -102,6 +105,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                 _myTeamsTab(data),
                 _myPlayersTab(data),
                 _allTeamsTab(data),
+                _matchHistoryTab(data),
               ],
             ),
           ),
@@ -845,4 +849,415 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       },
     );
   }
+
+  Widget _matchHistoryTab(SavedGameData data) {
+    final query = _searchQuery.trim().toLowerCase();
+    final matches = data.matchArchive.where((match) {
+      if (query.isEmpty) return true;
+      return match.blueName.toLowerCase().contains(query) ||
+          match.redName.toLowerCase().contains(query) ||
+          '${match.blueScore}-${match.redScore}'.contains(query) ||
+          _archiveDate(match.timestamp).toLowerCase().contains(query) ||
+          match.goals.any(
+            (goal) => goal.scorerName.toLowerCase().contains(query),
+          ) ||
+          match.playerStats.any(
+            (player) => player.name.toLowerCase().contains(query),
+          );
+    }).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    if (matches.isEmpty) {
+      return const Center(
+        child: Text(
+          'Arama ile eslesen kayitli mac bulunamadi.',
+          style: TextStyle(color: Colors.white60),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final match = matches[index];
+        final scorers = match.goals
+            .map(
+              (goal) =>
+                  '${goal.scorerName} ${goal.minute}\'${goal.isPenalty ? ' (P)' : ''}${goal.assisterName == null ? '' : ' (A: ${goal.assisterName})'}',
+            )
+            .join(' • ');
+        return Card(
+          color: const Color(0xff0d1a16),
+          margin: const EdgeInsets.only(bottom: 9),
+          child: Padding(
+            padding: const EdgeInsets.all(13),
+            child: Row(
+              children: [
+                Container(
+                  width: 72,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xffffd34d).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        '${match.blueScore} - ${match.redScore}',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xffffd34d),
+                        ),
+                      ),
+                      Text(
+                        _archiveDate(match.timestamp),
+                        style: const TextStyle(
+                          fontSize: 9,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${match.blueName}  —  ${match.redName}',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        scorers.isEmpty ? 'Gol kaydi yok' : scorers,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Topla oynama %${match.bluePossessionPercent.round()}-%${match.redPossessionPercent.round()}  •  Sut ${match.blueShots}-${match.redShots}  •  Oyuncu kaydi ${match.playerStats.length}',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: () => _showArchivedMatch(match),
+                  icon: const Icon(Icons.analytics_outlined, size: 18),
+                  label: const Text('Detaylar'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _archiveDate(int timestamp) {
+    if (timestamp <= 0) return 'Eski kayit';
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(date.day)}.${two(date.month)}.${date.year} ${two(date.hour)}:${two(date.minute)}';
+  }
+
+  Future<void> _showArchivedMatch(FinishedMatchSummary match) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xff08140f),
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 1040,
+          height: 720,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xff103d2d), Color(0xff111b22)],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.sports_soccer,
+                      color: Color(0xffffd34d),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${match.blueName}  ${match.blueScore} - ${match.redScore}  ${match.redName}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    Text(
+                      _archiveDate(match.timestamp),
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              if (match.goals.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                  color: Colors.white.withValues(alpha: 0.035),
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      for (final goal in match.goals)
+                        Chip(
+                          avatar: Icon(
+                            Icons.sports_soccer,
+                            size: 16,
+                            color: goal.teamId == TeamId.blue
+                                ? Colors.lightBlueAccent
+                                : Colors.redAccent,
+                          ),
+                          label: Text(
+                            '${goal.minute}\' ${goal.scorerName}${goal.isPenalty ? ' (Penalti)' : ''}${goal.assisterName == null ? '' : ' • Asist: ${goal.assisterName}'}',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: _archiveTeamPanel(
+                        match,
+                        TeamId.blue,
+                        match.blueName,
+                        Colors.lightBlueAccent,
+                      ),
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: _archiveTeamPanel(
+                        match,
+                        TeamId.red,
+                        match.redName,
+                        Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _archiveTeamPanel(
+    FinishedMatchSummary match,
+    TeamId teamId,
+    String teamName,
+    Color color,
+  ) {
+    final players = match.playerStats
+        .where((player) => player.teamId == teamId)
+        .toList()
+      ..sort((a, b) => b.rating.compareTo(a.rating));
+    final isBlue = teamId == TeamId.blue;
+    final passes = isBlue ? match.bluePasses : match.redPasses;
+    final successful = isBlue
+        ? match.blueSuccessfulPasses
+        : match.redSuccessfulPasses;
+    final possession = isBlue
+        ? match.bluePossessionPercent
+        : match.redPossessionPercent;
+    final shots = isBlue ? match.blueShots : match.redShots;
+    final tackles = players.fold<int>(0, (sum, player) => sum + player.tackles);
+    final saves = players.fold<int>(0, (sum, player) => sum + player.saves);
+    final fouls = players.fold<int>(
+      0,
+      (sum, player) => sum + player.foulsCommitted,
+    );
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Text(
+                teamName,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 9,
+                runSpacing: 5,
+                children: [
+                  _archiveTotal('Topla oynama', '%${possession.round()}'),
+                  _archiveTotal(
+                    'Pas',
+                    '$successful/$passes (%${passes == 0 ? 0 : successful * 100 ~/ passes})',
+                  ),
+                  _archiveTotal('Sut', '$shots'),
+                  _archiveTotal('Mudahale', '$tackles'),
+                  _archiveTotal('Kurtaris', '$saves'),
+                  _archiveTotal('Faul', '$fouls'),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: players.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Bu eski kayitta oyuncu detayi yok.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
+                  itemCount: players.length,
+                  itemBuilder: (context, index) {
+                    final player = players[index];
+                    return ExpansionTile(
+                      dense: true,
+                      tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                      leading: CircleAvatar(
+                        radius: 17,
+                        backgroundColor: color.withValues(alpha: 0.16),
+                        child: Text(
+                          '${player.number}',
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        player.name,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      subtitle: Text(
+                        '${player.role} • ${player.minutes} dk • ${player.goals} gol • ${player.assists} asist',
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          player.rating.toStringAsFixed(1),
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              _archiveTotal('Gol', '${player.goals}'),
+                              _archiveTotal('Asist', '${player.assists}'),
+                              _archiveTotal(
+                                'Pas',
+                                '${player.successfulPasses}/${player.passes}',
+                              ),
+                              _archiveTotal(
+                                'Dripling',
+                                '${player.successfulDribbles}/${player.dribbles}',
+                              ),
+                              _archiveTotal('Mudahale', '${player.tackles}'),
+                              _archiveTotal(
+                                'Sut',
+                                '${player.shotsOnTarget}/${player.shots}',
+                              ),
+                              _archiveTotal(
+                                'Kacan firsat',
+                                '${player.missedChances}',
+                              ),
+                              _archiveTotal('Uzaklastirma', '${player.clearances}'),
+                              _archiveTotal('Kurtaris', '${player.saves}'),
+                              _archiveTotal(
+                                'Yaptigi faul',
+                                '${player.foulsCommitted}',
+                              ),
+                              _archiveTotal(
+                                'Aldigi faul',
+                                '${player.foulsReceived}',
+                              ),
+                              _archiveTotal('Sari', '${player.yellowCards}'),
+                              _archiveTotal('Kirmizi', '${player.redCards}'),
+                              _archiveTotal(
+                                'Enerji',
+                                '%${player.staminaPercent}',
+                              ),
+                              _archiveTotal(
+                                'Sakat',
+                                player.injured ? 'Evet' : 'Hayir',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _archiveTotal(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(fontSize: 10, color: Colors.white70),
+      ),
+    );
+  }
+
 }

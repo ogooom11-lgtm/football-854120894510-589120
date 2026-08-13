@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../game/enums/ai_play_style.dart';
+import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
 import '../game/models/league.dart';
 import '../game/models/match_event.dart';
@@ -47,9 +48,14 @@ class _LeagueScreenState extends State<LeagueScreen>
     });
   }
 
-  Future<void> _saveLeague() async {
+  Future<void> _saveLeague({
+    Iterable<FinishedMatchSummary> archivedMatches = const [],
+  }) async {
     final data = await _storage.load();
     data.leagueSeason = _season;
+    for (final match in archivedMatches) {
+      data.archiveMatch(match);
+    }
     await _storage.save(data);
   }
 
@@ -75,20 +81,20 @@ class _LeagueScreenState extends State<LeagueScreen>
       final blueScore = result.blueScore;
       final redScore = result.redScore;
 
-      // Get scorers from the summary
-      final homeScorers = <String>[];
-      final awayScorers = <String>[];
-
-      if (blueScore > 0) {
-        for (var i = 0; i < blueScore; i++) {
-          homeScorers.add('${homeTeam.name} #${i + 1}');
-        }
-      }
-      if (redScore > 0) {
-        for (var i = 0; i < redScore; i++) {
-          awayScorers.add('${awayTeam.name} #${i + 1}');
-        }
-      }
+      final homeScorers = result.goals
+          .where((goal) => goal.teamId == TeamId.blue)
+          .map(
+            (goal) =>
+                '${goal.scorerName} ${goal.minute}\'${goal.isPenalty ? ' (P)' : ''}',
+          )
+          .toList();
+      final awayScorers = result.goals
+          .where((goal) => goal.teamId == TeamId.red)
+          .map(
+            (goal) =>
+                '${goal.scorerName} ${goal.minute}\'${goal.isPenalty ? ' (P)' : ''}',
+          )
+          .toList();
 
       setState(() {
         season.recordResult(
@@ -98,6 +104,7 @@ class _LeagueScreenState extends State<LeagueScreen>
           homeScorers,
           awayScorers,
         );
+        fixture.matchId = result.matchId;
         for (final player in [...homeTeam.players, ...awayTeam.players]) {
           final played = player.matchHistory.any(
             (record) => record.matchId == result.matchId,
@@ -107,7 +114,7 @@ class _LeagueScreenState extends State<LeagueScreen>
           }
         }
       });
-      await _saveLeague();
+      await _saveLeague(archivedMatches: [result]);
     }
   }
 
@@ -117,6 +124,7 @@ class _LeagueScreenState extends State<LeagueScreen>
 
     setState(() => _simulating = true);
     final rng = math.Random();
+    final simulatedArchive = <FinishedMatchSummary>[];
 
     while (!season.seasonFinished) {
       final fixture = season.currentFixture;
@@ -146,15 +154,92 @@ class _LeagueScreenState extends State<LeagueScreen>
       homeScore = homeScore.clamp(0, 6).toInt();
       awayScore = awayScore.clamp(0, 5).toInt();
 
-      final homeScorers = List.generate(homeScore, (i) => 'Golcu #${i + 1}');
-      final awayScorers = List.generate(awayScore, (i) => 'Golcu #${i + 1}');
+      final homeCandidates = homeTeam.players
+          .take(11)
+          .where((player) => !player.isGoalkeeper)
+          .toList();
+      final awayCandidates = awayTeam.players
+          .take(11)
+          .where((player) => !player.isGoalkeeper)
+          .toList();
+      if (homeCandidates.isEmpty) {
+        homeCandidates.addAll(homeTeam.players.take(11));
+      }
+      if (awayCandidates.isEmpty) {
+        awayCandidates.addAll(awayTeam.players.take(11));
+      }
+      final homeGoals = List.generate(homeScore, (_) {
+        final scorer = homeCandidates[rng.nextInt(homeCandidates.length)];
+        return FinishedGoalSummary(
+          teamId: TeamId.blue,
+          scorerName: scorer.name,
+          scorerPlayerId: scorer.id,
+          minute: 1 + rng.nextInt(90),
+          isPenalty: rng.nextDouble() < 0.12,
+        );
+      })..sort((a, b) => a.minute.compareTo(b.minute));
+      final awayGoals = List.generate(awayScore, (_) {
+        final scorer = awayCandidates[rng.nextInt(awayCandidates.length)];
+        return FinishedGoalSummary(
+          teamId: TeamId.red,
+          scorerName: scorer.name,
+          scorerPlayerId: scorer.id,
+          minute: 1 + rng.nextInt(90),
+          isPenalty: rng.nextDouble() < 0.12,
+        );
+      })..sort((a, b) => a.minute.compareTo(b.minute));
+      String scorerText(FinishedGoalSummary goal) =>
+          '${goal.scorerName} ${goal.minute}\'${goal.isPenalty ? ' (P)' : ''}';
 
       season.recordResult(
         fixture,
         homeScore,
         awayScore,
-        homeScorers,
-        awayScorers,
+        homeGoals.map(scorerText).toList(),
+        awayGoals.map(scorerText).toList(),
+      );
+      fixture.matchId =
+          'league-${DateTime.now().microsecondsSinceEpoch}-${fixture.matchday}-${fixture.homeIndex}-${fixture.awayIndex}-${simulatedArchive.length}';
+      final possession = (50 + ratingDiff * 1.8).clamp(35, 65).toDouble();
+      final homePasses = 260 + rng.nextInt(240);
+      final awayPasses = 260 + rng.nextInt(240);
+      simulatedArchive.add(
+        FinishedMatchSummary(
+          matchId: fixture.matchId!,
+          blueStorageTeamId: null,
+          redStorageTeamId: null,
+          blueName: homeTeam.name,
+          redName: awayTeam.name,
+          blueScore: homeScore,
+          redScore: awayScore,
+          blueRatingDelta: 0,
+          redRatingDelta: 0,
+          bluePossessionPercent: possession,
+          redPossessionPercent: 100 - possession,
+          bluePasses: homePasses,
+          redPasses: awayPasses,
+          blueSuccessfulPasses: (homePasses * (0.68 + rng.nextDouble() * 0.18)).round(),
+          redSuccessfulPasses: (awayPasses * (0.68 + rng.nextDouble() * 0.18)).round(),
+          blueShots: homeScore + 3 + rng.nextInt(9),
+          redShots: awayScore + 3 + rng.nextInt(9),
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          goals: [...homeGoals, ...awayGoals]
+            ..sort((a, b) => a.minute.compareTo(b.minute)),
+          playerStats: [
+            ..._simulatedPlayerStats(
+              homeTeam,
+              TeamId.blue,
+              homeGoals,
+              rng,
+            ),
+            ..._simulatedPlayerStats(
+              awayTeam,
+              TeamId.red,
+              awayGoals,
+              rng,
+            ),
+          ],
+        ),
       );
       for (final player in [...homeTeam.players, ...awayTeam.players]) {
         if (player.isUnavailable) {
@@ -163,8 +248,69 @@ class _LeagueScreenState extends State<LeagueScreen>
       }
     }
 
-    await _saveLeague();
+    await _saveLeague(archivedMatches: simulatedArchive);
     setState(() => _simulating = false);
+  }
+
+  List<FinishedPlayerSummary> _simulatedPlayerStats(
+    LeagueTeam team,
+    TeamId teamId,
+    List<FinishedGoalSummary> goals,
+    math.Random rng,
+  ) {
+    final starters = team.players.take(11).toList();
+    final summaries = <FinishedPlayerSummary>[];
+    for (var index = 0; index < starters.length; index++) {
+      final player = starters[index];
+      final goalCount = goals
+          .where(
+            (goal) => goal.scorerPlayerId == player.id ||
+                (goal.scorerPlayerId == null && goal.scorerName == player.name),
+          )
+          .length;
+      final passes = player.isGoalkeeper
+          ? 18 + rng.nextInt(18)
+          : 16 + rng.nextInt(52);
+      final shots = player.isGoalkeeper ? 0 : rng.nextInt(4) + goalCount;
+      final dribbles = player.isGoalkeeper ? 0 : rng.nextInt(6);
+      summaries.add(
+        FinishedPlayerSummary(
+          playerId: player.id,
+          teamId: teamId,
+          name: player.name,
+          number: player.number ?? index + 1,
+          role: player.isGoalkeeper ? 'KL' : 'SAHA',
+          minutes: 90,
+          goals: goalCount,
+          assists: goalCount == 0 && rng.nextDouble() < 0.12 ? 1 : 0,
+          passes: passes,
+          successfulPasses: (passes * (0.64 + rng.nextDouble() * 0.28))
+              .round(),
+          dribbles: dribbles,
+          successfulDribbles: dribbles == 0
+              ? 0
+              : rng.nextInt(dribbles + 1),
+          tackles: player.isGoalkeeper ? 0 : rng.nextInt(6),
+          shots: shots,
+          shotsOnTarget:
+              goalCount +
+              (shots > goalCount ? rng.nextInt(shots - goalCount + 1) : 0),
+          missedChances: (shots - goalCount).clamp(0, 99).toInt(),
+          clearances: rng.nextInt(player.isGoalkeeper ? 4 : 8),
+          saves: player.isGoalkeeper ? rng.nextInt(8) : 0,
+          foulsCommitted: rng.nextInt(3),
+          foulsReceived: rng.nextInt(3),
+          yellowCards: rng.nextDouble() < 0.12 ? 1 : 0,
+          redCards: 0,
+          rating: (6.0 + goalCount * 1.1 + rng.nextDouble())
+              .clamp(5, 10)
+              .toDouble(),
+          staminaPercent: 68 + rng.nextInt(27),
+          injured: false,
+        ),
+      );
+    }
+    return summaries;
   }
 
   Future<void> _resetSeason() async {

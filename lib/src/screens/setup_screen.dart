@@ -571,6 +571,7 @@ class _SetupScreenState extends State<SetupScreen> {
         players: bluePlayers,
         starterPlayerIds: data.blueTeam.starterPlayerIds,
         roleByPlayerId: data.blueTeam.roleByPlayerId,
+        slotByPlayerId: data.blueTeam.slotByPlayerId,
         storageTeamId: data.blueTeam.id,
         rating: data.blueTeam.rating,
         jerseyKit: data.blueTeam.activeKit,
@@ -583,6 +584,7 @@ class _SetupScreenState extends State<SetupScreen> {
         players: redPlayers,
         starterPlayerIds: data.redTeam.starterPlayerIds,
         roleByPlayerId: data.redTeam.roleByPlayerId,
+        slotByPlayerId: data.redTeam.slotByPlayerId,
         storageTeamId: data.redTeam.id,
         rating: data.redTeam.rating,
         jerseyKit: data.redTeam.activeKit,
@@ -645,6 +647,7 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _applyMatchSummary(SavedGameData data, FinishedMatchSummary summary) {
+    data.archiveMatch(summary);
     final blue = data.teams.where(
       (team) => team.id == summary.blueStorageTeamId,
     );
@@ -680,7 +683,7 @@ class _SetupScreenState extends State<SetupScreen> {
     redTeam.rating = (redTeam.rating + summary.redRatingDelta)
         .clamp(1, 99)
         .toDouble();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final timestamp = summary.timestamp;
     blueTeam.addMatchRecord(
       TeamMatchRecord(
         matchId: summary.matchId,
@@ -2272,6 +2275,807 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
+  Future<void> _openVisualFormationEditor(
+    SavedTeamProfile team,
+    SavedGameData data,
+  ) async {
+    team.ensureLineupDefaults(data.players);
+    final presetNameController = TextEditingController();
+    final searchController = TextEditingController();
+    String? selectedPlayerId;
+    String search = '';
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final plan = formationPlan(team.formation);
+          final members = data.players
+              .where(
+                (player) =>
+                    team.playerIds.contains(player.id) &&
+                    (search.isEmpty ||
+                        player.name.toLowerCase().contains(search)),
+              )
+              .toList()
+            ..sort((a, b) {
+              if (a.isGoalkeeper != b.isGoalkeeper) {
+                return a.isGoalkeeper ? -1 : 1;
+              }
+              return b.effectiveOverall.compareTo(a.effectiveOverall);
+            });
+          final selectedMatches = data.players.where(
+            (player) => player.id == selectedPlayerId,
+          );
+          final selectedPlayer =
+              selectedMatches.isEmpty ? null : selectedMatches.first;
+          return Dialog(
+            backgroundColor: const Color(0xff08140f),
+            insetPadding: const EdgeInsets.all(18),
+            child: SizedBox(
+              width: 1180,
+              height: 760,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xff103d2d), Color(0xff111b22)],
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.account_tree,
+                          color: Color(0xffffd34d),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          '${team.name} • Gorsel Dizilis Editoru',
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 18),
+                        SizedBox(
+                          width: 280,
+                          child: DropdownButtonFormField<FormationType>(
+                            value: playableFormationTypes.contains(team.formation)
+                                ? team.formation
+                                : FormationType.wing433,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Once dizilisi sec',
+                            ),
+                            items: [
+                              for (final formation in playableFormationTypes)
+                                DropdownMenuItem(
+                                  value: formation,
+                                  child: Text(
+                                    formation.title,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) return;
+                              setDialogState(() {
+                                _setSelectedTeamFormation(team, data, value);
+                                team.activeFormationPresetId = null;
+                                team.ensureLineupDefaults(data.players);
+                              });
+                            },
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Kaydet ve kapat',
+                          onPressed: () async {
+                            team.ensureLineupDefaults(data.players);
+                            await _save();
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 260,
+                          child: DropdownButtonFormField<String>(
+                            value: team.savedFormations.any(
+                              (preset) =>
+                                  preset.id == team.activeFormationPresetId,
+                            )
+                                ? team.activeFormationPresetId
+                                : null,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Kayitli takim dizilisi',
+                            ),
+                            items: [
+                              for (final preset in team.savedFormations)
+                                DropdownMenuItem(
+                                  value: preset.id,
+                                  child: Text(
+                                    preset.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (presetId) {
+                              if (presetId == null) return;
+                              final preset = team.savedFormations.firstWhere(
+                                (item) => item.id == presetId,
+                              );
+                              setDialogState(() {
+                                team.applyFormationPreset(preset);
+                                _setSelectedTeamFormation(
+                                  team,
+                                  data,
+                                  team.formation,
+                                );
+                                team.ensureLineupDefaults(data.players);
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        SizedBox(
+                          width: 220,
+                          child: TextField(
+                            controller: presetNameController,
+                            decoration: const InputDecoration(
+                              labelText: 'Dizilis kayit adi',
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: () {
+                            final name = presetNameController.text.trim();
+                            if (name.isEmpty) {
+                              _showMessage('Dizilis icin bir ad yaz');
+                              return;
+                            }
+                            team.ensureLineupDefaults(data.players);
+                            if (team.starterPlayerIds.length != 11 ||
+                                team.slotByPlayerId.length != 11) {
+                              _showMessage(
+                                'Kaydetmeden once 11 daireyi de doldur',
+                              );
+                              return;
+                            }
+                            setDialogState(() {
+                              team.saveCurrentFormation(name);
+                              presetNameController.clear();
+                            });
+                            _save();
+                          },
+                          icon: const Icon(Icons.save),
+                          label: const Text('Takima kaydet'),
+                        ),
+                        if (team.activeFormationPresetId != null) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: 'Kayitli dizilisi sil',
+                            onPressed: () {
+                              setDialogState(() {
+                                team.savedFormations.removeWhere(
+                                  (preset) =>
+                                      preset.id == team.activeFormationPresetId,
+                                );
+                                team.activeFormationPresetId = null;
+                              });
+                              _save();
+                            },
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        Text(
+                          'Ilk 11: ${team.starterPlayerIds.length}/11',
+                          style: TextStyle(
+                            color: team.starterPlayerIds.length == 11
+                                ? Colors.greenAccent
+                                : Colors.orangeAccent,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 7,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 0, 10, 14),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final pitchWidth = constraints.maxWidth;
+                                final pitchHeight = constraints.maxHeight;
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xff087a36),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: Colors.white70,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Stack(
+                                    children: [
+                                      Positioned(
+                                        left: pitchWidth / 2 - 1,
+                                        top: 0,
+                                        bottom: 0,
+                                        child: Container(
+                                          width: 2,
+                                          color: Colors.white38,
+                                        ),
+                                      ),
+                                      Positioned(
+                                        left: pitchWidth / 2 - 58,
+                                        top: pitchHeight / 2 - 58,
+                                        child: Container(
+                                          width: 116,
+                                          height: 116,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: Colors.white38,
+                                              width: 2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      for (var slotIndex = 0;
+                                          slotIndex < plan.spots.length;
+                                          slotIndex++)
+                                        _formationSlot(
+                                          team: team,
+                                          data: data,
+                                          plan: plan,
+                                          slotIndex: slotIndex,
+                                          pitchWidth: pitchWidth,
+                                          pitchHeight: pitchHeight,
+                                          selectedPlayerId: selectedPlayerId,
+                                          onSelected: (playerId) {
+                                            setDialogState(
+                                              () => selectedPlayerId = playerId,
+                                            );
+                                          },
+                                          onDrop: (profile) {
+                                            setDialogState(() {
+                                              _assignPlayerToFormationSlot(
+                                                team,
+                                                profile,
+                                                slotIndex,
+                                              );
+                                              selectedPlayerId = profile.id;
+                                            });
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 5,
+                          child: Container(
+                            margin: const EdgeInsets.fromLTRB(0, 0, 14, 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xff0d1a16),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: Column(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: TextField(
+                                    controller: searchController,
+                                    decoration: const InputDecoration(
+                                      prefixIcon: Icon(Icons.search),
+                                      labelText: 'Oyuncu ara ve sahaya surukle',
+                                      isDense: true,
+                                    ),
+                                    onChanged: (value) => setDialogState(
+                                      () => search = value.trim().toLowerCase(),
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 3,
+                                  child: ListView.builder(
+                                    itemCount: members.length,
+                                    itemBuilder: (context, index) {
+                                      final player = members[index];
+                                      final slot = team.slotByPlayerId[player.id];
+                                      return Draggable<PlayerProfile>(
+                                        data: player,
+                                        feedback: Material(
+                                          color: Colors.transparent,
+                                          child: _dragPlayerCard(player),
+                                        ),
+                                        childWhenDragging: Opacity(
+                                          opacity: 0.35,
+                                          child: _rosterPlayerTile(
+                                            player,
+                                            slot,
+                                            selectedPlayerId == player.id,
+                                          ),
+                                        ),
+                                        child: InkWell(
+                                          onTap: () => setDialogState(
+                                            () => selectedPlayerId = player.id,
+                                          ),
+                                          child: _rosterPlayerTile(
+                                            player,
+                                            slot,
+                                            selectedPlayerId == player.id,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const Divider(height: 1),
+                                Expanded(
+                                  flex: 2,
+                                  child: selectedPlayer == null
+                                      ? const Center(
+                                          child: Text(
+                                            'Tum istatistikleri gormek icin oyuncuya tikla',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: Colors.white54,
+                                            ),
+                                          ),
+                                        )
+                                      : _formationPlayerStats(selectedPlayer),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Oyuncuyu tutup daireye birak. Dolu daireye birakirsan oyuncular yer degistirir.',
+                            style: TextStyle(color: Colors.white60),
+                          ),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            setDialogState(() {
+                              team
+                                ..slotByPlayerId.clear()
+                                ..starterPlayerIds.clear()
+                                ..activeFormationPresetId = null;
+                            });
+                          },
+                          child: const Text('Sahayı temizle'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: () async {
+                            team.ensureLineupDefaults(data.players);
+                            await _save();
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                          },
+                          icon: const Icon(Icons.check),
+                          label: const Text('Uygula ve kapat'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    presetNameController.dispose();
+    searchController.dispose();
+    if (mounted) setState(() {});
+  }
+
+  Widget _formationSlot({
+    required SavedTeamProfile team,
+    required SavedGameData data,
+    required FormationPlan plan,
+    required int slotIndex,
+    required double pitchWidth,
+    required double pitchHeight,
+    required String? selectedPlayerId,
+    required ValueChanged<String> onSelected,
+    required ValueChanged<PlayerProfile> onDrop,
+  }) {
+    final spot = plan.spots[slotIndex];
+    final assigned = team.slotByPlayerId.entries.where(
+      (entry) => entry.value == slotIndex,
+    );
+    PlayerProfile? player;
+    if (assigned.isNotEmpty) {
+      final matches = data.players.where(
+        (profile) => profile.id == assigned.first.key,
+      );
+      if (matches.isNotEmpty) player = matches.first;
+    }
+    final left = (18 + spot.x * (pitchWidth - 100)).clamp(
+      0.0,
+      pitchWidth - 84,
+    ).toDouble();
+    final top = (18 + spot.y * (pitchHeight - 90)).clamp(
+      0.0,
+      pitchHeight - 64,
+    ).toDouble();
+    return Positioned(
+      left: left,
+      top: top,
+      width: 84,
+      height: 64,
+      child: DragTarget<PlayerProfile>(
+        onWillAcceptWithDetails: (details) =>
+            details.data.isGoalkeeper == spot.role.isGoalkeeper &&
+            !details.data.isUnavailable &&
+            team.playerIds.contains(details.data.id),
+        onAcceptWithDetails: (details) => onDrop(details.data),
+        builder: (context, candidates, rejected) {
+          final highlighted = candidates.isNotEmpty;
+          final content = AnimatedContainer(
+            duration: const Duration(milliseconds: 130),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: highlighted
+                  ? const Color(0xffffd34d)
+                  : player == null
+                  ? Colors.black.withValues(alpha: 0.30)
+                  : player!.id == selectedPlayerId
+                  ? const Color(0xffffd34d).withValues(alpha: 0.88)
+                  : const Color(0xff102019).withValues(alpha: 0.94),
+              border: Border.all(
+                color: highlighted
+                    ? Colors.white
+                    : player == null
+                    ? Colors.white54
+                    : Colors.white,
+                width: highlighted ? 3 : 1.5,
+              ),
+              boxShadow: [
+                if (player != null)
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 8,
+                  ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: player == null
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.add, size: 18, color: Colors.white70),
+                      Text(
+                        spot.role.code,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '${player!.number ?? spot.number}',
+                        style: TextStyle(
+                          color: player!.id == selectedPlayerId
+                              ? Colors.black
+                              : const Color(0xffffd34d),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 11,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        child: Text(
+                          player!.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: player!.id == selectedPlayerId
+                                ? Colors.black
+                                : Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${spot.role.code} • ${player!.effectiveOverall.round()}',
+                        style: TextStyle(
+                          color: player!.id == selectedPlayerId
+                              ? Colors.black87
+                              : Colors.white60,
+                          fontSize: 8,
+                        ),
+                      ),
+                    ],
+                  ),
+          );
+          if (player == null) return content;
+          return Draggable<PlayerProfile>(
+            data: player!,
+            feedback: Material(
+              color: Colors.transparent,
+              child: _dragPlayerCard(player!),
+            ),
+            childWhenDragging: Opacity(opacity: 0.28, child: content),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => onSelected(player!.id),
+              child: content,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _setSelectedTeamFormation(
+    SavedTeamProfile team,
+    SavedGameData data,
+    FormationType formation,
+  ) {
+    team.formation = formation;
+    if (team.id == data.blueTeamId) {
+      data.blueFormation = formation;
+    }
+    if (team.id == data.redTeamId) {
+      data.redFormation = formation;
+    }
+  }
+
+  void _assignPlayerToFormationSlot(
+    SavedTeamProfile team,
+    PlayerProfile profile,
+    int newSlot,
+  ) {
+    final plan = formationPlan(team.formation);
+    if (newSlot < 0 || newSlot >= plan.spots.length) return;
+    if (profile.isGoalkeeper != plan.spots[newSlot].role.isGoalkeeper) return;
+    final oldSlot = team.slotByPlayerId[profile.id];
+    String? occupyingPlayerId;
+    for (final entry in team.slotByPlayerId.entries) {
+      if (entry.value == newSlot && entry.key != profile.id) {
+        occupyingPlayerId = entry.key;
+        break;
+      }
+    }
+    if (occupyingPlayerId != null) {
+      if (oldSlot != null) {
+        team.slotByPlayerId[occupyingPlayerId] = oldSlot;
+        team.starterPlayerIds.add(occupyingPlayerId);
+        team.roleByPlayerId[occupyingPlayerId] = plan.spots[oldSlot].role;
+      } else {
+        team.slotByPlayerId.remove(occupyingPlayerId);
+        team.starterPlayerIds.remove(occupyingPlayerId);
+      }
+    }
+    team
+      ..slotByPlayerId[profile.id] = newSlot
+      ..starterPlayerIds.add(profile.id)
+      ..roleByPlayerId[profile.id] = plan.spots[newSlot].role
+      ..activeFormationPresetId = null;
+    if (team.starterPlayerIds.length > 11) {
+      final removable = team.starterPlayerIds.firstWhere(
+        (id) => !team.slotByPlayerId.containsKey(id),
+        orElse: () => '',
+      );
+      if (removable.isNotEmpty) team.starterPlayerIds.remove(removable);
+    }
+  }
+
+  Widget _dragPlayerCard(PlayerProfile player) {
+    return Container(
+      width: 170,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xff102019),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xffffd34d)),
+      ),
+      child: Text(
+        '${player.name} • OVR ${player.effectiveOverall.round()}',
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _rosterPlayerTile(
+    PlayerProfile player,
+    int? slot,
+    bool selected,
+  ) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: selected
+            ? const Color(0xffffd34d).withValues(alpha: 0.17)
+            : Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: selected ? const Color(0xffffd34d) : Colors.white12,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            player.isGoalkeeper ? Icons.back_hand : Icons.person,
+            color: player.isGoalkeeper
+                ? const Color(0xffffd34d)
+                : Colors.white70,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  player.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  'OVR ${player.effectiveOverall.round()} • Sut ${player.shootingRating.round()} • Pas ${player.passingRating.round()} • Hiz ${player.speedRating.round()}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 9),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            slot == null ? 'YEDEK' : 'SLOT ${slot + 1}',
+            style: TextStyle(
+              color: slot == null ? Colors.white38 : Colors.greenAccent,
+              fontWeight: FontWeight.w800,
+              fontSize: 9,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _formationPlayerStats(PlayerProfile player) {
+    final passPercent = player.passes == 0
+        ? 0
+        : (player.successfulPasses * 100 / player.passes).round();
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(11),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            player.name,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: Color(0xffffd34d),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 10,
+            runSpacing: 7,
+            children: [
+              _formationStat('Forma no', player.number ?? 0),
+              _formationStat('OVR', player.overallRating.round()),
+              _formationStat('Efektif OVR', player.effectiveOverall.round()),
+              _formationStat('Sut gucu', player.shootingRating.round()),
+              _formationStat('Pas gucu', player.passingRating.round()),
+              _formationStat('Kaleci gucu', player.goalkeepingRating.round()),
+              _formationStat('Hiz gucu', player.speedRating.round()),
+              _formationStat('Enerji gucu', player.staminaRating.round()),
+              _formationStat('Dayaniklilik', player.dayaniklilikGucu.round()),
+              _formationStat('Zeka', player.zekaGucu.round()),
+              _formationStat('Boy', (player.heightMeters * 100).round()),
+              _formationStat('Mac', player.matchesPlayed),
+              _formationStat('Dakika', player.minutesPlayed),
+              _formationStat('Gol', player.goals),
+              _formationStat('Asist', player.assists),
+              _formationStat('Pas', player.passes),
+              _formationStat('Basarili pas', player.successfulPasses),
+              _formationStat('Pas %', passPercent),
+              _formationStat('Dripling', player.dribbles),
+              _formationStat('Basarili dripling', player.successfulDribbles),
+              _formationStat('Mudahale', player.tackles),
+              _formationStat('Sut', player.shots),
+              _formationStat('Isabetli sut', player.shotsOnTarget),
+              _formationStat('Kacan firsat', player.missedChances),
+              _formationStat('Uzaklastirma', player.clearances),
+              _formationStat('Kurtaris', player.saves),
+              _formationStat('Yaptigi faul', player.foulsCommitted),
+              _formationStat('Aldigi faul', player.foulsReceived),
+              _formationStat('Sari', player.yellowCards),
+              _formationStat('Kirmizi', player.redCards),
+              _formationStat('Puan', player.points.toStringAsFixed(1)),
+              _formationStat('Fitness', '%${(player.fitness * 100).round()}'),
+              _formationStat('Sakatlik gunu', player.injuredDaysRemaining),
+              _formationStat(
+                'Ceza maci',
+                player.suspendedMatchesRemaining,
+              ),
+            ],
+          ),
+          if (player.isUnavailable) ...[
+            const SizedBox(height: 8),
+            Text(
+              player.isInjured
+                  ? 'SAKAT: ${player.injuredDaysRemaining} gun'
+                  : 'CEZALI: ${player.suspendedMatchesRemaining} mac',
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _formationStat(String label, Object value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.055),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
   Widget _lineupEditor(SavedTeamProfile team, SavedGameData data) {
     final allTeamPlayers = data.players
         .where((profile) => team.playerIds.contains(profile.id))
@@ -2306,6 +3110,14 @@ class _SetupScreenState extends State<SetupScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
+                OutlinedButton.icon(
+                  onPressed: canEdit
+                      ? () => _openVisualFormationEditor(team, data)
+                      : null,
+                  icon: const Icon(Icons.account_tree, size: 17),
+                  label: const Text('Gorsel dizilis'),
+                ),
+                const SizedBox(width: 8),
                 Text(
                   'Degisiklik 5',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
@@ -2371,6 +3183,7 @@ class _SetupScreenState extends State<SetupScreen> {
                                             profile.id,
                                           );
                                         }
+                                        team.activeFormationPresetId = null;
                                       });
                                       _save();
                                     }
@@ -2420,11 +3233,45 @@ class _SetupScreenState extends State<SetupScreen> {
                                         if (value == null) {
                                           return;
                                         }
-                                        setState(
-                                          () =>
-                                              team.roleByPlayerId[profile.id] =
-                                                  value,
-                                        );
+                                        setState(() {
+                                          if (!isStarter) {
+                                            team
+                                              ..roleByPlayerId[profile.id] = value
+                                              ..activeFormationPresetId = null;
+                                            return;
+                                          }
+                                          final plan = formationPlan(
+                                            team.formation,
+                                          );
+                                          final matchingSlots = List<int>.generate(
+                                            plan.spots.length,
+                                            (slot) => slot,
+                                          ).where(
+                                            (slot) =>
+                                                plan.spots[slot].role == value,
+                                          );
+                                          if (matchingSlots.isEmpty) return;
+                                          final occupiedSlots = team
+                                              .slotByPlayerId
+                                              .entries
+                                              .where(
+                                                (entry) =>
+                                                    entry.key != profile.id,
+                                              )
+                                              .map((entry) => entry.value)
+                                              .toSet();
+                                          final emptyMatches = matchingSlots.where(
+                                            (slot) =>
+                                                !occupiedSlots.contains(slot),
+                                          );
+                                          _assignPlayerToFormationSlot(
+                                            team,
+                                            profile,
+                                            emptyMatches.isNotEmpty
+                                                ? emptyMatches.first
+                                                : matchingSlots.first,
+                                          );
+                                        });
                                         _save();
                                       }
                                     : null,

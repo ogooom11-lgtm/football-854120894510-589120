@@ -2792,6 +2792,53 @@ class MatchEngine {
       redSuccessfulPasses: redSuccessfulPasses,
       blueShots: blueShots,
       redShots: redShots,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      goals: reviewGoals.where((goal) => !goal.canceled).map((goal) {
+        final assisters = allMatchPlayers.where(
+          (player) => player.profile.id == goal.assisterPlayerId,
+        );
+        return FinishedGoalSummary(
+          teamId: goal.teamId,
+          scorerName: goal.scorerName,
+          minute: goal.minute,
+          isPenalty: goal.isPenalty,
+          scorerPlayerId: goal.scorerPlayerId,
+          assisterPlayerId: goal.assisterPlayerId,
+          assisterName: assisters.isEmpty ? null : assisters.first.profile.name,
+        );
+      }).toList(),
+      playerStats: allMatchPlayers
+          .where((player) => player.minutesThisMatch > 0)
+          .map(
+            (player) => FinishedPlayerSummary(
+              playerId: player.profile.id,
+              teamId: player.teamId,
+              name: player.profile.name,
+              number: player.number,
+              role: player.role.code,
+              minutes: player.minutesThisMatch.round(),
+              goals: player.matchGoals,
+              assists: player.matchAssists,
+              passes: player.matchPasses,
+              successfulPasses: player.matchSuccessfulPasses,
+              dribbles: player.matchDribbles,
+              successfulDribbles: player.matchSuccessfulDribbles,
+              tackles: player.matchTackles,
+              shots: player.matchShots,
+              shotsOnTarget: player.matchShotsOnTarget,
+              missedChances: player.matchMissedChances,
+              clearances: player.matchClearances,
+              saves: player.matchSaves,
+              foulsCommitted: player.matchFoulsCommitted,
+              foulsReceived: player.matchFoulsReceived,
+              yellowCards: player.matchYellowCards,
+              redCards: player.matchRedCards,
+              rating: matchRatingFor(player),
+              staminaPercent: (player.stamina * 100).round(),
+              injured: player.isInjuredInMatch,
+            ),
+          )
+          .toList(),
     );
   }
 

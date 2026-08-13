@@ -1,8 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:new_football/src/game/enums/player_role.dart';
+import 'package:new_football/src/game/enums/team_id.dart';
+import 'package:new_football/src/game/models/formation.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
 import 'package:new_football/src/game/models/league.dart';
+import 'package:new_football/src/game/models/match_event.dart';
 import 'package:new_football/src/game/models/player_profile.dart';
+import 'package:new_football/src/game/models/team_profile.dart';
 import 'package:new_football/src/storage/roster_storage.dart';
 
 void main() {
@@ -49,6 +54,124 @@ void main() {
       final oldKits = JerseyFactory.defaultKits().take(3);
       final expanded = JerseyFactory.completeKits(oldKits);
       expect(expanded.length, 13);
+    });
+  });
+
+  group('saved formations', () {
+    test('assigns unique compatible slots and restores a named preset', () {
+      final players = [
+        PlayerProfile.generated(name: 'Keeper', isGoalkeeper: true),
+        for (var index = 0; index < 10; index++)
+          PlayerProfile.generated(name: 'Player $index', isGoalkeeper: false),
+      ];
+      final team = SavedTeamProfile.create(
+        ownerAccountId: 'owner',
+        name: 'Test Team',
+        playerIds: players.map((player) => player.id),
+        formation: FormationType.wing433,
+      );
+      team.ensureLineupDefaults(players);
+
+      expect(team.slotByPlayerId.length, 11);
+      expect(team.slotByPlayerId.values.toSet().length, 11);
+      final plan = formationPlan(team.formation);
+      for (final entry in team.slotByPlayerId.entries) {
+        final player = players.firstWhere((item) => item.id == entry.key);
+        expect(
+          plan.spots[entry.value].role.isGoalkeeper,
+          player.isGoalkeeper,
+        );
+      }
+
+      final preset = team.saveCurrentFormation('Best Eleven');
+      team
+        ..formation = FormationType.classic442
+        ..slotByPlayerId.clear();
+      team.applyFormationPreset(preset);
+      team.ensureLineupDefaults(players);
+      expect(team.formation, FormationType.wing433);
+      expect(team.activeFormationPresetId, preset.id);
+      expect(team.slotByPlayerId.length, 11);
+
+      final restored = SavedTeamProfile.fromJson(
+        team.toJson(),
+        fallbackOwnerAccountId: 'owner',
+      );
+      expect(restored.savedFormations.single.name, 'Best Eleven');
+      expect(restored.slotByPlayerId, team.slotByPlayerId);
+    });
+  });
+
+  group('match archive', () {
+    test('preserves real goals and complete player performance', () {
+      final summary = FinishedMatchSummary(
+        matchId: 'match-1',
+        blueStorageTeamId: 'blue-team',
+        redStorageTeamId: 'red-team',
+        blueName: 'Blue',
+        redName: 'Red',
+        blueScore: 1,
+        redScore: 0,
+        blueRatingDelta: 1.2,
+        redRatingDelta: -1.2,
+        bluePossessionPercent: 55,
+        redPossessionPercent: 45,
+        bluePasses: 400,
+        redPasses: 350,
+        blueSuccessfulPasses: 330,
+        redSuccessfulPasses: 270,
+        blueShots: 9,
+        redShots: 6,
+        timestamp: 123456,
+        goals: const [
+          FinishedGoalSummary(
+            teamId: TeamId.blue,
+            scorerName: 'Real Scorer',
+            minute: 37,
+            isPenalty: false,
+          ),
+        ],
+        playerStats: const [
+          FinishedPlayerSummary(
+            playerId: 'player-1',
+            teamId: TeamId.blue,
+            name: 'Real Scorer',
+            number: 9,
+            role: 'SF',
+            minutes: 90,
+            goals: 1,
+            assists: 0,
+            passes: 31,
+            successfulPasses: 25,
+            dribbles: 4,
+            successfulDribbles: 3,
+            tackles: 1,
+            shots: 4,
+            shotsOnTarget: 2,
+            missedChances: 1,
+            clearances: 0,
+            saves: 0,
+            foulsCommitted: 1,
+            foulsReceived: 2,
+            yellowCards: 0,
+            redCards: 0,
+            rating: 8.2,
+            staminaPercent: 72,
+            injured: false,
+          ),
+        ],
+      );
+
+      final restored = FinishedMatchSummary.fromJson(summary.toJson());
+      expect(restored.goals.single.scorerName, 'Real Scorer');
+      expect(restored.goals.single.minute, 37);
+      expect(restored.playerStats.single.shotsOnTarget, 2);
+      expect(restored.playerStats.single.rating, 8.2);
+
+      final data = SavedGameData.defaults();
+      data.archiveMatch(summary);
+      final restoredData = SavedGameData.fromJson(data.toJson());
+      expect(restoredData.matchArchive.single.matchId, 'match-1');
     });
   });
 

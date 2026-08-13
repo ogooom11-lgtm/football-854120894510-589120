@@ -7,6 +7,7 @@ import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
 import '../game/models/league.dart';
 import '../game/models/formation.dart';
+import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 
@@ -80,7 +81,8 @@ class SavedGameData {
     this.aiDifficulty = AiDifficulty.medium,
     this.bluePlayStyle = AiPlayStyle.balanced,
     this.redPlayStyle = AiPlayStyle.balanced,
-  });
+    List<FinishedMatchSummary>? matchArchive,
+  }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[];
 
   final List<SavedAccountProfile> accounts;
   String activeAccountId;
@@ -104,6 +106,15 @@ class SavedGameData {
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
   LeagueSeason? leagueSeason;
+  final List<FinishedMatchSummary> matchArchive;
+
+  void archiveMatch(FinishedMatchSummary summary) {
+    matchArchive.removeWhere((match) => match.matchId == summary.matchId);
+    matchArchive.insert(0, summary);
+    if (matchArchive.length > 200) {
+      matchArchive.removeRange(200, matchArchive.length);
+    }
+  }
 
   SavedAccountProfile get activeAccount => accounts.firstWhere(
     (account) => account.id == activeAccountId,
@@ -342,6 +353,14 @@ class SavedGameData {
           (s) => s.name == json['redPlayStyle'],
           orElse: () => AiPlayStyle.balanced,
         ),
+        matchArchive: (json['matchArchive'] as List<dynamic>? ?? const [])
+            .map(
+              (item) => FinishedMatchSummary.fromJson(
+                item as Map<String, dynamic>,
+              ),
+            )
+            .take(200)
+            .toList(),
       )
       ..leagueSeason = json['leagueSeason'] != null
           ? LeagueSeason.fromJson(json['leagueSeason'] as Map<String, dynamic>)
@@ -406,6 +425,7 @@ class SavedGameData {
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
       'leagueSeason': leagueSeason?.toJson(),
+      'matchArchive': matchArchive.map((match) => match.toJson()).toList(),
     };
   }
 }

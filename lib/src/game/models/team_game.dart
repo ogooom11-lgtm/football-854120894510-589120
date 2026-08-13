@@ -79,10 +79,18 @@ class TeamGame {
         );
 
     final players = <PlayerGame>[];
-    for (final spot in plan.spots) {
+    for (var spotIndex = 0; spotIndex < plan.spots.length; spotIndex++) {
+      final spot = plan.spots[spotIndex];
+      final assignedProfile = _takeProfileOrNull(
+        starters,
+        (profile) =>
+            !profile.isGoalkeeper &&
+            setup.slotByPlayerId[profile.id] == spotIndex,
+      );
       final profile = spot.role.isGoalkeeper
           ? keeperProfile
-          : _takeProfileOrNull(
+          : assignedProfile ??
+                _takeProfileOrNull(
                   starters,
                   (profile) =>
                       !profile.isGoalkeeper &&
