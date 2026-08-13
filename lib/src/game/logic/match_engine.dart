@@ -149,6 +149,7 @@ class MatchEngine {
   final List<InjuryEvent> injuryEvents = [];
   final List<DisciplinaryEvent> disciplinaryEvents = [];
   final List<PlayerGame> _forcedSubs = [];
+  final Set<String> _injuryBonusAwardedPlayerIds = <String>{};
   double _replayAccumulator = 0;
 
   TeamGame get teamInPossession {
@@ -856,6 +857,12 @@ class MatchEngine {
     varReason = null;
     currentOffside = null;
     callback?.call();
+  }
+
+  void setFormation(TeamId id, FormationType formation) {
+    final team = teamById(id);
+    team.formation = formation;
+    team.updateHomePositionsOnly();
   }
 
   void cycleFormation(TeamId id) {
@@ -2527,8 +2534,8 @@ class MatchEngine {
             minute: eventMinute,
           ),
         );
-        if (team.players.contains(player) && !_forcedSubs.contains(player)) {
-          _forcedSubs.add(player);
+        if (team.players.contains(player)) {
+          _queueForcedInjurySub(player);
         }
         return _recordTimelineEvent(
           kind: 'injury',
@@ -2759,6 +2766,20 @@ class MatchEngine {
     );
   }
 
+  bool swapPlayerPositions(TeamId id, int firstIndex, int secondIndex) {
+    final team = teamById(id);
+    final swapped = team.swapPlayerPositions(firstIndex, secondIndex);
+    if (swapped && firstIndex != secondIndex) {
+      _startPause(
+        '${team.name}: pozisyon degisikligi',
+        'Oyuncu degisikligi hakki kullanilmadi',
+        0.55,
+        null,
+      );
+    }
+    return swapped;
+  }
+
   bool substitute(TeamId id, int outIndex, int benchIndex) {
     final team = teamById(id);
     final ownerWasOut =
@@ -2774,7 +2795,7 @@ class MatchEngine {
     }
     _startPause(
       '${team.name}: oyuncu degisikligi',
-      '${team.substitutionsUsed}/5',
+      '${team.substitutionsUsed}/${team.substitutionLimit}',
       0.8,
       null,
     );
@@ -3696,7 +3717,9 @@ class MatchEngine {
         ..controlled = false
         ..pos = Vec2(-100, -100);
       player.profile.redCards += 1;
-      suspension = violent ? 3 : 1;
+      // Every red card, including a second yellow, carries a fixed two-match
+      // suspension. The CEZALAR page can adjust it administratively later.
+      suspension = GameConstants.redCardSuspensionMatches;
       player.profile.suspendedMatchesRemaining = math.max(
         player.profile.suspendedMatchesRemaining,
         suspension,
@@ -3771,12 +3794,30 @@ class MatchEngine {
       );
       banner = MatchBanner(
         'SAKATLIK',
-        '${victim.profile.name}: $days gun sahalardan uzak',
+        '${victim.profile.name}: $days gun • rakibe +1 degisiklik',
         3.0,
         minute: minute.ceil(),
         kind: 'injury',
       );
-      _forcedSubs.add(victim);
+      _queueForcedInjurySub(victim);
+    }
+  }
+
+  void _queueForcedInjurySub(PlayerGame player) {
+    if (!_forcedSubs.contains(player)) {
+      _forcedSubs.add(player);
+    }
+    if (_injuryBonusAwardedPlayerIds.add(player.id)) {
+      final opponent = opponentOf(teamById(player.teamId));
+      opponent.bonusSubstitutions += 1;
+      _recordTimelineEvent(
+        kind: 'substitutionBonus',
+        title: 'EK DEGISIKLIK HAKKI',
+        detail:
+            '${player.profile.name} sakatlandi • ${opponent.name} +1 degisiklik',
+        teamId: opponent.id,
+        relatedPlayerId: player.id,
+      );
     }
   }
 

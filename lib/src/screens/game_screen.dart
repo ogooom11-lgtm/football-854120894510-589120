@@ -3,14 +3,17 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../game/enums/ai_difficulty.dart';
-import '../game/enums/kick_type.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/logic/match_engine.dart';
+import '../game/enums/kick_type.dart';
+import '../game/enums/player_role.dart';
 import '../game/enums/team_id.dart';
+import '../game/logic/match_engine.dart';
 import '../game/logic/penalty_logic.dart';
 import '../game/math/vec2.dart';
-import '../game/models/player_game.dart';
+import '../game/models/formation.dart';
 import '../game/models/match_event.dart';
+import '../game/models/player_game.dart';
+import '../game/models/team_game.dart';
 import '../game/models/team_setup.dart';
 import '../render/game_painter.dart';
 
@@ -183,7 +186,11 @@ class _GameScreenState extends State<GameScreen>
         return;
       }
       if (key == LogicalKeyboardKey.escape) {
-        _confirmExitMatch();
+        if (_subTeam != null) {
+          _closeSubstitutionPanel();
+        } else {
+          _confirmExitMatch();
+        }
         return;
       }
       if (_engine.replayMode) {
@@ -474,7 +481,9 @@ class _GameScreenState extends State<GameScreen>
           candidate.profile.isGoalkeeper == victim.profile.isGoalkeeper &&
           !candidate.profile.isUnavailable,
     );
-    if (team.substitutionsUsed >= 5 || benchIndex < 0 || outIndex < 0) {
+    if (team.substitutionsUsed >= team.substitutionLimit ||
+        benchIndex < 0 ||
+        outIndex < 0) {
       _engine.popInjuryForcedSub();
       _engine.removeInjuredWithoutReplacement(victim);
       return;
@@ -489,13 +498,11 @@ class _GameScreenState extends State<GameScreen>
 
   void _openSubstitution(TeamId teamId) {
     final team = _engine.teamById(teamId);
-    if (team.bench.isEmpty || team.substitutionsUsed >= 5) {
-      return;
-    }
+    if (team.players.isEmpty) return;
     final pendingVictim = _engine.nextInjuryForcedSub;
     final forcedForThisTeam =
         pendingVictim != null && pendingVictim.teamId == teamId;
-    final victim = forcedForThisTeam ? _engine.popInjuryForcedSub() : null;
+    final victim = forcedForThisTeam ? pendingVictim : null;
     final compatibleBenchIndex = victim == null
         ? 0
         : team.bench.indexWhere(
@@ -514,6 +521,17 @@ class _GameScreenState extends State<GameScreen>
     _engine.setSubstitutionPaused(true);
   }
 
+  void _closeSubstitutionPanel() {
+    if (_injurySubActive) return;
+    setState(() {
+      _subTeam = null;
+      _injuryVictim = null;
+      _subPickingBench = false;
+    });
+    _engine.setSubstitutionPaused(false);
+    _focusNode.requestFocus();
+  }
+
   bool _handleSubstitutionKey(LogicalKeyboardKey key) {
     final teamId = _subTeam;
     if (teamId == null) {
@@ -521,8 +539,10 @@ class _GameScreenState extends State<GameScreen>
     }
     final team = _engine.teamById(teamId);
     if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.keyW) {
-      if (_subPickingBench) {
-        _subBenchIndex = (_subBenchIndex - 1).clamp(0, team.bench.length - 1).toInt();
+      if (_subPickingBench && team.bench.isNotEmpty) {
+        _subBenchIndex = (_subBenchIndex - 1)
+            .clamp(0, team.bench.length - 1)
+            .toInt();
       } else if (!_injurySubActive) {
         _subOutIndex = (_subOutIndex - 1)
             .clamp(0, team.players.length - 1)
@@ -531,8 +551,10 @@ class _GameScreenState extends State<GameScreen>
       return true;
     }
     if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyS) {
-      if (_subPickingBench) {
-        _subBenchIndex = (_subBenchIndex + 1).clamp(0, team.bench.length - 1).toInt();
+      if (_subPickingBench && team.bench.isNotEmpty) {
+        _subBenchIndex = (_subBenchIndex + 1)
+            .clamp(0, team.bench.length - 1)
+            .toInt();
       } else if (!_injurySubActive) {
         _subOutIndex = (_subOutIndex + 1)
             .clamp(0, team.players.length - 1)
@@ -546,16 +568,21 @@ class _GameScreenState extends State<GameScreen>
     }
     if (key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.keyD) {
-      _subPickingBench = true;
+      if (team.bench.isNotEmpty) _subPickingBench = true;
       return true;
     }
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
       if (!_subPickingBench) {
-        _subPickingBench = true;
+        if (team.bench.isNotEmpty &&
+            team.substitutionsUsed < team.substitutionLimit) {
+          _subPickingBench = true;
+        }
         return true;
       }
-      if (_engine.substitute(teamId, _subOutIndex, _subBenchIndex)) {
+      if (team.bench.isNotEmpty &&
+          _engine.substitute(teamId, _subOutIndex, _subBenchIndex)) {
+        if (_injurySubActive) _engine.popInjuryForcedSub();
         _engine.setSubstitutionPaused(false);
         _subTeam = null;
         _injurySubActive = false;
@@ -1204,116 +1231,510 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _substitutionPanel() {
     final team = _engine.teamById(_subTeam!);
-    final outPlayer =
-        team.players[_subOutIndex.clamp(0, team.players.length - 1)];
-    final benchPlayer =
-        team.bench[_subBenchIndex.clamp(0, team.bench.length - 1)];
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        width: 460,
-        margin: const EdgeInsets.only(left: 28),
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: const Color(0xff101820).withValues(alpha: 0.94),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${team.name} degisiklik ${team.substitutionsUsed}/5${_injurySubActive ? " (ZORUNLU SAKATLIK)" : ""}',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: _injurySubActive ? Colors.redAccent : Colors.white,
+    final plan = formationPlan(team.formation);
+    final canSubstitute =
+        team.bench.isNotEmpty &&
+        team.substitutionsUsed < team.substitutionLimit;
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.72),
+        child: Center(
+          child: Container(
+            width: 1080,
+            height: 680,
+            margin: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xff09150f),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _injurySubActive
+                    ? Colors.redAccent
+                    : const Color(0xffffd34d),
+                width: 1.5,
               ),
+              boxShadow: const [
+                BoxShadow(color: Colors.black54, blurRadius: 30),
+              ],
             ),
-            if (_injuryVictim != null)
-              Text(
-                '${_injuryVictim!.profile.name} sakatlandi! Hemen degistirin.',
-                style: const TextStyle(
-                  color: Colors.redAccent,
-                  fontWeight: FontWeight.w700,
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xff123f2e), Color(0xff101820)],
+                    ),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(15),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _injurySubActive
+                            ? Icons.medical_services
+                            : Icons.account_tree,
+                        color: _injurySubActive
+                            ? Colors.redAccent
+                            : const Color(0xffffd34d),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${team.name} • Dizilis ve Degisiklik',
+                              style: const TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(
+                              _injurySubActive
+                                  ? '${_injuryVictim?.profile.name ?? "Oyuncu"} sakatlandi: yedegi bu oyuncunun dairesine surukle.'
+                                  : 'Sahadaki oyunculari birbirine surukleyerek yerlerini sinirsiz degistir.',
+                              style: TextStyle(
+                                color: _injurySubActive
+                                    ? Colors.redAccent
+                                    : Colors.white60,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: 250,
+                        child: DropdownButtonFormField<FormationType>(
+                          value: playableFormationTypes.contains(team.formation)
+                              ? team.formation
+                              : FormationType.wing433,
+                          isDense: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Dizilis',
+                          ),
+                          items: [
+                            for (final formation in playableFormationTypes)
+                              DropdownMenuItem(
+                                value: formation,
+                                child: Text(
+                                  formation.title,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: (formation) {
+                            if (formation == null) return;
+                            setState(() {
+                              _engine.setFormation(team.id, formation);
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Chip(
+                        avatar: const Icon(Icons.swap_horiz, size: 17),
+                        label: Text(
+                          '${team.substitutionsUsed}/${team.substitutionLimit}',
+                        ),
+                      ),
+                      if (team.bonusSubstitutions > 0) ...[
+                        const SizedBox(width: 6),
+                        Chip(
+                          avatar: const Icon(
+                            Icons.add_circle,
+                            size: 17,
+                            color: Colors.greenAccent,
+                          ),
+                          label: Text('+${team.bonusSubstitutions} sakatlik hakki'),
+                        ),
+                      ],
+                      IconButton(
+                        tooltip: _injurySubActive
+                            ? 'Zorunlu degisiklik tamamlanmali'
+                            : 'Kapat',
+                        onPressed:
+                            _injurySubActive ? null : _closeSubstitutionPanel,
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            const SizedBox(height: 10),
-            Text(
-              'Cikan: ${outPlayer.number} ${outPlayer.profile.name}  Enerji ${(outPlayer.stamina * 100).round()}%',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            Text(
-              'Giren: ${benchPlayer.number} ${benchPlayer.profile.name}  Enerji ${(benchPlayer.stamina * 100).round()}%',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _subPickingBench
-                  ? '2. Adim: girecek oyuncuyu sec'
-                  : '1. Adim: cikacak oyuncuyu sec',
-              style: const TextStyle(color: Color(0xffffd34d)),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 160,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _subList(
-                      team.players,
-                      _subOutIndex,
-                      active: !_subPickingBench,
-                    ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 7,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              return Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xff087a36),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: Colors.white70,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Stack(
+                                  children: [
+                                    Positioned(
+                                      left: constraints.maxWidth / 2 - 1,
+                                      top: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                        width: 2,
+                                        color: Colors.white30,
+                                      ),
+                                    ),
+                                    Positioned(
+                                      left: constraints.maxWidth / 2 - 52,
+                                      top: constraints.maxHeight / 2 - 52,
+                                      child: Container(
+                                        width: 104,
+                                        height: 104,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Colors.white30,
+                                            width: 2,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    for (var slot = 0;
+                                        slot < plan.spots.length &&
+                                            slot < team.players.length;
+                                        slot++)
+                                      _matchFormationSlot(
+                                        team: team,
+                                        plan: plan,
+                                        slotIndex: slot,
+                                        width: constraints.maxWidth,
+                                        height: constraints.maxHeight,
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 4,
+                        child: Container(
+                          margin: const EdgeInsets.fromLTRB(0, 14, 14, 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xff101820),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'YEDEKLER',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                        color: Color(0xffffd34d),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      canSubstitute
+                                          ? 'Yedegi tutup cikacak oyuncunun dairesine birak.'
+                                          : team.bench.isEmpty
+                                          ? 'Kullanilabilir yedek oyuncu yok.'
+                                          : 'Degisiklik hakki doldu. Pozisyon takasi yapabilirsin.',
+                                      style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Divider(height: 1),
+                              Expanded(
+                                child: team.bench.isEmpty
+                                    ? const Center(
+                                        child: Text(
+                                          'Yedek yok',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                          ),
+                                        ),
+                                      )
+                                    : ListView.builder(
+                                        padding: const EdgeInsets.all(8),
+                                        itemCount: team.bench.length,
+                                        itemBuilder: (context, index) {
+                                          final player = team.bench[index];
+                                          return _matchBenchPlayerCard(
+                                            player,
+                                            enabled: canSubstitute &&
+                                                !player.profile.isUnavailable,
+                                          );
+                                        },
+                                      ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _injurySubActive
+                                        ? null
+                                        : _closeSubstitutionPanel,
+                                    icon: const Icon(Icons.check),
+                                    label: const Text('Tamam'),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _subList(
-                      team.bench,
-                      _subBenchIndex,
-                      active: _subPickingBench,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            const Text(
-              'Yukari/Asagi sec, Enter sonraki adim/onay, Sol/Sag kolon, Esc cikis',
-              style: TextStyle(color: Colors.white70),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _subList(
-    List<PlayerGame> players,
-    int selectedIndex, {
-    required bool active,
+  Widget _matchFormationSlot({
+    required TeamGame team,
+    required FormationPlan plan,
+    required int slotIndex,
+    required double width,
+    required double height,
   }) {
-    return ListView.builder(
-      itemCount: players.length,
-      itemBuilder: (context, index) {
-        final player = players[index];
-        final selected = index == selectedIndex;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          color: selected
-              ? (active
-                    ? const Color(0xffffd34d).withValues(alpha: 0.22)
-                    : Colors.white.withValues(alpha: 0.12))
-              : Colors.transparent,
-          child: Text(
-            '${player.number} ${player.profile.name} ${(player.stamina * 100).round()}%',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        );
-      },
+    final spot = plan.spots[slotIndex];
+    final player = team.players[slotIndex];
+    final injuryTarget = _injuryVictim == player;
+    final left = (16 + spot.x * (width - 96)).clamp(0.0, width - 80).toDouble();
+    final top = (16 + spot.y * (height - 82)).clamp(0.0, height - 62).toDouble();
+    return Positioned(
+      left: left,
+      top: top,
+      width: 80,
+      height: 62,
+      child: DragTarget<PlayerGame>(
+        onWillAcceptWithDetails: (details) =>
+            _canDropMatchPlayer(team, details.data, slotIndex),
+        onAcceptWithDetails: (details) {
+          _acceptMatchPlayerDrop(team, details.data, slotIndex);
+        },
+        builder: (context, candidates, rejected) {
+          final highlighted = candidates.isNotEmpty;
+          final circle = AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: injuryTarget
+                  ? Colors.redAccent.withValues(alpha: 0.86)
+                  : highlighted
+                  ? const Color(0xffffd34d)
+                  : player.isSentOff
+                  ? Colors.black54
+                  : const Color(0xff101820).withValues(alpha: 0.94),
+              border: Border.all(
+                color: highlighted || injuryTarget
+                    ? Colors.white
+                    : Colors.white70,
+                width: highlighted || injuryTarget ? 3 : 1.5,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  player.isSentOff ? 'KIRMIZI' : '${player.number}',
+                  style: TextStyle(
+                    color: highlighted ? Colors.black : const Color(0xffffd34d),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 10,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    player.profile.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: highlighted ? Colors.black : Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 9,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${spot.role.code} • ${(player.stamina * 100).round()}%',
+                  style: TextStyle(
+                    color: highlighted ? Colors.black87 : Colors.white54,
+                    fontSize: 8,
+                  ),
+                ),
+              ],
+            ),
+          );
+          if (_injurySubActive || player.isSentOff) return circle;
+          return Draggable<PlayerGame>(
+            data: player,
+            feedback: Material(
+              color: Colors.transparent,
+              child: _matchDragFeedback(player),
+            ),
+            childWhenDragging: Opacity(opacity: 0.25, child: circle),
+            child: circle,
+          );
+        },
+      ),
     );
+  }
+
+  Widget _matchBenchPlayerCard(PlayerGame player, {required bool enabled}) {
+    final card = Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: enabled
+            ? Colors.white.withValues(alpha: 0.045)
+            : Colors.redAccent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: enabled ? Colors.white12 : Colors.redAccent),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 17,
+            backgroundColor: const Color(0x22ffd34d),
+            child: Text(
+              '${player.number}',
+              style: const TextStyle(
+                color: Color(0xffffd34d),
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  player.profile.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  '${player.role.code} • OVR ${player.profile.effectiveOverall.round()} • Enerji ${(player.stamina * 100).round()}%',
+                  style: const TextStyle(color: Colors.white54, fontSize: 9),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            enabled ? Icons.drag_indicator : Icons.block,
+            color: enabled ? Colors.white54 : Colors.redAccent,
+          ),
+        ],
+      ),
+    );
+    if (!enabled) return card;
+    return Draggable<PlayerGame>(
+      data: player,
+      feedback: Material(
+        color: Colors.transparent,
+        child: _matchDragFeedback(player),
+      ),
+      childWhenDragging: Opacity(opacity: 0.25, child: card),
+      child: card,
+    );
+  }
+
+  Widget _matchDragFeedback(PlayerGame player) {
+    return Container(
+      width: 190,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xff101820),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xffffd34d)),
+      ),
+      child: Text(
+        '${player.profile.name} • OVR ${player.profile.effectiveOverall.round()}',
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  bool _canDropMatchPlayer(
+    TeamGame team,
+    PlayerGame dragged,
+    int targetSlot,
+  ) {
+    if (targetSlot < 0 || targetSlot >= team.players.length) return false;
+    final target = team.players[targetSlot];
+    if (target.isSentOff) return false;
+    final activeIndex = team.players.indexOf(dragged);
+    if (activeIndex >= 0) {
+      return !_injurySubActive &&
+          !dragged.isSentOff &&
+          dragged.isGoalkeeper == target.isGoalkeeper;
+    }
+    final benchIndex = team.bench.indexOf(dragged);
+    if (benchIndex < 0 || dragged.profile.isUnavailable) return false;
+    if (team.substitutionsUsed >= team.substitutionLimit) return false;
+    if (dragged.profile.isGoalkeeper != target.isGoalkeeper) return false;
+    if (_injurySubActive && target != _injuryVictim) return false;
+    return true;
+  }
+
+  void _acceptMatchPlayerDrop(
+    TeamGame team,
+    PlayerGame dragged,
+    int targetSlot,
+  ) {
+    final activeIndex = team.players.indexOf(dragged);
+    if (activeIndex >= 0) {
+      setState(() {
+        _engine.swapPlayerPositions(team.id, activeIndex, targetSlot);
+      });
+      return;
+    }
+    final benchIndex = team.bench.indexOf(dragged);
+    if (benchIndex < 0) return;
+    final changed = _engine.substitute(team.id, targetSlot, benchIndex);
+    if (!changed) return;
+    if (_injurySubActive) {
+      _engine.popInjuryForcedSub();
+    }
+    setState(() {
+      _injurySubActive = false;
+      _injuryVictim = null;
+      _subOutIndex = targetSlot;
+      _subBenchIndex = 0;
+    });
   }
 
   Widget _replayPanel() {

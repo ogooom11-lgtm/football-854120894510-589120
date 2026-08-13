@@ -39,6 +39,8 @@ class TeamGame {
   final List<PlayerGame> substitutedOut = [];
   int score = 0;
   int substitutionsUsed = 0;
+  int bonusSubstitutions = 0;
+  int get substitutionLimit => 5 + bonusSubstitutions;
   final List<GoalEvent> goals = [];
 
   factory TeamGame.fromSetup({
@@ -244,8 +246,44 @@ class TeamGame {
     }
   }
 
+  bool swapPlayerPositions(int firstIndex, int secondIndex) {
+    if (firstIndex < 0 ||
+        secondIndex < 0 ||
+        firstIndex >= players.length ||
+        secondIndex >= players.length) {
+      return false;
+    }
+    if (firstIndex == secondIndex) return true;
+    final first = players[firstIndex];
+    final second = players[secondIndex];
+    if (first.isSentOff ||
+        second.isSentOff ||
+        first.isGoalkeeper != second.isGoalkeeper) {
+      return false;
+    }
+    players[firstIndex] = second;
+    players[secondIndex] = first;
+    final plan = formationPlan(formation);
+    players[firstIndex]
+      ..role = plan.spots[firstIndex].role
+      ..homePos = pitchPoint(
+        plan.spots[firstIndex].x,
+        plan.spots[firstIndex].y,
+        side,
+      );
+    players[secondIndex]
+      ..role = plan.spots[secondIndex].role
+      ..homePos = pitchPoint(
+        plan.spots[secondIndex].x,
+        plan.spots[secondIndex].y,
+        side,
+      );
+    resetDirections();
+    return true;
+  }
+
   bool substitute(int outIndex, int benchIndex) {
-    if (substitutionsUsed >= 5 ||
+    if (substitutionsUsed >= substitutionLimit ||
         outIndex < 0 ||
         outIndex >= players.length ||
         benchIndex < 0 ||

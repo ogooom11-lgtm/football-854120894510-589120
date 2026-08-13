@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:new_football/src/game/config/game_constants.dart';
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
 import 'package:new_football/src/game/logic/match_engine.dart';
@@ -114,6 +115,37 @@ void main() {
       expect(engine.ball.owner, isNull);
       expect(engine.ball.lastTouch, keeper);
       expect(keeper.keeperRehandleCooldown, greaterThanOrEqualTo(1.35));
+    });
+  });
+
+  group('discipline and substitutions', () {
+    test('red cards always carry a two-match suspension', () {
+      expect(GameConstants.redCardSuspensionMatches, 2);
+    });
+
+    test('position swaps are free and injury bonus raises the limit', () {
+      final setup = LeagueFactory.createDefaultSeason().createCurrentMatchSetup();
+      final engine = MatchEngine(setup!);
+      final team = engine.blueTeam;
+      final firstProfile = team.players[1].profile;
+      final secondProfile = team.players[2].profile;
+
+      expect(team.swapPlayerPositions(1, 2), isTrue);
+      expect(team.players[1].profile, secondProfile);
+      expect(team.players[2].profile, firstProfile);
+      expect(team.substitutionsUsed, 0);
+      expect(team.substitutionLimit, 5);
+
+      team
+        ..substitutionsUsed = 5
+        ..bonusSubstitutions = 1;
+      expect(team.substitutionLimit, 6);
+      final fieldBenchIndex = team.bench.indexWhere(
+        (player) => !player.profile.isGoalkeeper,
+      );
+      expect(fieldBenchIndex, greaterThanOrEqualTo(0));
+      expect(team.substitute(1, fieldBenchIndex), isTrue);
+      expect(team.substitutionsUsed, 6);
     });
   });
 

@@ -53,6 +53,8 @@ class _SetupScreenState extends State<SetupScreen> {
       TextEditingController();
   bool _showAdminPasswordField = false;
   bool _adminPasswordError = false;
+  int _pendingAdminTab = 5;
+  String _penaltySearch = '';
   String _accountSearch = '';
   String _teamSearch = '';
   String _playerSearch = '';
@@ -270,8 +272,9 @@ class _SetupScreenState extends State<SetupScreen> {
         _pressedKeys.contains(LogicalKeyboardKey.keyC);
   }
 
-  Future<void> _openAdminLogin() async {
+  Future<void> _openAdminLogin({int targetTab = 5}) async {
     setState(() {
+      _pendingAdminTab = targetTab;
       _showAdminPasswordField = true;
       _adminPasswordError = false;
     });
@@ -291,7 +294,7 @@ class _SetupScreenState extends State<SetupScreen> {
         data.adminLoggedIn = true;
         _showAdminPasswordField = false;
         _adminPasswordController.clear();
-        _setupTab = 5;
+        _setupTab = _pendingAdminTab;
       });
       await _save();
       return;
@@ -304,7 +307,7 @@ class _SetupScreenState extends State<SetupScreen> {
       data.adminLoggedIn = true;
       _showAdminPasswordField = false;
       _adminPasswordController.clear();
-      _setupTab = 5;
+      _setupTab = _pendingAdminTab;
     });
     await _save();
   }
@@ -791,6 +794,11 @@ class _SetupScreenState extends State<SetupScreen> {
         icon: Icon(Icons.help_outline),
         label: Text('Aciklama'),
       ),
+      const ButtonSegment(
+        value: 6,
+        icon: Icon(Icons.gavel),
+        label: Text('CEZALAR'),
+      ),
       if (data?.adminLoggedIn == true)
         const ButtonSegment(
           value: 5,
@@ -804,8 +812,14 @@ class _SetupScreenState extends State<SetupScreen> {
     return SegmentedButton<int>(
       segments: segments,
       selected: {selectedValue},
-      onSelectionChanged: (selection) =>
-          setState(() => _setupTab = selection.first),
+      onSelectionChanged: (selection) {
+        final target = selection.first;
+        if (target == 6 && data?.adminLoggedIn != true) {
+          _openAdminLogin(targetTab: 6);
+          return;
+        }
+        setState(() => _setupTab = target);
+      },
     );
   }
 
@@ -823,6 +837,7 @@ class _SetupScreenState extends State<SetupScreen> {
       2 => _teamsPage(data),
       3 => _playerPool(data),
       5 => data.adminLoggedIn ? _adminPage(data) : _helpPage(),
+      6 => data.adminLoggedIn ? _penaltiesPage(data) : _lockedPenaltiesPage(),
       _ => _helpPage(),
     };
   }
@@ -1695,6 +1710,343 @@ class _SetupScreenState extends State<SetupScreen> {
         ],
       ),
     );
+  }
+
+  Widget _lockedPenaltiesPage() {
+    return Center(
+      child: Container(
+        width: 480,
+        padding: const EdgeInsets.all(28),
+        decoration: _adminPanelDecoration(Colors.redAccent),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock, size: 54, color: Colors.redAccent),
+            const SizedBox(height: 12),
+            const Text(
+              'CEZALAR sayfasi kilitli',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Oyuncu mac cezalarini gormek ve degistirmek icin yonetici sifresi gerekir.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () => _openAdminLogin(targetTab: 6),
+              icon: const Icon(Icons.password),
+              label: const Text('Sifre ile ac'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _penaltiesPage(SavedGameData data) {
+    final query = _penaltySearch.trim().toLowerCase();
+    final activeTeams = data.teams.where((team) => !team.isDeleted).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    final assignedIds = activeTeams.expand((team) => team.playerIds).toSet();
+    final unassigned = data.players
+        .where(
+          (player) =>
+              !assignedIds.contains(player.id) &&
+              (query.isEmpty || player.name.toLowerCase().contains(query)),
+        )
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    final groups = <(String, List<PlayerProfile>)>[];
+    for (final team in activeTeams) {
+      final teamMatches = query.isNotEmpty &&
+          team.name.toLowerCase().contains(query);
+      final players = data.players
+          .where(
+            (player) =>
+                team.playerIds.contains(player.id) &&
+                (query.isEmpty ||
+                    teamMatches ||
+                    player.name.toLowerCase().contains(query)),
+          )
+          .toList()
+        ..sort((a, b) {
+          final suspension = b.suspendedMatchesRemaining.compareTo(
+            a.suspendedMatchesRemaining,
+          );
+          return suspension != 0 ? suspension : a.name.compareTo(b.name);
+        });
+      if (players.isNotEmpty || query.isEmpty) {
+        groups.add((team.name, players));
+      }
+    }
+    if (unassigned.isNotEmpty) groups.add(('Takimsiz oyuncular', unassigned));
+    final suspendedCount = data.players
+        .where((player) => player.suspendedMatchesRemaining > 0)
+        .length;
+    return Container(
+      decoration: _adminPanelDecoration(Colors.redAccent),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.gavel, color: Colors.redAccent, size: 30),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'CEZALAR',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'Oyuncular takimlarina gore gruplanir. Eksi/arti ile mac cezasini degistir.',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    ],
+                  ),
+                ),
+                Chip(
+                  avatar: const Icon(Icons.block, size: 17),
+                  label: Text('$suspendedCount cezali oyuncu'),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      data.adminLoggedIn = false;
+                      _setupTab = 0;
+                    });
+                    _save();
+                  },
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('Kilitle'),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: TextField(
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Takim veya oyuncu ara',
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _penaltySearch = value),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: groups.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Aramaya uygun takim veya oyuncu bulunamadi.',
+                      style: TextStyle(color: Colors.white60),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+                    itemCount: groups.length,
+                    itemBuilder: (context, index) {
+                      final group = groups[index];
+                      final activeSuspensions = group.$2
+                          .where(
+                            (player) => player.suspendedMatchesRemaining > 0,
+                          )
+                          .length;
+                      return Card(
+                        color: const Color(0xff0d1a16),
+                        margin: const EdgeInsets.only(bottom: 9),
+                        child: ExpansionTile(
+                          key: ValueKey('${group.$1}-$query'),
+                          initiallyExpanded: query.isNotEmpty,
+                          leading: const CircleAvatar(
+                            backgroundColor: Color(0x22ff5252),
+                            child: Icon(Icons.shield, color: Colors.redAccent),
+                          ),
+                          title: Text(
+                            group.$1,
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          subtitle: Text(
+                            '${group.$2.length} oyuncu • $activeSuspensions cezali',
+                          ),
+                          children: [
+                            for (final player in group.$2)
+                              _penaltyPlayerRow(player),
+                            if (group.$2.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Text(
+                                  'Bu takimda oyuncu yok.',
+                                  style: TextStyle(color: Colors.white54),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _penaltyPlayerRow(PlayerProfile player) {
+    final matches = player.suspendedMatchesRemaining;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: matches > 0
+            ? Colors.redAccent.withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.025),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: matches > 0
+              ? Colors.redAccent.withValues(alpha: 0.35)
+              : Colors.white10,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            player.isGoalkeeper ? Icons.back_hand : Icons.person,
+            color: matches > 0 ? Colors.redAccent : Colors.white60,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  player.name,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  'Sari ${player.yellowCards} • Kirmizi ${player.redCards} • OVR ${player.effectiveOverall.round()}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Bir mac azalt',
+            onPressed: matches <= 0
+                ? null
+                : () {
+                    setState(() => player.suspendedMatchesRemaining -= 1);
+                    _save();
+                  },
+            icon: const Icon(Icons.remove_circle_outline),
+          ),
+          SizedBox(
+            width: 92,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () => _setPlayerSuspensionDialog(player),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  '$matches MAC',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: matches > 0
+                        ? Colors.redAccent
+                        : Colors.greenAccent,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Bir mac ekle',
+            onPressed: matches >= 50
+                ? null
+                : () {
+                    setState(() {
+                      player.suspendedMatchesRemaining = (matches + 1)
+                          .clamp(0, 50)
+                          .toInt();
+                    });
+                    _save();
+                  },
+            icon: const Icon(Icons.add_circle_outline),
+          ),
+          PopupMenuButton<int>(
+            tooltip: 'Ceza sayisini dogrudan sec',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              setState(() => player.suspendedMatchesRemaining = value);
+              _save();
+            },
+            itemBuilder: (context) => [
+              for (final value in const [0, 1, 2, 3, 5, 10, 20, 30, 50])
+                PopupMenuItem(value: value, child: Text('$value mac')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setPlayerSuspensionDialog(PlayerProfile player) async {
+    final controller = TextEditingController(
+      text: '${player.suspendedMatchesRemaining}',
+    );
+    final value = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xff101820),
+        title: Text('${player.name} • Mac cezasi'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Oynayamayacagi mac sayisi',
+            helperText: '0 cezayi tamamen kaldirir.',
+          ),
+          onSubmitted: (text) {
+            final parsed = int.tryParse(text.trim());
+            if (parsed != null) {
+              Navigator.of(dialogContext).pop(parsed.clamp(0, 99).toInt());
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Vazgec'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final parsed = int.tryParse(controller.text.trim());
+              if (parsed != null) {
+                Navigator.of(
+                  dialogContext,
+                ).pop(parsed.clamp(0, 99).toInt());
+              }
+            },
+            child: const Text('Uygula'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || !mounted) return;
+    setState(() => player.suspendedMatchesRemaining = value);
+    await _save();
   }
 
   Widget _adminPage(SavedGameData data) {
