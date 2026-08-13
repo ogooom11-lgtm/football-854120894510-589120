@@ -18,7 +18,10 @@ class BallPhysics {
 
     final previousHeight = ball.heightMeters;
     ball.heightMeters += ball.verticalVelocity * dt;
-    ball.verticalVelocity -= GameConstants.gravityMeters * dt;
+    final gravity = ball.dippingFreeKick
+        ? GameConstants.gravityMeters * 5.30
+        : GameConstants.gravityMeters;
+    ball.verticalVelocity -= gravity * dt;
 
     if (ball.heightMeters <= 0) {
       if (previousHeight > 0.05 && ball.verticalVelocity < -0.25) {

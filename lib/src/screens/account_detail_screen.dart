@@ -23,6 +23,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   bool _loading = true;
   final FocusNode _adminShortcutFocus = FocusNode();
   String _adminShortcutBuffer = '';
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -81,9 +82,30 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_myTeamsTab(data), _myPlayersTab(data), _allTeamsTab(data)],
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: TextField(
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Ara',
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _myTeamsTab(data),
+                _myPlayersTab(data),
+                _allTeamsTab(data),
+              ],
+            ),
+          ),
+        ],
       ),
     ),
     );
@@ -136,16 +158,30 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   Future<void> _showAdminPanel() async {
     final data = _data;
     if (data == null) return;
+    if (!data.adminLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('افتح لوحة الإدارة وسجّل دخول المدير أولاً'),
+        ),
+      );
+      return;
+    }
     final teams = data.teams.where((team) => !team.isDeleted).toList();
     if (teams.isEmpty) return;
     var selectedTeamId = teams.first.id;
+    var adminSearch = '';
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final team = teams.firstWhere((item) => item.id == selectedTeamId);
           final players = data.players
-              .where((player) => team.playerIds.contains(player.id))
+              .where(
+                (player) =>
+                    team.playerIds.contains(player.id) &&
+                    (adminSearch.isEmpty ||
+                        player.name.toLowerCase().contains(adminSearch)),
+              )
               .toList();
           return AlertDialog(
             backgroundColor: const Color(0xff102019),
@@ -167,6 +203,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                         setDialogState(() => selectedTeamId = value);
                       }
                     },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      labelText: 'ابحث عن لاعب في الفريق',
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setDialogState(
+                      () => adminSearch = value.trim().toLowerCase(),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -234,6 +281,40 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   _adminEditorSlider('مهارة الحارس', player.goalkeepingRating, (v) {
                     setDialogState(() => player.goalkeepingRating = v);
                   }),
+                  _adminEditorSlider(
+                    'قوة التحمّل Dayaniklilik',
+                    player.dayaniklilikGucu,
+                    (v) {
+                      setDialogState(() => player.dayaniklilikGucu = v);
+                    },
+                  ),
+                  _adminEditorSlider('قوة الذكاء', player.zekaGucu, (v) {
+                    setDialogState(() => player.zekaGucu = v);
+                  }),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('عقوبة إيقاف بالمباريات'),
+                    subtitle: Text(
+                      'بطاقات: ${player.yellowCards} صفراء، ${player.redCards} حمراء',
+                    ),
+                    trailing: DropdownButton<int>(
+                      value: player.suspendedMatchesRemaining.clamp(0, 20).toInt(),
+                      items: [
+                        for (var matches = 0; matches <= 20; matches++)
+                          DropdownMenuItem(
+                            value: matches,
+                            child: Text('$matches'),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(
+                            () => player.suspendedMatchesRemaining = value,
+                          );
+                        }
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -278,8 +359,18 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   }
 
   Widget _myTeamsTab(SavedGameData data) {
+    final query = _searchQuery.trim().toLowerCase();
     final myTeams = data.teams
-        .where((t) => t.ownerAccountId == data.activeAccountId && !t.isDeleted)
+        .where(
+          (team) =>
+              team.ownerAccountId == data.activeAccountId &&
+              !team.isDeleted &&
+              (query.isEmpty ||
+                  team.name.toLowerCase().contains(query) ||
+                  data.players.any((player) =>
+                      team.playerIds.contains(player.id) &&
+                      player.name.toLowerCase().contains(query))),
+        )
         .toList();
 
     if (myTeams.isEmpty) {
@@ -392,9 +483,9 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                       '${r.result} ${r.scoreText} vs ${r.opponentName}',
                       style: TextStyle(
                         fontSize: 12,
-                        color: r.result == 'G'
+                        color: r.result.startsWith('G')
                             ? Colors.greenAccent
-                            : r.result == 'M'
+                            : r.result.startsWith('M')
                             ? Colors.redAccent
                             : Colors.white60,
                       ),
@@ -500,9 +591,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
         .where((t) => t.ownerAccountId == data.activeAccountId && !t.isDeleted)
         .expand((t) => t.playerIds)
         .toSet();
-    final myPlayers =
-        data.players.where((p) => myTeamIds.contains(p.id)).toList()
-          ..sort((a, b) => b.points.compareTo(a.points));
+    final query = _searchQuery.trim().toLowerCase();
+    final myPlayers = data.players
+        .where(
+          (player) =>
+              myTeamIds.contains(player.id) &&
+              (query.isEmpty ||
+                  player.name.toLowerCase().contains(query) ||
+                  (player.number?.toString().contains(query) ?? false)),
+        )
+        .toList()
+      ..sort((a, b) => b.points.compareTo(a.points));
 
     if (myPlayers.isEmpty) {
       return const Center(
@@ -522,7 +621,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
           margin: const EdgeInsets.only(bottom: 6),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: p.isInjured
+            color: p.isUnavailable
                 ? Colors.red.withValues(alpha: 0.08)
                 : Colors.white.withValues(alpha: 0.03),
             borderRadius: BorderRadius.circular(8),
@@ -601,6 +700,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   _statChip('Sut', p.shots),
                   _statChip('Kurtaris', p.saves),
                   _statChip('Top', p.clearances + p.tackles),
+                  _statChip('Dayaniklilik', p.dayaniklilikGucu.round()),
                   _statChip('Puan', p.points.toInt()),
                   _statChip('Mac', p.matchesPlayed),
                 ],
@@ -612,6 +712,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                     'Sakatlik: ${p.injuredDaysRemaining} gun kaldi',
                     style: const TextStyle(
                       color: Colors.redAccent,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              if (p.isSuspended)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Mac cezasi: ${p.suspendedMatchesRemaining} mac kaldi',
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -631,7 +742,14 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   }
 
   Widget _allTeamsTab(SavedGameData data) {
-    final activeTeams = data.teams.where((t) => !t.isDeleted).toList()
+    final query = _searchQuery.trim().toLowerCase();
+    final activeTeams = data.teams
+        .where(
+          (team) =>
+              !team.isDeleted &&
+              (query.isEmpty || team.name.toLowerCase().contains(query)),
+        )
+        .toList()
       ..sort((a, b) => b.rating.compareTo(a.rating));
 
     return ListView.builder(

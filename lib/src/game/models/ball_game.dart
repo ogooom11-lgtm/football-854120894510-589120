@@ -13,14 +13,21 @@ class BallGame {
   PlayerGame? owner;
   PlayerGame? lastTouch;
   PlayerGame? lastPasser;
+  PlayerGame? potentialAssister;
   PlayerGame? intendedReceiver;
   KickType? lastKickType;
   bool lastPassWasHigh = false;
   bool hasBouncedSinceKick = false;
+  bool goalLineMissCommitted = false;
+  bool dippingFreeKick = false;
 
   bool get isOnGround => heightMeters <= 0.04;
 
   void attachTo(PlayerGame player) {
+    if (potentialAssister != null &&
+        potentialAssister!.teamId != player.teamId) {
+      potentialAssister = null;
+    }
     owner = player;
     lastTouch = player;
     vel = Vec2.zero();
@@ -29,6 +36,8 @@ class BallGame {
     lastKickType = null;
     lastPassWasHigh = false;
     hasBouncedSinceKick = false;
+    goalLineMissCommitted = false;
+    dippingFreeKick = false;
     final front = player.lastDirection.normalized(
       Vec2(player.teamId == lastTouch?.teamId ? 1 : -1, 0),
     );
@@ -43,15 +52,21 @@ class BallGame {
     required KickType kickType,
     double loft = 0,
     bool highPass = false,
+    bool dippingFreeKick = false,
   }) {
     final dir = direction.normalized(toucher.lastDirection);
     owner = null;
     lastTouch = toucher;
     lastPasser = toucher;
+    if (kickType == KickType.pass || kickType == KickType.highPass) {
+      potentialAssister = toucher;
+    }
     intendedReceiver = receiver;
     lastKickType = kickType;
     lastPassWasHigh = highPass;
     hasBouncedSinceKick = false;
+    goalLineMissCommitted = false;
+    this.dippingFreeKick = dippingFreeKick;
     final baseSpeed = kickType == KickType.shoot
         ? 8.2
         : highPass

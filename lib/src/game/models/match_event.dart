@@ -8,12 +8,16 @@ class GoalEvent {
     required this.minute,
     this.isPenalty = false,
     this.canceled = false,
+    this.scorerPlayerId,
+    this.assisterPlayerId,
   });
 
   final TeamId teamId;
   final String scorerName;
   final int minute;
   final bool isPenalty;
+  final String? scorerPlayerId;
+  final String? assisterPlayerId;
   bool canceled;
 }
 
@@ -38,11 +42,73 @@ class OffsideEvent {
 }
 
 class MatchBanner {
-  const MatchBanner(this.title, this.subtitle, this.seconds);
+  const MatchBanner(
+    this.title,
+    this.subtitle,
+    this.seconds, {
+    this.minute,
+    this.kind = 'info',
+  });
 
   final String title;
   final String subtitle;
   final double seconds;
+  final int? minute;
+  final String kind;
+}
+
+class DisciplinaryEvent {
+  DisciplinaryEvent({
+    required this.teamId,
+    required this.playerId,
+    required this.playerName,
+    required this.minute,
+    required this.card,
+    required this.reason,
+    this.suspensionMatches = 0,
+    this.canceled = false,
+  });
+
+  final TeamId teamId;
+  final String playerId;
+  final String playerName;
+  final int minute;
+  final String card;
+  final String reason;
+  final int suspensionMatches;
+  bool canceled;
+
+  bool get isRed => card == 'red' || card == 'secondYellow';
+
+  String get title => switch (card) {
+        'yellow' => 'SARI KART',
+        'secondYellow' => 'IKINCI SARI / KIRMIZI',
+        _ => 'KIRMIZI KART',
+      };
+}
+
+class MatchTimelineEvent {
+  MatchTimelineEvent({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.detail,
+    required this.minute,
+    required this.replayIndex,
+    this.teamId,
+    this.relatedPlayerId,
+    this.canceled = false,
+  });
+
+  final String id;
+  final String kind;
+  final String title;
+  final String detail;
+  final int minute;
+  final int replayIndex;
+  final TeamId? teamId;
+  final String? relatedPlayerId;
+  bool canceled;
 }
 
 class ReplayPlayerFrame {

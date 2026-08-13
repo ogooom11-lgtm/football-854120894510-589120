@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import '../config/game_constants.dart';
 import '../enums/kick_type.dart';
-import '../enums/player_role.dart';
 import '../enums/ai_difficulty.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
@@ -28,11 +27,23 @@ class GoalkeeperAi {
     if (ball.owner == keeper) {
       keeper.catchTimer += dt;
       keeper.keeperState = 'top elde';
-      _distribute(keeper, team, opponent, engine);
+      final waitingForHumanGoalKick =
+          engine.isGoalKickPendingFor(team) &&
+          engine.isRestartWaitingForHuman(team);
+      // A human may take the goal kick manually. If no input arrives, the
+      // keeper must still release the ball instead of holding it forever.
+      if (!waitingForHumanGoalKick || keeper.catchTimer >= 3.2) {
+        _distribute(keeper, team, engine);
+      }
       return;
     }
     keeper.catchTimer = 0;
-    keeper.keeperState = keeper.keeperGroundTimer > 0 ? 'yerde' : 'yuruyor';
+    if (keeper.keeperGroundTimer <= 0) {
+      keeper.keeperState = 'yuruyor';
+    } else if (keeper.keeperState != 'atlayis' &&
+        keeper.keeperState != 'kurtaris') {
+      keeper.keeperState = 'yerde';
+    }
 
     final goalX = team.side == TeamSide.left
         ? GameConstants.leftBound + 18
@@ -66,6 +77,8 @@ class GoalkeeperAi {
       if (keeper.keeperDiveCooldown <= 0 && keeper.keeperGroundTimer <= 0) {
         keeper
           ..keeperState = 'atlayis'
+          ..jumpBoostMeters = 0.12 + keeperSkill * 0.08
+          ..jumpAnimationTimer = 0.62
           ..keeperGroundTimer = 1.08 - keeperSkill * 0.22
           ..keeperDiveCooldown = 1.42 - keeperSkill * 0.18;
       }
@@ -120,15 +133,26 @@ class GoalkeeperAi {
       }
     }
 
-    if (keeper.pos.distanceTo(ball.pos) <
-            keeper.radius + GameConstants.ballRadius + 9 &&
-        ball.heightMeters <= keeper.bodyReachMeters + 0.15) {
+    final handlingReach =
+        keeper.radius +
+        GameConstants.ballRadius +
+        10 +
+        keeperSkill * 22 * difficulty.anticipationFactor;
+    if (keeper.pos.distanceTo(ball.pos) < handlingReach &&
+        ball.heightMeters <= keeper.bodyReachMeters) {
       final isShot = ball.lastKickType == KickType.shoot;
-      final catchChance = isShot
-          ? (0.18 + keeperSkill * 0.24) * difficulty.anticipationFactor
-          : ((ball.vel.length < 6.8 ? 0.48 : 0.30) + keeperSkill * 0.28) *
-                difficulty.anticipationFactor;
-      if (random.nextDouble() < catchChance) {
+      final speedPenalty = math.max(0.0, ball.vel.length - 6.5) * 0.025;
+      final catchChance = (isShot
+              ? 0.10 + keeperSkill * 0.66 - speedPenalty
+              : (ball.vel.length < 6.8 ? 0.40 : 0.24) +
+                    keeperSkill * 0.48)
+          .clamp(0.08, 0.92) *
+          difficulty.anticipationFactor;
+      if (random.nextDouble() < catchChance.clamp(0.06, 0.94)) {
+        if (isShot) {
+          keeper.profile.saves += 1;
+          keeper.matchSaves += 1;
+        }
         ball.attachTo(keeper);
         keeper.catchTimer = 0;
         keeper.keeperState = 'top elde';
@@ -154,7 +178,6 @@ class GoalkeeperAi {
   void _distribute(
     PlayerGame keeper,
     TeamGame team,
-    TeamGame opponent,
     MatchEngine engine,
   ) {
     final goalKick = engine.isGoalKickPendingFor(team);
@@ -174,34 +197,13 @@ class GoalkeeperAi {
       return;
     }
 
-    final shortTargets = team.players.where(
-      (player) =>
-          player.role == PlayerRole.leftWingBack ||
-          player.role == PlayerRole.rightWingBack ||
-          player.role == PlayerRole.midfieldLeft ||
-          player.role == PlayerRole.midfieldRight ||
-          player.role == PlayerRole.sweeper,
-    );
-    final longTargets = team.players.where(
-      (player) => player.role == PlayerRole.striker || player.role.isWide,
-    );
     final useLong =
         goalKick ||
         random.nextDouble() < 0.28 + keeper.profile.passSkill * 0.22;
-    final target =
-        engine.chooseBestPass(
-          keeper,
-          useLong ? longTargets : shortTargets,
-          preferForward: true,
-        ) ??
-        team.closestTo(keeper.homePos, includeGoalkeeper: false);
-    engine.releaseFromPlayer(
+    engine.distributeFromGoalkeeper(
       keeper,
-      target.pos - engine.ball.pos,
-      useLong ? (goalKick ? 1.72 : 1.18) : 0.84,
-      type: useLong ? KickType.highPass : KickType.pass,
-      target: target,
-      loft: useLong ? (goalKick ? 15.0 : 6.1) : 0,
+      high: useLong,
+      power: useLong ? (goalKick ? 1.72 : 1.18) : 0.84,
     );
     keeper.catchTimer = 0;
   }

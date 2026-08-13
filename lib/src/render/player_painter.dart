@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../game/models/jersey_kit.dart';
@@ -28,7 +30,16 @@ class PlayerPainter {
       ..color = Colors.black
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4;
-    final center = position ?? player.pos.toOffset();
+    final rawCenter = position ?? player.pos.toOffset();
+    final jumpDuration = player.isGoalkeeper ? 0.62 : 0.48;
+    final jumpPhase = player.jumpAnimationTimer <= 0
+        ? 0.0
+        : math.sin(
+            (1 -
+                    (player.jumpAnimationTimer / jumpDuration).clamp(0.0, 1.0)) *
+                math.pi,
+          );
+    final center = rawCenter.translate(0, -jumpPhase * (player.isGoalkeeper ? 13 : 9));
     if (player.isGoalkeeper && player.keeperGroundTimer > 0) {
       final rect = Rect.fromCenter(
         center: center,
@@ -56,6 +67,18 @@ class PlayerPainter {
       _keeperCue(canvas, player, center);
     }
     _fatigueCue(canvas, player, center);
+    if (player.yellowCardsThisMatch > 0) {
+      final cardRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(
+          center.dx - player.radius - 7,
+          center.dy - player.radius - 13,
+          7,
+          10,
+        ),
+        const Radius.circular(1.5),
+      );
+      canvas.drawRRect(cardRect, Paint()..color = const Color(0xffffd34d));
+    }
     if (player.jumpBoostMeters > 0) {
       canvas.drawCircle(
         center,
@@ -150,13 +173,34 @@ class PlayerPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.2,
       );
+      _text(
+        canvas,
+        player.keeperState == 'kurtaris' ? 'KURTARIS' : 'ATLAYIS',
+        center.translate(0, -24),
+        8,
+        const Color(0xffbde8ff),
+        FontWeight.w900,
+      );
       return;
     }
     if (player.keeperState == 'top elde') {
+      final heldBall = center.translate(0, -player.radius - 5);
+      canvas.drawCircle(heldBall, 4.2, Paint()..color = Colors.white);
       canvas.drawCircle(
-        center.translate(0, -player.radius - 4),
-        3.2,
-        Paint()..color = Colors.white,
+        heldBall,
+        4.2,
+        Paint()
+          ..color = Colors.black
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      _text(
+        canvas,
+        'TOP ELDE',
+        center.translate(0, -27),
+        8,
+        const Color(0xffbde8ff),
+        FontWeight.w900,
       );
     }
   }

@@ -10,6 +10,7 @@ import '../game/enums/team_id.dart';
 import '../game/logic/penalty_logic.dart';
 import '../game/math/vec2.dart';
 import '../game/models/player_game.dart';
+import '../game/models/match_event.dart';
 import '../game/models/team_setup.dart';
 import '../render/game_painter.dart';
 
@@ -44,10 +45,16 @@ class _GameScreenState extends State<GameScreen>
   bool _injurySubActive = false;
   PlayerGame? _injuryVictim;
   final Set<String> _wallPlayerIds = {};
+  String? _selectedTimelineEventId;
+  bool _exitConfirmationOpen = false;
+  bool _varPanelMinimized = false;
+  double _varBallZoom = 1.0;
+  String? _varTargetPlayerId;
 
   @override
   void initState() {
     super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _engine = MatchEngine(widget.setup);
     _ticker = createTicker(_onTick)..start();
     WidgetsBinding.instance.addPostFrameCallback(
@@ -59,18 +66,20 @@ class _GameScreenState extends State<GameScreen>
   void dispose() {
     _ticker.dispose();
     _focusNode.dispose();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
   void _onTick(Duration elapsed) {
     final last = _lastTick;
     _lastTick = elapsed;
-    if (last == null) {
+    if (last == null || _exitConfirmationOpen) {
       return;
     }
     final dt = (elapsed - last).inMicroseconds / Duration.microsecondsPerSecond;
     _applyMovement(dt.clamp(0, 0.05).toDouble());
     _engine.tick(dt.clamp(0, 0.05).toDouble());
+    _processForcedInjurySubstitution();
     if (mounted) {
       setState(() {});
     }
@@ -110,6 +119,59 @@ class _GameScreenState extends State<GameScreen>
     if (_redPressing) _drainPressStamina(TeamId.red, dt);
   }
 
+  Future<void> _confirmExitMatch() async {
+    if (_exitConfirmationOpen || !mounted) {
+      return;
+    }
+    setState(() => _exitConfirmationOpen = true);
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xff101820),
+        icon: const Icon(
+          Icons.exit_to_app,
+          color: Color(0xffffd34d),
+          size: 36,
+        ),
+        title: const Text(
+          'هل تريد الخروج من المباراة؟',
+          textAlign: TextAlign.center,
+        ),
+        content: Text(
+          _engine.finished
+              ? 'سيتم الرجوع إلى القائمة مع حفظ نتيجة المباراة.'
+              : 'المباراة لم تنتهِ بعد. إذا خرجت الآن فلن تُحفظ نتيجة هذه المباراة.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            icon: const Icon(Icons.sports_soccer),
+            label: const Text('لا، متابعة المباراة'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.exit_to_app),
+            label: const Text('نعم، خروج'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _exitConfirmationOpen = false);
+    if (shouldExit == true) {
+      Navigator.of(context).pop(_engine.createFinishedSummary());
+      return;
+    }
+    _focusNode.requestFocus();
+  }
+
   void _onKey(KeyEvent event) {
     final key = event.logicalKey;
     if (event is KeyDownEvent || event is KeyRepeatEvent) {
@@ -121,17 +183,7 @@ class _GameScreenState extends State<GameScreen>
         return;
       }
       if (key == LogicalKeyboardKey.escape) {
-        if (_engine.replayMode) {
-          _engine.closeReplay();
-          setState(() {});
-          return;
-        }
-        if (_subTeam != null) {
-          _engine.setSubstitutionPaused(false);
-          setState(() => _subTeam = null);
-          return;
-        }
-        Navigator.of(context).maybePop(_engine.createFinishedSummary());
+        _confirmExitMatch();
         return;
       }
       if (_engine.replayMode) {
@@ -392,6 +444,9 @@ class _GameScreenState extends State<GameScreen>
       return false;
     }
     _engine.openReplay(fromStart: true);
+    _varPanelMinimized = false;
+    _varBallZoom = 1.0;
+    _varTargetPlayerId = null;
     return true;
   }
 
@@ -404,22 +459,59 @@ class _GameScreenState extends State<GameScreen>
     return matches.isEmpty ? null : matches.first;
   }
 
+  void _processForcedInjurySubstitution() {
+    if (_engine.replayMode ||
+        _subTeam != null ||
+        !_engine.hasInjuryForcedSub) {
+      return;
+    }
+    final victim = _engine.nextInjuryForcedSub;
+    if (victim == null) return;
+    final team = _engine.teamById(victim.teamId);
+    final outIndex = team.players.indexOf(victim);
+    final benchIndex = team.bench.indexWhere(
+      (candidate) =>
+          candidate.profile.isGoalkeeper == victim.profile.isGoalkeeper &&
+          !candidate.profile.isUnavailable,
+    );
+    if (team.substitutionsUsed >= 5 || benchIndex < 0 || outIndex < 0) {
+      _engine.popInjuryForcedSub();
+      _engine.removeInjuredWithoutReplacement(victim);
+      return;
+    }
+    if (_engine.isTeamAiControlled(victim.teamId)) {
+      _engine.popInjuryForcedSub();
+      _engine.substitute(victim.teamId, outIndex, benchIndex);
+      return;
+    }
+    _openSubstitution(victim.teamId);
+  }
+
   void _openSubstitution(TeamId teamId) {
     final team = _engine.teamById(teamId);
     if (team.bench.isEmpty || team.substitutionsUsed >= 5) {
       return;
     }
+    final pendingVictim = _engine.nextInjuryForcedSub;
+    final forcedForThisTeam =
+        pendingVictim != null && pendingVictim.teamId == teamId;
+    final victim = forcedForThisTeam ? _engine.popInjuryForcedSub() : null;
+    final compatibleBenchIndex = victim == null
+        ? 0
+        : team.bench.indexWhere(
+            (candidate) =>
+                candidate.profile.isGoalkeeper == victim.profile.isGoalkeeper &&
+                !candidate.profile.isUnavailable,
+          );
     setState(() {
       _subTeam = teamId;
-      _subOutIndex = 0;
-      _subBenchIndex = 0;
+      _injurySubActive = victim != null;
+      _injuryVictim = victim;
+      _subOutIndex = victim == null ? 0 : team.players.indexOf(victim).clamp(0, team.players.length - 1).toInt();
+      _subBenchIndex = compatibleBenchIndex < 0 ? 0 : compatibleBenchIndex;
       _subPickingBench = false;
     });
     _engine.setSubstitutionPaused(true);
-    _injurySubActive = _engine.hasInjuryForcedSub;
-    if (_injurySubActive) {
-      _injuryVictim = _engine.popInjuryForcedSub();
-    }
   }
 
   bool _handleSubstitutionKey(LogicalKeyboardKey key) {
@@ -430,17 +522,21 @@ class _GameScreenState extends State<GameScreen>
     final team = _engine.teamById(teamId);
     if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.keyW) {
       if (_subPickingBench) {
-        _subBenchIndex = (_subBenchIndex - 1).clamp(0, team.bench.length - 1);
-      } else {
-        _subOutIndex = (_subOutIndex - 1).clamp(0, team.players.length - 1);
+        _subBenchIndex = (_subBenchIndex - 1).clamp(0, team.bench.length - 1).toInt();
+      } else if (!_injurySubActive) {
+        _subOutIndex = (_subOutIndex - 1)
+            .clamp(0, team.players.length - 1)
+            .toInt();
       }
       return true;
     }
     if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyS) {
       if (_subPickingBench) {
-        _subBenchIndex = (_subBenchIndex + 1).clamp(0, team.bench.length - 1);
-      } else {
-        _subOutIndex = (_subOutIndex + 1).clamp(0, team.players.length - 1);
+        _subBenchIndex = (_subBenchIndex + 1).clamp(0, team.bench.length - 1).toInt();
+      } else if (!_injurySubActive) {
+        _subOutIndex = (_subOutIndex + 1)
+            .clamp(0, team.players.length - 1)
+            .toInt();
       }
       return true;
     }
@@ -462,6 +558,8 @@ class _GameScreenState extends State<GameScreen>
       if (_engine.substitute(teamId, _subOutIndex, _subBenchIndex)) {
         _engine.setSubstitutionPaused(false);
         _subTeam = null;
+        _injurySubActive = false;
+        _injuryVictim = null;
       }
       return true;
     }
@@ -469,22 +567,28 @@ class _GameScreenState extends State<GameScreen>
   }
 
   (TeamId, KickType)? _actionForKey(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.space) {
+    if (key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.numpad1) {
       return (TeamId.blue, KickType.shoot);
     }
-    if (key == LogicalKeyboardKey.keyZ) {
+    if (key == LogicalKeyboardKey.keyZ ||
+        key == LogicalKeyboardKey.numpad2) {
       return (TeamId.blue, KickType.pass);
     }
-    if (key == LogicalKeyboardKey.keyX) {
+    if (key == LogicalKeyboardKey.keyX ||
+        key == LogicalKeyboardKey.numpad3) {
       return (TeamId.blue, KickType.highPass);
     }
-    if (key == LogicalKeyboardKey.keyO) {
+    if (key == LogicalKeyboardKey.keyO ||
+        key == LogicalKeyboardKey.digit1) {
       return (TeamId.red, KickType.shoot);
     }
-    if (key == LogicalKeyboardKey.keyP) {
+    if (key == LogicalKeyboardKey.keyP ||
+        key == LogicalKeyboardKey.digit2) {
       return (TeamId.red, KickType.pass);
     }
-    if (key == LogicalKeyboardKey.keyL) {
+    if (key == LogicalKeyboardKey.keyL ||
+        key == LogicalKeyboardKey.digit3) {
       return (TeamId.red, KickType.highPass);
     }
     return null;
@@ -542,28 +646,224 @@ class _GameScreenState extends State<GameScreen>
       focusNode: _focusNode,
       onKeyEvent: _onKey,
       child: Scaffold(
-        body: SafeArea(
-          child: Column(
+        backgroundColor: const Color(0xff04100b),
+        body: SizedBox.expand(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: GamePainter(
+                    _engine,
+                    replayZoom: _engine.replayMode ? _varBallZoom : 1.0,
+                  ),
+                ),
+              ),
+              if (!_engine.replayMode && !_engine.finished) _matchHud(),
+              if (_engine.ball.owner?.isGoalkeeper == true &&
+                  !_engine.isTeamAiControlled(_engine.ball.owner!.teamId) &&
+                  !_engine.replayMode &&
+                  !_engine.finished)
+                _keeperDistributionControls(),
+              if (_engine.banner != null) _banner(),
+              if (_engine.wallSelectionPending) _freeKickWallPanel(),
+              if (_engine.restartKind != null &&
+                  _engine.restartTeamId != null &&
+                  !_engine.isTeamAiControlled(_engine.restartTeamId!))
+                _restartControlHint(),
+              if (_engine.activePenalty != null &&
+                  _engine.activePenalty!.result == null)
+                _penaltyKeyboardHint(),
+              if (_subTeam != null) _substitutionPanel(),
+              if (_engine.replayMode) _replayPanel(),
+              if (_engine.finished && !_engine.replayMode) _resultPanel(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _keeperDistributionControls() {
+    final keeper = _engine.ball.owner!;
+    final teamId = keeper.teamId;
+    final passLabel = teamId == TeamId.blue ? 'Z / Numpad 2' : 'P / 2';
+    final longLabel = teamId == TeamId.blue ? 'X / Numpad 3' : 'L / 3';
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 58,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xff07120e).withValues(alpha: 0.94),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xff8bd3ff)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.sports_handball, color: Color(0xff8bd3ff)),
+              const SizedBox(width: 8),
+              Text(
+                '${keeper.profile.name}: topu oyuna sok',
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.tonalIcon(
+                onPressed: _engine.isFrozen
+                    ? null
+                    : () {
+                        _engine.manualKick(
+                          teamId,
+                          KickType.pass,
+                          0.92,
+                          preferredPlayer: keeper,
+                        );
+                        setState(() {});
+                      },
+                icon: const Icon(Icons.arrow_forward, size: 17),
+                label: Text('Pas $passLabel'),
+              ),
+              const SizedBox(width: 7),
+              FilledButton.tonalIcon(
+                onPressed: _engine.isFrozen
+                    ? null
+                    : () {
+                        _engine.manualKick(
+                          teamId,
+                          KickType.highPass,
+                          _engine.isGoalKickPendingFor(
+                                _engine.teamById(teamId),
+                              )
+                              ? 2.1
+                              : 1.35,
+                          preferredPlayer: keeper,
+                        );
+                        setState(() {});
+                      },
+                icon: const Icon(Icons.north_east, size: 17),
+                label: Text('Yuksek $longLabel'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _matchHud() {
+    final totalControl = (_engine.blueControlSeconds + _engine.redControlSeconds)
+        .clamp(1.0, double.infinity);
+    final bluePossession =
+        (_engine.blueControlSeconds / totalControl * 100).round();
+    final redPossession = 100 - bluePossession;
+    final blueCards = _engine.disciplinaryEvents
+        .where((event) => event.teamId == TeamId.blue && !event.canceled)
+        .length;
+    final redCards = _engine.disciplinaryEvents
+        .where((event) => event.teamId == TeamId.red && !event.canceled)
+        .length;
+    return Positioned(
+      left: 18,
+      right: 18,
+      bottom: 12,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xff07120e).withValues(alpha: 0.86),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 14,
+              ),
+            ],
+          ),
+          child: Row(
             children: [
               Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: CustomPaint(painter: GamePainter(_engine)),
-                    ),
-                    if (_engine.banner != null) _banner(),
-                    if (_engine.wallSelectionPending) _freeKickWallPanel(),
-                    if (_engine.activePenalty != null &&
-                        _engine.activePenalty!.result == null)
-                      _penaltyKeyboardHint(),
-                    if (_subTeam != null) _substitutionPanel(),
-                    if (_engine.replayMode) _replayPanel(),
-                    if (_engine.finished) _resultPanel(),
-                  ],
+                child: Text(
+                  '${_engine.blueTeam.name}  •  Top %$bluePossession  •  Pas ${_engine.blueSuccessfulPasses}/${_engine.bluePasses}  •  Sut ${_engine.blueShots}  •  Kart $blueCards',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xffffdf6b),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14),
+                child: Icon(Icons.sports_soccer, size: 18, color: Colors.white54),
+              ),
+              Expanded(
+                child: Text(
+                  '${_engine.redTeam.name}  •  Top %$redPossession  •  Pas ${_engine.redSuccessfulPasses}/${_engine.redPasses}  •  Sut ${_engine.redShots}  •  Kart $redCards',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xff73b9ff),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                  ),
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _restartControlHint() {
+    final teamId = _engine.restartTeamId!;
+    final kind = switch (_engine.restartKind!) {
+      RestartKind.corner => 'KORNER SENDE',
+      RestartKind.freeKick => 'SERBEST VURUS SENDE',
+      RestartKind.throwIn => 'TAC SENDE',
+      RestartKind.goalKick => 'KALE VURUSU SENDE',
+      RestartKind.kickoff => 'SANTRA SENDE',
+    };
+    final controls = teamId == TeamId.blue
+        ? 'Numpad 1 / Space: sut  •  Numpad 2 / Z: pas  •  Numpad 3 / X: yuksek pas'
+        : '1 / O: sut  •  2 / P: pas  •  3 / L: yuksek pas';
+    return Positioned(
+      left: 22,
+      top: 18,
+      child: Container(
+        width: 360,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: const Color(0xff0d1a16).withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xffffd34d)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              kind,
+              style: const TextStyle(
+                color: Color(0xffffd34d),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _engine.restartKind == RestartKind.corner
+                  ? 'Oyuncular yerlesince vurusunu sen kullanacaksin.'
+                  : 'Rakip izin verilen mesafenin disinda tutulur.',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 4),
+            Text(controls, style: const TextStyle(fontSize: 11)),
+          ],
         ),
       ),
     );
@@ -651,38 +951,147 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  String _varDecisionLabel(String decision) => switch (decision) {
+    'playOn' => 'Devam / karar yok',
+    'foul' => 'Faul, kart yok',
+    'yellow' => 'Sari kart',
+    'red' => 'Kirmizi kart',
+    'handball' => 'El, kart yok',
+    'onside' => 'Ofsayt yok',
+    'offside' => 'Ofsayt',
+    'confirm' => 'Karari onayla',
+    'cancel' => 'Karari iptal et',
+    _ => decision,
+  };
+
   Widget _banner() {
     final banner = _engine.banner!;
-    return Center(
+    final accent = switch (banner.kind) {
+      'goal' => const Color(0xff2ee59d),
+      'foul' => const Color(0xffff9f43),
+      'yellowCard' => const Color(0xffffd34d),
+      'redCard' => const Color(0xffff4d5a),
+      'injury' => const Color(0xffff6b81),
+      'var' => const Color(0xffb388ff),
+      _ => const Color(0xff64b5f6),
+    };
+    final icon = switch (banner.kind) {
+      'goal' => Icons.sports_soccer,
+      'foul' => Icons.sports,
+      'yellowCard' || 'redCard' => Icons.style,
+      'injury' => Icons.medical_services_outlined,
+      'var' => Icons.videocam_outlined,
+      _ => Icons.campaign_outlined,
+    };
+    return Positioned(
+      top: 18,
+      right: 22,
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 520),
-        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+        width: _engine.varReviewActive ? 520 : 390,
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.78),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              banner.title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              banner.subtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 17, color: Colors.white70),
-            ),
-            if (_engine.varReviewActive) ...[
-              const SizedBox(height: 14),
-              const Text(
-                'R veya Enter: VAR gec',
-                style: TextStyle(color: Colors.white70),
-              ),
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xff111b22).withValues(alpha: 0.96),
+              accent.withValues(alpha: 0.20),
             ],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.70)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(icon, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          banner.title,
+                          style: TextStyle(
+                            color: accent,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        "${banner.minute ?? _engine.minute.ceil()}'",
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    banner.subtitle,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white,
+                      height: 1.3,
+                    ),
+                  ),
+                  if (_engine.varReviewActive) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 7,
+                      children: [
+                        for (final decision in _engine.varDecisionOptions)
+                          FilledButton.tonal(
+                            onPressed: () {
+                              _engine.resolveVarDecision(decision);
+                              setState(() {});
+                            },
+                            style: FilledButton.styleFrom(
+                              backgroundColor:
+                                  decision == _engine.varRecommendedDecision
+                                  ? accent.withValues(alpha: 0.30)
+                                  : Colors.white.withValues(alpha: 0.08),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                            ),
+                            child: Text(
+                              _varDecisionLabel(decision),
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'R veya Enter: onerilen VAR kararini uygula',
+                      style: TextStyle(color: Colors.white60, fontSize: 11),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -909,84 +1318,590 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _replayPanel() {
     final frame = _engine.currentReplayFrame;
-    final goals = _engine.reviewGoals;
-    return Positioned(
-      left: 24,
-      right: 24,
-      bottom: 20,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: const Color(0xff101820).withValues(alpha: 0.94),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white24),
+    final events = _engine.timelineEvents;
+    final selectedMatches = events.where(
+      (event) => event.id == _selectedTimelineEventId,
+    );
+    final MatchTimelineEvent? selectedEvent =
+        selectedMatches.isEmpty ? null : selectedMatches.first;
+    final varPlayers = _engine.allMatchPlayers;
+    final selectedTargets = varPlayers.where(
+      (player) => player.id == _varTargetPlayerId,
+    );
+    final targetPlayer = selectedTargets.isNotEmpty
+        ? selectedTargets.first
+        : _engine.replayFocusPlayer();
+    if (_varPanelMinimized) {
+      return Positioned(
+        right: 18,
+        bottom: 16,
+        child: FilledButton.icon(
+          onPressed: () => setState(() => _varPanelMinimized = false),
+          icon: const Icon(Icons.open_in_full),
+          label: Text(
+            frame == null
+                ? 'VAR merkezini ac'
+                : 'VAR ${frame.minute.toStringAsFixed(1)} • x${_varBallZoom.toStringAsFixed(1)}',
+          ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  frame == null
-                      ? 'VAR'
-                      : 'VAR ${frame.minute.toStringAsFixed(1)} - ${frame.description}',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () {
-                    _engine.toggleReplayPlayback();
-                    setState(() {});
-                  },
-                  icon: Icon(
-                    _engine.replayPlaying ? Icons.pause : Icons.play_arrow,
-                  ),
-                  label: Text(_engine.replayPlaying ? 'Duraklat' : 'Oynat'),
-                ),
-                TextButton.icon(
-                  onPressed: () {
-                    _engine.closeReplay();
-                    setState(() {});
-                  },
-                  icon: const Icon(Icons.close),
-                  label: const Text('Cik'),
-                ),
-              ],
+      );
+    }
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: 12,
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 510),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xff101820).withValues(alpha: 0.98),
+              const Color(0xff24143d).withValues(alpha: 0.96),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: const Color(0xffb388ff).withValues(alpha: 0.70),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
-            Slider(
-              value: _engine.replayProgress.clamp(0, 1).toDouble(),
-              onChanged: (value) {
-                _engine.setReplayProgress(value);
-                setState(() {});
-              },
-            ),
-            if (goals.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
+          ],
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  for (var i = 0; i < goals.length; i++)
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        _engine.toggleGoalReview(i);
-                        setState(() {});
-                      },
-                      icon: Icon(
-                        goals[i].canceled ? Icons.undo : Icons.cancel_outlined,
-                        size: 17,
-                      ),
-                      label: Text(
-                        "${goals[i].minute}' ${goals[i].scorerName}${goals[i].canceled ? ' iptal' : ''}",
+                  const Icon(
+                    Icons.video_settings,
+                    color: Color(0xffb388ff),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      frame == null
+                          ? 'VAR KONTROL MERKEZI'
+                          : 'VAR ${frame.minute.toStringAsFixed(1)} • ${frame.description}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
+                  ),
+                  Text(
+                    '${_engine.replayIndex + 1}/${_engine.replayFrames.length}',
+                    style: const TextStyle(color: Colors.white54),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
+                    tooltip: 'Uzaklastir',
+                    onPressed: _varBallZoom <= 1.0
+                        ? null
+                        : () {
+                            setState(() {
+                              _varBallZoom = (_varBallZoom - 0.5)
+                                  .clamp(1.0, 3.0)
+                                  .toDouble();
+                            });
+                          },
+                    icon: const Icon(Icons.zoom_out),
+                  ),
+                  Text(
+                    'Top x${_varBallZoom.toStringAsFixed(1)}',
+                    style: const TextStyle(
+                      color: Color(0xff8bd3ff),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Topun etrafina yakinlas',
+                    onPressed: _varBallZoom >= 3.0
+                        ? null
+                        : () {
+                            setState(() {
+                              _varBallZoom = (_varBallZoom + 0.5)
+                                  .clamp(1.0, 3.0)
+                                  .toDouble();
+                            });
+                          },
+                    icon: const Icon(Icons.zoom_in),
+                  ),
+                  IconButton.filledTonal(
+                    tooltip: 'Paneli kucult',
+                    onPressed: () => setState(() => _varPanelMinimized = true),
+                    icon: const Icon(Icons.minimize),
+                  ),
+                  const SizedBox(width: 5),
+                  IconButton.filledTonal(
+                    tooltip: 'VAR ekranini kapat',
+                    onPressed: () {
+                      _engine.closeReplay();
+                      setState(() {
+                        _selectedTimelineEventId = null;
+                        _varPanelMinimized = false;
+                        _varBallZoom = 1.0;
+                        _varTargetPlayerId = null;
+                      });
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
                 ],
               ),
-          ],
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: 'Basa don',
+                    onPressed: () {
+                      _engine.setReplayProgress(0);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.first_page),
+                  ),
+                  IconButton(
+                    tooltip: '10 saniye geri',
+                    onPressed: () {
+                      _engine.seekReplaySeconds(-10);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.replay_10),
+                  ),
+                  IconButton(
+                    tooltip: '3 saniye geri',
+                    onPressed: () {
+                      _engine.seekReplaySeconds(-3);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.fast_rewind),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () {
+                      _engine.toggleReplayPlayback();
+                      setState(() {});
+                    },
+                    icon: Icon(
+                      _engine.replayPlaying ? Icons.pause : Icons.play_arrow,
+                    ),
+                    label: Text(
+                      _engine.replayPlaying ? 'Duraklat' : 'Oynat',
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '3 saniye ileri',
+                    onPressed: () {
+                      _engine.seekReplaySeconds(3);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.fast_forward),
+                  ),
+                  IconButton(
+                    tooltip: '10 saniye ileri',
+                    onPressed: () {
+                      _engine.seekReplaySeconds(10);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.forward_10),
+                  ),
+                  IconButton(
+                    tooltip: 'Sona git',
+                    onPressed: () {
+                      _engine.setReplayProgress(1);
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.last_page),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: [
+                    Text(
+                      "${frame?.minute.ceil() ?? 0}' dakikasina ekle:",
+                      style: const TextStyle(
+                        color: Color(0xffffd34d),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 180,
+                      child: DropdownButtonFormField<String>(
+                        value: targetPlayer.id,
+                        isDense: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Oyuncu / takim',
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 7,
+                          ),
+                        ),
+                        items: [
+                          for (final player in varPlayers)
+                            DropdownMenuItem(
+                              value: player.id,
+                              child: Text(
+                                '${player.profile.name} • ${_engine.teamById(player.teamId).name}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => _varTargetPlayerId = value);
+                          }
+                        },
+                      ),
+                    ),
+                    _varAddButton('foul', 'Faul', Icons.sports, targetPlayer),
+                    _varAddButton(
+                      'handball',
+                      'El',
+                      Icons.back_hand_outlined,
+                      targetPlayer,
+                    ),
+                    _varAddButton(
+                      'offside',
+                      'Ofsayt',
+                      Icons.flag_outlined,
+                      targetPlayer,
+                    ),
+                    _varAddButton(
+                      'yellowCard',
+                      'Sari',
+                      Icons.style,
+                      targetPlayer,
+                      color: const Color(0xffffd34d),
+                    ),
+                    _varAddButton(
+                      'redCard',
+                      'Kirmizi',
+                      Icons.style,
+                      targetPlayer,
+                      color: Colors.redAccent,
+                    ),
+                    _varAddButton(
+                      'penalty',
+                      'Penalti',
+                      Icons.gps_fixed,
+                      targetPlayer,
+                      color: const Color(0xffd980fa),
+                    ),
+                    _varAddButton(
+                      'goal',
+                      'Gol',
+                      Icons.sports_soccer,
+                      targetPlayer,
+                      color: const Color(0xff2ee59d),
+                    ),
+                    _varAddButton(
+                      'injury',
+                      'Sakatlik',
+                      Icons.medical_services_outlined,
+                      targetPlayer,
+                      color: const Color(0xffff6b81),
+                    ),
+                  ],
+                ),
+              ),
+              _replayTimeline(events),
+              Row(
+                children: [
+                  const Text(
+                    'OLAYLAR',
+                    style: TextStyle(
+                      color: Color(0xffb388ff),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Text(
+                    '${events.length} kayit • karta tiklayarak ana git',
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 7),
+              SizedBox(
+                height: 76,
+                child: events.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Henuz gol, faul, kart, ofsayt veya penalti kaydi yok.',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
+                    : ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: events.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 7),
+                        itemBuilder: (context, index) {
+                          final event = events[index];
+                          final selected = event.id == _selectedTimelineEventId;
+                          final color = _timelineEventColor(event.kind);
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(9),
+                            onTap: () {
+                              _engine.seekReplayToEvent(event);
+                              setState(() => _selectedTimelineEventId = event.id);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 140),
+                              width: 158,
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? color.withValues(alpha: 0.22)
+                                    : Colors.white.withValues(alpha: 0.055),
+                                borderRadius: BorderRadius.circular(9),
+                                border: Border.all(
+                                  color: selected
+                                      ? color
+                                      : color.withValues(alpha: 0.35),
+                                  width: selected ? 1.6 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _timelineEventIcon(event.kind),
+                                    color: color,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 7),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          "${event.minute}' • ${event.title}",
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: color,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 11,
+                                            decoration: event.canceled
+                                                ? TextDecoration.lineThrough
+                                                : null,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          event.canceled
+                                              ? '${event.detail} • IPTAL'
+                                              : event.detail,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              if (selectedEvent != null) ...[
+                const SizedBox(height: 9),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _timelineEventColor(
+                      selectedEvent.kind,
+                    ).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _timelineEventIcon(selectedEvent.kind),
+                        color: _timelineEventColor(selectedEvent.kind),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          "${selectedEvent.minute}' ${selectedEvent.title} • ${selectedEvent.detail}${selectedEvent.canceled ? ' • KARAR IPTAL' : ''}",
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          _engine.seekReplayToEvent(selectedEvent!);
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.my_location, size: 17),
+                        label: const Text('Ana git'),
+                      ),
+                      if (_engine.canToggleTimelineDecision(selectedEvent)) ...[
+                        const SizedBox(width: 8),
+                        FilledButton.tonalIcon(
+                          onPressed: () {
+                            _engine.toggleTimelineDecision(selectedEvent!);
+                            setState(() {});
+                          },
+                          icon: Icon(
+                            selectedEvent.canceled ? Icons.undo : Icons.gavel,
+                            size: 17,
+                          ),
+                          label: Text(
+                            selectedEvent.canceled
+                                ? 'Karari geri ver'
+                                : 'Karari iptal et',
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  Widget _varAddButton(
+    String kind,
+    String label,
+    IconData icon,
+    PlayerGame target, {
+    Color color = Colors.white70,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: () {
+        final event = _engine.addVarDecisionAtCurrentReplay(kind, target);
+        setState(() {
+          if (event != null) {
+            _selectedTimelineEventId = event.id;
+          }
+        });
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color.withValues(alpha: 0.55)),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(icon, size: 15),
+      label: Text(label, style: const TextStyle(fontSize: 10)),
+    );
+  }
+
+  Widget _replayTimeline(List<MatchTimelineEvent> events) {
+    return SizedBox(
+      height: 48,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final lastFrame = (_engine.replayFrames.length - 1).clamp(1, 999999);
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: Slider(
+                  value: _engine.replayProgress.clamp(0, 1).toDouble(),
+                  onChanged: (value) {
+                    _engine.setReplayProgress(value);
+                    setState(() {});
+                  },
+                ),
+              ),
+              for (final event in events)
+                Positioned(
+                  left: (12 +
+                          (constraints.maxWidth - 24) *
+                              (event.replayIndex / lastFrame)
+                                  .clamp(0.0, 1.0))
+                      .toDouble(),
+                  top: 1,
+                  child: Tooltip(
+                    message: "${event.minute}' ${event.title}: ${event.detail}",
+                    child: GestureDetector(
+                      onTap: () {
+                        _engine.seekReplayToEvent(event);
+                        setState(() => _selectedTimelineEventId = event.id);
+                      },
+                      child: Container(
+                        width: 9,
+                        height: 15,
+                        decoration: BoxDecoration(
+                          color: event.canceled
+                              ? Colors.white38
+                              : _timelineEventColor(event.kind),
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: Colors.black54),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Color _timelineEventColor(String kind) => switch (kind) {
+    'goal' => const Color(0xff2ee59d),
+    'foul' => const Color(0xffff9f43),
+    'yellowCard' => const Color(0xffffd34d),
+    'redCard' => const Color(0xffff4d5a),
+    'penalty' || 'shootout' => const Color(0xffd980fa),
+    'offside' => const Color(0xff64b5f6),
+    'handball' => const Color(0xffff8a80),
+    'injury' => const Color(0xffff6b81),
+    'var' => const Color(0xffb388ff),
+    _ => Colors.white70,
+  };
+
+  IconData _timelineEventIcon(String kind) => switch (kind) {
+    'goal' => Icons.sports_soccer,
+    'foul' => Icons.sports,
+    'yellowCard' || 'redCard' => Icons.style,
+    'penalty' || 'shootout' => Icons.gps_fixed,
+    'offside' => Icons.flag_outlined,
+    'handball' => Icons.back_hand_outlined,
+    'injury' => Icons.medical_services_outlined,
+    'var' => Icons.video_settings,
+    _ => Icons.circle,
+  };
 
   Widget _resultPanel() {
     final blueGoals = _engine.blueTeam.goals;
@@ -1045,6 +1960,31 @@ class _GameScreenState extends State<GameScreen>
               ),
             ],
             const SizedBox(height: 18),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _showPlayerStatistics,
+                  icon: const Icon(Icons.analytics_outlined),
+                  label: const Text('تفاصيل وإحصائيات جميع اللاعبين'),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: () {
+                    _engine.openReplay(fromStart: false);
+                    setState(() {
+                      _varPanelMinimized = false;
+                      _varBallZoom = 1.0;
+                      _varTargetPlayerId = null;
+                    });
+                  },
+                  icon: const Icon(Icons.video_settings),
+                  label: const Text('فتح مركز تحكم VAR'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             const Text(
               'Esc: Ana menu',
               style: TextStyle(color: Colors.white70),
@@ -1053,6 +1993,163 @@ class _GameScreenState extends State<GameScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _showPlayerStatistics() async {
+    final searchController = TextEditingController();
+    var query = '';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final players = _engine.allMatchPlayers
+              .where(
+                (player) => query.isEmpty ||
+                    player.profile.name.toLowerCase().contains(query),
+              )
+              .toList()
+            ..sort((a, b) {
+              final byTeam = a.teamId.index.compareTo(b.teamId.index);
+              return byTeam != 0
+                  ? byTeam
+                  : b.minutesThisMatch.compareTo(a.minutesThisMatch);
+            });
+          return AlertDialog(
+            backgroundColor: const Color(0xff0d1a16),
+            title: const Row(
+              children: [
+                Icon(Icons.analytics, color: Color(0xffffd34d)),
+                SizedBox(width: 10),
+                Text('إحصائيات اللاعبين الكاملة'),
+              ],
+            ),
+            content: SizedBox(
+              width: 980,
+              height: 620,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: searchController,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      labelText: 'ابحث عن لاعب',
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setDialogState(
+                      () => query = value.trim().toLowerCase(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: players.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 7),
+                      itemBuilder: (context, index) {
+                        final player = players[index];
+                        final team = _engine.teamById(player.teamId);
+                        final minutes = _engine.playedMinutesFor(player);
+                        final rating = _engine.matchRatingFor(player);
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: team.color.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: team.color.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 32,
+                                    height: 32,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: team.color,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      '${player.number}',
+                                      style: const TextStyle(
+                                        color: Colors.black,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      '${player.profile.name} • ${team.name}',
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '$minutes dk  •  ${rating.toStringAsFixed(1)}',
+                                    style: const TextStyle(
+                                      color: Color(0xffffd34d),
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 14,
+                                runSpacing: 6,
+                                children: [
+                                  Text('Gol ${player.matchGoals}'),
+                                  Text('Asist ${player.matchAssists}'),
+                                  Text('Pas ${player.matchSuccessfulPasses}/${player.matchPasses}'),
+                                  Text('Dripling ${player.matchSuccessfulDribbles}/${player.matchDribbles}'),
+                                  Text('Mudahale ${player.matchTackles}'),
+                                  Text('Sut ${player.matchShotsOnTarget}/${player.matchShots}'),
+                                  Text('Kacan ${player.matchMissedChances}'),
+                                  Text('Kurtaris ${player.matchSaves}'),
+                                  Text('Uzaklastirma ${player.matchClearances}'),
+                                  Text('Faul ${player.matchFoulsCommitted}/${player.matchFoulsReceived}'),
+                                  Text('Kart ${player.matchYellowCards}S ${player.matchRedCards}K'),
+                                  Text('Enerji ${(player.stamina * 100).round()}%'),
+                                  Text(
+                                    'Dayaniklilik ${player.profile.dayaniklilikGucu.round()}',
+                                  ),
+                                  if (player.isInjuredInMatch)
+                                    const Text(
+                                      'SAKAT',
+                                      style: TextStyle(color: Colors.redAccent),
+                                    ),
+                                  if (player.isSentOff && !player.isInjuredInMatch)
+                                    const Text(
+                                      'OYUNDAN ATILDI',
+                                      style: TextStyle(color: Colors.redAccent),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('إغلاق'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    searchController.dispose();
   }
 
   bool _isBlueActionKey(LogicalKeyboardKey key) {

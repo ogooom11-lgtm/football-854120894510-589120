@@ -125,11 +125,10 @@ class SavedTeamProfile {
         orElse: () => AiDifficulty.medium,
       ),
       isDeleted: json['isDeleted'] as bool? ?? false,
-      jerseyKits:
-          (json['jerseyKits'] as List<dynamic>?)
-              ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>))
-              .toList() ??
-          JerseyFactory.defaultKits(),
+      jerseyKits: JerseyFactory.completeKits(
+        (json['jerseyKits'] as List<dynamic>?)
+            ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>)),
+      ),
       activeKitIndex: (json['activeKitIndex'] as num?)?.toInt() ?? 0,
     );
   }

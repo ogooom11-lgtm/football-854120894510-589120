@@ -21,6 +21,8 @@ class PlayerMatchRecord {
     required this.saves,
     required this.foulsCommitted,
     required this.foulsReceived,
+    required this.yellowCards,
+    required this.redCards,
     required this.rating,
     required this.injured,
   });
@@ -44,6 +46,8 @@ class PlayerMatchRecord {
   final int saves;
   final int foulsCommitted;
   final int foulsReceived;
+  final int yellowCards;
+  final int redCards;
   final double rating;
   final bool injured;
 
@@ -68,6 +72,8 @@ class PlayerMatchRecord {
       saves: (json['saves'] as num?)?.toInt() ?? 0,
       foulsCommitted: (json['foulsCommitted'] as num?)?.toInt() ?? 0,
       foulsReceived: (json['foulsReceived'] as num?)?.toInt() ?? 0,
+      yellowCards: (json['yellowCards'] as num?)?.toInt() ?? 0,
+      redCards: (json['redCards'] as num?)?.toInt() ?? 0,
       rating: (json['rating'] as num?)?.toDouble() ?? 6,
       injured: json['injured'] as bool? ?? false,
     );
@@ -93,6 +99,8 @@ class PlayerMatchRecord {
         'saves': saves,
         'foulsCommitted': foulsCommitted,
         'foulsReceived': foulsReceived,
+        'yellowCards': yellowCards,
+        'redCards': redCards,
         'rating': double.parse(rating.toStringAsFixed(1)),
         'injured': injured,
       };
@@ -111,6 +119,7 @@ class PlayerProfile {
     this.goalkeepingRating = 45,
     this.speedRating = 60,
     this.staminaRating = 60,
+    this.dayaniklilikGucu = 60,
     this.zekaGucu = 50,
     this.goals = 0,
     this.assists = 0,
@@ -126,6 +135,9 @@ class PlayerProfile {
     this.saves = 0,
     this.foulsCommitted = 0,
     this.foulsReceived = 0,
+    this.yellowCards = 0,
+    this.redCards = 0,
+    this.suspendedMatchesRemaining = 0,
     this.minutesPlayed = 0,
     this.matchesPlayed = 0,
     this.points = 0,
@@ -147,6 +159,10 @@ class PlayerProfile {
   double speedRating;
   double staminaRating;
 
+  /// Dayaniklilik Gücü — resistance to injuries and recovery quality.
+  /// Higher values reduce injury probability and shorten recovery time.
+  double dayaniklilikGucu;
+
   /// Zeka Gücü — AI decision intelligence derived from performance.
   /// 0-99 scale. Higher = smarter AI decisions for this player.
   double zekaGucu;
@@ -165,6 +181,12 @@ class PlayerProfile {
   int saves;
   int foulsCommitted;
   int foulsReceived;
+  int yellowCards;
+  int redCards;
+
+  /// Number of team matches the player must still miss.
+  int suspendedMatchesRemaining;
+
   int minutesPlayed;
   int matchesPlayed;
   double points;
@@ -179,6 +201,22 @@ class PlayerProfile {
   final List<PlayerMatchRecord> matchHistory;
 
   bool get isInjured => injuredDaysRemaining > 0;
+  bool get isSuspended => suspendedMatchesRemaining > 0;
+  bool get isUnavailable => isInjured || isSuspended;
+
+  /// Advances injury recovery and disciplinary suspension by one team match.
+  void advanceUnavailableStatusAfterTeamMatch() {
+    if (injuredDaysRemaining > 0) {
+      final recoveryDays = (5 + dayaniklilikSkill * 5).round();
+      injuredDaysRemaining = math.max(
+        0,
+        injuredDaysRemaining - recoveryDays,
+      ).toInt();
+    }
+    if (suspendedMatchesRemaining > 0) {
+      suspendedMatchesRemaining -= 1;
+    }
+  }
 
   void recoverFitness(DateTime now) {
     if (fitnessUpdatedAt <= 0) {
@@ -216,6 +254,8 @@ class PlayerProfile {
       (goalkeepingRating / 100).clamp(0.05, 0.99).toDouble();
   double get speedSkill => (speedRating / 100).clamp(0.05, 0.99).toDouble();
   double get staminaSkill => (staminaRating / 100).clamp(0.05, 0.99).toDouble();
+  double get dayaniklilikSkill =>
+      (dayaniklilikGucu / 100).clamp(0.05, 0.99).toDouble();
   double get zekaSkill => (zekaGucu / 100).clamp(0.1, 0.99).toDouble();
 
   /// Update zekaGücü based on recent match performance.
@@ -272,6 +312,7 @@ class PlayerProfile {
           : 20 + rng.nextDouble() * 18,
       speedRating: base + rng.nextDouble() * 12 - 6,
       staminaRating: base + rng.nextDouble() * 12 - 6,
+      dayaniklilikGucu: (base + rng.nextDouble() * 18 - 7).clamp(25, 95).toDouble(),
       zekaGucu: 40 + rng.nextDouble() * 30,
     );
   }
@@ -290,6 +331,10 @@ class PlayerProfile {
           (json['goalkeepingRating'] as num?)?.toDouble() ?? 35,
       speedRating: (json['speedRating'] as num?)?.toDouble() ?? 60,
       staminaRating: (json['staminaRating'] as num?)?.toDouble() ?? 60,
+      dayaniklilikGucu:
+          (json['dayaniklilikGucu'] as num?)?.toDouble() ??
+          (json['staminaRating'] as num?)?.toDouble() ??
+          60,
       zekaGucu: (json['zekaGucu'] as num?)?.toDouble() ?? 50,
       goals: (json['goals'] as num?)?.toInt() ?? 0,
       assists: (json['assists'] as num?)?.toInt() ?? 0,
@@ -305,6 +350,10 @@ class PlayerProfile {
       saves: (json['saves'] as num?)?.toInt() ?? 0,
       foulsCommitted: (json['foulsCommitted'] as num?)?.toInt() ?? 0,
       foulsReceived: (json['foulsReceived'] as num?)?.toInt() ?? 0,
+      yellowCards: (json['yellowCards'] as num?)?.toInt() ?? 0,
+      redCards: (json['redCards'] as num?)?.toInt() ?? 0,
+      suspendedMatchesRemaining:
+          (json['suspendedMatchesRemaining'] as num?)?.toInt() ?? 0,
       minutesPlayed: (json['minutesPlayed'] as num?)?.toInt() ?? 0,
       matchesPlayed: (json['matchesPlayed'] as num?)?.toInt() ?? 0,
       points: (json['points'] as num?)?.toDouble() ?? 0,
@@ -337,6 +386,7 @@ class PlayerProfile {
         'goalkeepingRating': double.parse(goalkeepingRating.toStringAsFixed(1)),
         'speedRating': double.parse(speedRating.toStringAsFixed(1)),
         'staminaRating': double.parse(staminaRating.toStringAsFixed(1)),
+        'dayaniklilikGucu': double.parse(dayaniklilikGucu.toStringAsFixed(1)),
         'zekaGucu': double.parse(zekaGucu.toStringAsFixed(1)),
         'goals': goals,
         'assists': assists,
@@ -352,6 +402,9 @@ class PlayerProfile {
         'saves': saves,
         'foulsCommitted': foulsCommitted,
         'foulsReceived': foulsReceived,
+        'yellowCards': yellowCards,
+        'redCards': redCards,
+        'suspendedMatchesRemaining': suspendedMatchesRemaining,
         'minutesPlayed': minutesPlayed,
         'matchesPlayed': matchesPlayed,
         'points': double.parse(points.toStringAsFixed(1)),

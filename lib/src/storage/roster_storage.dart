@@ -111,8 +111,13 @@ class SavedGameData {
   );
 
   List<SavedTeamProfile> get ownedTeams => teams
-      .where((team) => team.ownerAccountId == activeAccountId)
+      .where(
+        (team) => team.ownerAccountId == activeAccountId && !team.isDeleted,
+      )
       .toList(growable: false);
+
+  List<SavedTeamProfile> get activeTeams =>
+      teams.where((team) => !team.isDeleted).toList(growable: false);
 
   bool isAccountLoggedIn(String id) => loggedInAccountIds.contains(id);
 
@@ -271,7 +276,18 @@ class SavedGameData {
       team.ensureLineupDefaults(players);
     }
 
-    final playableTeams = teams;
+    final activeTeams = teams.where((team) => !team.isDeleted).toList();
+    if (activeTeams.isEmpty) {
+      final replacement = SavedTeamProfile.create(
+        ownerAccountId: activeAccountId,
+        name: 'Yeni Takim',
+        playerIds: players.take(11).map((player) => player.id),
+      );
+      replacement.ensureLineupDefaults(players);
+      teams.add(replacement);
+      activeTeams.add(replacement);
+    }
+    final playableTeams = activeTeams;
     final blueTeamId = json['blueTeamId'] as String? ?? playableTeams.first.id;
     final redTeamId =
         json['redTeamId'] as String? ??
@@ -292,7 +308,8 @@ class SavedGameData {
         activeAccountId: activeAccountId,
         loggedInAccountIds: loggedInAccountIds,
         adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
-        adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
+        // Administrator sessions are intentionally not restored after restart.
+        adminLoggedIn: false,
         players: players,
         teams: teams,
         blueTeamId: blueTeam.id,
@@ -332,18 +349,18 @@ class SavedGameData {
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
-    (team) => team.id == blueTeamId,
-    orElse: () => ownedTeams.isNotEmpty ? ownedTeams.first : teams.first,
+    (team) => team.id == blueTeamId && !team.isDeleted,
+    orElse: () => ownedTeams.isNotEmpty ? ownedTeams.first : activeTeams.first,
   );
 
   SavedTeamProfile get redTeam => teams.firstWhere(
-    (team) => team.id == redTeamId,
+    (team) => team.id == redTeamId && !team.isDeleted,
     orElse: () {
       final owned = ownedTeams;
       if (owned.length > 1) {
         return owned[1];
       }
-      return teams.length > 1 ? teams[1] : teams.first;
+      return activeTeams.length > 1 ? activeTeams[1] : activeTeams.first;
     },
   );
 
@@ -435,7 +452,7 @@ class RosterStorage {
 
 String localPasswordHash(String password) {
   var hash = 0x811c9dc5;
-  final text = 'bomban-v2:\${password.trim()}';
+  final text = 'bomban-v2:${password.trim()}';
   for (final unit in text.codeUnits) {
     hash ^= unit;
     hash = (hash * 0x01000193) & 0xffffffff;

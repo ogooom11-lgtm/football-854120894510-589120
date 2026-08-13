@@ -103,7 +103,13 @@ class PlayerAi {
         : team == engine.teamInPossession
         ? 0.57
         : 0.7;
-    engine.moveTowards(player, finalTarget, moveForce, dt);
+    final cautionFactor =
+        player.yellowCardsThisMatch > 0 &&
+            ball.owner != null &&
+            ball.owner!.teamId != team.id
+        ? 0.78
+        : 1.0;
+    engine.moveTowards(player, finalTarget, moveForce * cautionFactor, dt);
   }
 
   double _secondLastDefenderLine(
@@ -126,6 +132,10 @@ class PlayerAi {
     MatchEngine engine,
     double dt,
   ) {
+    if (engine.ball.owner == player && engine.isRestartWaitingForHuman(team)) {
+      player.lastDirection = Vec2(team.attackDirection.toDouble(), 0);
+      return;
+    }
     if (engine.kickoffPending && engine.ball.owner == player) {
       player.lastDirection = Vec2(team.attackDirection.toDouble(), 0);
       return;
@@ -261,14 +271,20 @@ class PlayerAi {
     if (emptyGoalChance ||
         (shootingPocket && distanceToGoal < 132 * difficulty.visionRange) ||
         (shootingPocket && pressure > (34 / difficulty.aggressionFactor) && random.nextDouble() < (0.78 * difficulty.anticipationFactor))) {
+      final shotPower = emptyGoalChance
+          ? 1.22
+          : 1.06 + random.nextDouble() * 0.22;
       engine.releaseFromPlayer(
         player,
-        engine.shotTargetFor(player, team) - engine.ball.pos,
-        emptyGoalChance ? 1.22 : 1.06 + random.nextDouble() * 0.22,
+        engine.shotTargetFor(player, team, power: shotPower) - engine.ball.pos,
+        shotPower,
         type: KickType.shoot,
-        loft: random.nextDouble() < (emptyGoalChance ? 0.48 : 0.64)
-            ? 2.45 + random.nextDouble() * 1.05
-            : 0,
+        loft: engine.shotLoftFor(
+          player,
+          team,
+          shotPower,
+          freeKick: engine.restartKind == RestartKind.freeKick,
+        ),
       );
       player.aiCooldown = 0.62 + random.nextDouble() * 0.42;
       return;
@@ -365,17 +381,18 @@ class PlayerAi {
 
     final action = decisions.first.action;
     if (action == 'shot') {
-      final fatigueError =
-          (random.nextDouble() - random.nextDouble()) * player.errorFactor * 70;
+      final shotPower = 1.00 + random.nextDouble() * 0.35;
       engine.releaseFromPlayer(
         player,
-        engine.shotTargetFor(player, team, aimError: fatigueError) -
-            engine.ball.pos,
-        1.00 + random.nextDouble() * 0.35,
+        engine.shotTargetFor(player, team, power: shotPower) - engine.ball.pos,
+        shotPower,
         type: KickType.shoot,
-        loft: random.nextDouble() < 0.62 - player.errorFactor * 0.14
-            ? 2.35 + random.nextDouble() * 1.10
-            : 0,
+        loft: engine.shotLoftFor(
+          player,
+          team,
+          shotPower,
+          freeKick: engine.restartKind == RestartKind.freeKick,
+        ),
       );
       player.aiCooldown = 0.65 + random.nextDouble() * 0.55;
       return;
@@ -771,7 +788,9 @@ class PlayerAi {
         ball.heightMeters <= player.profile.heightMeters + 0.18 &&
         ball.heightMeters >= player.profile.heightMeters - 0.24;
     if (close && nearHead) {
-      player.jumpBoostMeters = 0.10 + random.nextDouble() * 0.05;
+      player
+        ..jumpBoostMeters = 0.10 + random.nextDouble() * 0.03
+        ..jumpAnimationTimer = 0.48;
     } else {
       player.jumpBoostMeters *= 0.85;
       if (player.jumpBoostMeters < 0.01) {

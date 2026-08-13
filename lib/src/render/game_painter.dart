@@ -8,9 +8,10 @@ import 'field_painter.dart';
 import 'player_painter.dart';
 
 class GamePainter extends CustomPainter {
-  GamePainter(this.engine);
+  GamePainter(this.engine, {this.replayZoom = 1.0});
 
   final MatchEngine engine;
+  final double replayZoom;
   final FieldPainter _fieldPainter = const FieldPainter();
   final PlayerPainter _playerPainter = const PlayerPainter();
 
@@ -26,10 +27,21 @@ class GamePainter extends CustomPainter {
     canvas.translate(dx, dy);
     canvas.scale(scale);
 
+    final replay = engine.currentReplayFrame;
+    canvas.save();
+    if (replay != null && replayZoom > 1.0) {
+      canvas.translate(
+        GameConstants.virtualWidth / 2,
+        GameConstants.virtualHeight / 2,
+      );
+      canvas.scale(replayZoom);
+      canvas.translate(-replay.ballX, -replay.ballY);
+    }
+
     _fieldPainter.paint(canvas);
     _drawOffside(canvas);
-    final replay = engine.currentReplayFrame;
     for (final player in engine.blueTeam.players) {
+      if (player.isSentOff) continue;
       final frame = replay?.players.where((item) => item.id == player.id);
       _playerPainter.paint(
         canvas,
@@ -44,6 +56,7 @@ class GamePainter extends CustomPainter {
       );
     }
     for (final player in engine.redTeam.players) {
+      if (player.isSentOff) continue;
       final frame = replay?.players.where((item) => item.id == player.id);
       _playerPainter.paint(
         canvas,
@@ -58,6 +71,8 @@ class GamePainter extends CustomPainter {
       );
     }
     _drawBall(canvas);
+    canvas.restore();
+
     _drawHeader(canvas);
     if (replay != null) {
       _drawReplayStamp(canvas, replay.minute);

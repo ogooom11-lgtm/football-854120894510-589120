@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../game/enums/ai_play_style.dart';
@@ -21,6 +23,7 @@ class _LeagueScreenState extends State<LeagueScreen>
   late final TabController _tabController;
   bool _loading = true;
   bool _simulating = false;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -95,6 +98,14 @@ class _LeagueScreenState extends State<LeagueScreen>
           homeScorers,
           awayScorers,
         );
+        for (final player in [...homeTeam.players, ...awayTeam.players]) {
+          final played = player.matchHistory.any(
+            (record) => record.matchId == result.matchId,
+          );
+          if (!played && player.isUnavailable) {
+            player.advanceUnavailableStatusAfterTeamMatch();
+          }
+        }
       });
       await _saveLeague();
     }
@@ -105,6 +116,7 @@ class _LeagueScreenState extends State<LeagueScreen>
     if (season == null || season.seasonFinished) return;
 
     setState(() => _simulating = true);
+    final rng = math.Random();
 
     while (!season.seasonFinished) {
       final fixture = season.currentFixture;
@@ -123,16 +135,16 @@ class _LeagueScreenState extends State<LeagueScreen>
       var awayScore = 0;
 
       for (var i = 0; i < 90; i += 15) {
-        if (DateTime.now().microsecondsSinceEpoch % 100 <
-            (20 + homeBase * 10).toInt())
+        if (rng.nextDouble() < (0.09 + homeBase * 0.045).clamp(0.04, 0.34)) {
           homeScore++;
-        if (DateTime.now().microsecondsSinceEpoch % 100 <
-            (15 + awayBase * 8).toInt())
+        }
+        if (rng.nextDouble() < (0.07 + awayBase * 0.043).clamp(0.03, 0.30)) {
           awayScore++;
+        }
       }
 
-      homeScore = homeScore.clamp(0, 6);
-      awayScore = awayScore.clamp(0, 5);
+      homeScore = homeScore.clamp(0, 6).toInt();
+      awayScore = awayScore.clamp(0, 5).toInt();
 
       final homeScorers = List.generate(homeScore, (i) => 'Golcu #${i + 1}');
       final awayScorers = List.generate(awayScore, (i) => 'Golcu #${i + 1}');
@@ -144,6 +156,11 @@ class _LeagueScreenState extends State<LeagueScreen>
         homeScorers,
         awayScorers,
       );
+      for (final player in [...homeTeam.players, ...awayTeam.players]) {
+        if (player.isUnavailable) {
+          player.advanceUnavailableStatusAfterTeamMatch();
+        }
+      }
     }
 
     await _saveLeague();
@@ -252,19 +269,45 @@ class _LeagueScreenState extends State<LeagueScreen>
                 ],
               ),
             )
-          : TabBarView(
-              controller: _tabController,
+          : Column(
               children: [
-                _standingsTab(season),
-                _fixturesTab(season),
-                _matchTab(season, fixture),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      labelText: 'Takim veya fikstur ara',
+                      isDense: true,
+                    ),
+                    onChanged: (value) =>
+                        setState(() => _searchQuery = value),
+                  ),
+                ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _standingsTab(season),
+                      _fixturesTab(season),
+                      _matchTab(season, fixture),
+                    ],
+                  ),
+                ),
               ],
             ),
     );
   }
 
   Widget _standingsTab(LeagueSeason season) {
-    final sorted = season.sortedStandings;
+    final query = _searchQuery.trim().toLowerCase();
+    final sorted = season.sortedStandings
+        .where(
+          (standing) => query.isEmpty ||
+              season.teams[standing.teamIndex].name
+                  .toLowerCase()
+                  .contains(query),
+        )
+        .toList();
 
     return Container(
       color: const Color(0xff08140f),
@@ -469,7 +512,14 @@ class _LeagueScreenState extends State<LeagueScreen>
       itemCount: totalMatchdays,
       itemBuilder: (ctx, matchdayIndex) {
         final matchday = matchdayIndex + 1;
-        final fixtures = season.matchdayFixtures(matchday);
+        final query = _searchQuery.trim().toLowerCase();
+        final fixtures = season.matchdayFixtures(matchday).where((fixture) {
+          if (query.isEmpty) return true;
+          final home = season.teams[fixture.homeIndex].name.toLowerCase();
+          final away = season.teams[fixture.awayIndex].name.toLowerCase();
+          return home.contains(query) || away.contains(query);
+        }).toList();
+        if (fixtures.isEmpty) return const SizedBox.shrink();
         final allPlayed = fixtures.every((f) => f.played);
         final isCurrent =
             matchday == season.currentMatchday && !season.seasonFinished;

@@ -50,7 +50,7 @@ class TeamGame {
     final rng = random ?? math.Random();
     final plan = formationPlan(setup.formation);
     final selected = [
-      ...setup.players.where((profile) => !profile.isInjured),
+      ...setup.players.where((profile) => !profile.isUnavailable),
     ];
     final selectedById = {for (final profile in selected) profile.id: profile};
     final starterProfiles = <PlayerProfile>[
@@ -176,9 +176,10 @@ class TeamGame {
   }
 
   PlayerGame closestTo(Vec2 point, {bool includeGoalkeeper = false}) {
+    final available = players.where((player) => !player.isSentOff);
     final candidates = includeGoalkeeper
-        ? players
-        : players.where((player) => !player.isGoalkeeper);
+        ? available
+        : available.where((player) => !player.isGoalkeeper);
     return candidates.reduce(
       (a, b) => a.pos.distanceTo(point) <= b.pos.distanceTo(point) ? a : b,
     );
@@ -188,6 +189,12 @@ class TeamGame {
     final plan = formationPlan(formation);
     for (var i = 0; i < players.length; i++) {
       final spot = plan.spots[i];
+      if (players[i].isSentOff) {
+        players[i]
+          ..pos = Vec2(-100, -100)
+          ..controlled = false;
+        continue;
+      }
       players[i]
         ..role = spot.role
         ..number = spot.number
@@ -254,7 +261,7 @@ class TeamGame {
           )
           ..homePos = home
           ..lastDirection = Vec2(attackDirection.toDouble(), 0)
-          ..stamina = 1.0;
+          ..stamina = incoming.stamina;
     players[outIndex] = replacement;
     substitutedOut.add(outgoing);
     bench.removeAt(benchIndex);

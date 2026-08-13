@@ -65,6 +65,7 @@ class ActivePenalty {
   PenaltyLane shotDirection = PenaltyLane.center;
   PenaltyLane keeperDirection = PenaltyLane.center;
   double countdown = 0;
+  double preparationTimer = 1.2;
   PenaltyKickResult? result;
 }
 
@@ -135,7 +136,9 @@ class PenaltyLogic {
     required int minute,
   }) {
     final shooters =
-        shootingTeam.players.where((player) => !player.isGoalkeeper).toList()
+        shootingTeam.players
+            .where((player) => !player.isGoalkeeper && !player.isSentOff)
+            .toList()
           ..sort((a, b) => _shooterValue(b).compareTo(_shooterValue(a)));
     final shooter = shooters[kickIndex % shooters.length];
     final keeper = defendingTeam.goalkeeper;
@@ -163,7 +166,9 @@ class PenaltyLogic {
     PlayerGame? selectedShooter,
   }) {
     final shooters =
-        shootingTeam.players.where((player) => !player.isGoalkeeper).toList()
+        shootingTeam.players
+            .where((player) => !player.isGoalkeeper && !player.isSentOff)
+            .toList()
           ..sort((a, b) => _shooterValue(b).compareTo(_shooterValue(a)));
     final shooter =
         selectedShooter != null &&

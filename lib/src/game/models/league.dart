@@ -69,9 +69,10 @@ class LeagueTeam {
         (d) => d.name == json['difficulty'],
         orElse: () => AiDifficulty.medium,
       ),
-      jerseyKits: (json['jerseyKits'] as List<dynamic>?)
-          ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>))
-          .toList(),
+      jerseyKits: JerseyFactory.completeKits(
+        (json['jerseyKits'] as List<dynamic>?)
+            ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>)),
+      ),
     );
   }
 
@@ -178,6 +179,7 @@ class LeagueSeason {
     this.currentMatchday = 1,
     this.currentFixtureIndex = 0,
     this.seasonFinished = false,
+    this.championTeamName,
   }) : fixtures = fixtures ?? _generateFixtures(teams.length),
        standings =
            standings ??
@@ -202,7 +204,13 @@ class LeagueSeason {
 
   /// Get the current fixture to be played.
   LeagueFixture? get currentFixture {
-    final unplayed = fixtures.where((f) => !f.played).toList();
+    final unplayed = fixtures.where((f) => !f.played).toList()
+      ..sort((a, b) {
+        final byDay = a.matchday.compareTo(b.matchday);
+        if (byDay != 0) return byDay;
+        final byHome = a.homeIndex.compareTo(b.homeIndex);
+        return byHome != 0 ? byHome : a.awayIndex.compareTo(b.awayIndex);
+      });
     if (unplayed.isEmpty) return null;
     return unplayed.first;
   }
@@ -247,7 +255,13 @@ class LeagueSeason {
       away.points += 1;
     }
 
-    // Check if season is complete
+    currentFixtureIndex = fixtures.where((f) => f.played).length;
+    final next = currentFixture;
+    if (next != null) {
+      currentMatchday = next.matchday;
+    }
+
+    // Check if season is complete.
     if (fixtures.every((f) => f.played)) {
       seasonFinished = true;
       championTeamName = teams[sortedStandings.first.teamIndex].name;
@@ -345,6 +359,7 @@ class LeagueSeason {
       currentMatchday: json['currentMatchday'] as int? ?? 1,
       currentFixtureIndex: json['currentFixtureIndex'] as int? ?? 0,
       seasonFinished: json['seasonFinished'] as bool? ?? false,
+      championTeamName: json['championTeamName'] as String?,
     );
   }
 
@@ -369,6 +384,7 @@ class LeagueSeason {
     'currentMatchday': currentMatchday,
     'currentFixtureIndex': currentFixtureIndex,
     'seasonFinished': seasonFinished,
+    'championTeamName': championTeamName,
   };
 }
 

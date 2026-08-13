@@ -28,9 +28,14 @@ class PlayerGame {
   Vec2 lastDirection = Vec2(1, 0);
   bool controlled = false;
   double aiCooldown = 0;
+  double tackleContactCooldown = 0;
+  double handballReviewCooldown = 0;
   double manualOverride = 0;
   double catchTimer = 0;
   double jumpBoostMeters = 0;
+  double jumpAnimationTimer = 0;
+  bool isSentOff = false;
+  int yellowCardsThisMatch = 0;
   double stamina = 1.0;
   double minutesThisMatch = 0;
   String keeperState = 'hazir';
@@ -53,16 +58,21 @@ class PlayerGame {
   int matchSaves = 0;
   int matchFoulsCommitted = 0;
   int matchFoulsReceived = 0;
+  int matchYellowCards = 0;
+  int matchRedCards = 0;
 
   /// Set to true when player gets injured during this match.
   bool isInjuredInMatch = false;
 
   bool get isGoalkeeper => role.isGoalkeeper;
 
+  /// Maximum height at which this player can deliberately touch the ball.
+  /// Outfield players reach roughly 10–15 cm over their standing height,
+  /// while a goalkeeper can use both hands up to about 65 cm above it.
   double get bodyReachMeters =>
-      profile.heightMeters * (keeperGroundTimer > 0 ? 0.36 : 1.0) +
+      profile.heightMeters * (keeperGroundTimer > 0 ? 0.50 : 1.0) +
       jumpBoostMeters +
-      (isGoalkeeper ? 0.28 : 0.02);
+      (isGoalkeeper ? 0.52 : 0.02);
 
   double get radius => isGoalkeeper
       ? GameConstants.goalkeeperRadius
@@ -74,10 +84,12 @@ class PlayerGame {
     final staminaFactor = 0.58 + stamina * 0.42;
     final speedFactor = 0.74 + profile.speedSkill * 0.52;
     if (role == PlayerRole.goalkeeper) {
-      return 2.48 *
-          speedFactor *
-          staminaFactor *
-          (keeperGroundTimer > 0 ? 0.33 : 1.0);
+      final keeperMotionFactor = keeperGroundTimer > 0
+          ? keeperState == 'atlayis'
+              ? 1.34
+              : 0.33
+          : 1.0;
+      return 2.48 * speedFactor * staminaFactor * keeperMotionFactor;
     }
     if (role.isWide) {
       return 3.38 * speedFactor * staminaFactor;
