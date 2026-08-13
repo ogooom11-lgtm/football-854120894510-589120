@@ -2380,7 +2380,13 @@ class _GameScreenState extends State<GameScreen>
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ],
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
+            Text(
+              'Shot Model: ${_engine.shotDiagnostics.shots} sut • ${_engine.shotDiagnostics.groundShots} yerden • ${_engine.shotDiagnostics.lowShots} alcak • ${_engine.shotDiagnostics.powerShots} guclu • ${_engine.shotDiagnostics.finesseShots} falso • ${_engine.shotDiagnostics.volleys} vole • ${_engine.shotDiagnostics.headers} kafa • ${_engine.shotDiagnostics.saved} kurtaris • ${_engine.shotDiagnostics.blocked} blok • ${_engine.shotDiagnostics.posts} direk • ${_engine.shotDiagnostics.crossbars} ust direk',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+            const SizedBox(height: 14),
             Wrap(
               alignment: WrapAlignment.center,
               spacing: 10,

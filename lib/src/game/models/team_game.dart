@@ -212,6 +212,8 @@ class TeamGame {
         ..pos.setFrom(pitchPoint(spot.x, spot.y, side))
         ..aiCooldown = 0
         ..manualOverride = 0
+        ..movementIntensity = 0
+        ..turningIntensity = 0
         ..jumpBoostMeters = 0
         ..keeperGroundTimer = 0
         ..keeperDiveCooldown = 0

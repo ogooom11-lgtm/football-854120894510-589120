@@ -166,6 +166,7 @@ class GoalkeeperAi {
         if (isShot) {
           keeper.profile.saves += 1;
           keeper.matchSaves += 1;
+          engine.shotDiagnostics.saved += 1;
         }
         ball.attachTo(keeper);
         keeper.catchTimer = 0;

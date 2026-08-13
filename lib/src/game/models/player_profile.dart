@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'shooting.dart';
+
 class PlayerMatchRecord {
   const PlayerMatchRecord({
     required this.matchId,
@@ -115,6 +117,14 @@ class PlayerProfile {
     this.number,
     this.overallRating = 60,
     this.shootingRating = 60,
+    this.finishingRating = 60,
+    this.shotPowerRating = 65,
+    this.longShotsRating = 55,
+    this.curveRating = 50,
+    this.composureRating = 55,
+    this.balanceRating = 60,
+    this.preferredFoot = PreferredFoot.right,
+    this.weakFootRating = 3,
     this.passingRating = 60,
     this.goalkeepingRating = 45,
     this.speedRating = 60,
@@ -154,6 +164,14 @@ class PlayerProfile {
   final int? number;
   double overallRating;
   double shootingRating;
+  double finishingRating;
+  double shotPowerRating;
+  double longShotsRating;
+  double curveRating;
+  double composureRating;
+  double balanceRating;
+  PreferredFoot preferredFoot;
+  int weakFootRating;
   double passingRating;
   double goalkeepingRating;
   double speedRating;
@@ -241,7 +259,7 @@ class PlayerProfile {
             passingRating * 0.18 +
             speedRating * 0.14 +
             staminaRating * 0.20
-        : shootingRating * 0.28 +
+        : shootingStats.composite * 100 * 0.28 +
             passingRating * 0.30 +
             speedRating * 0.22 +
             staminaRating * 0.20;
@@ -250,6 +268,28 @@ class PlayerProfile {
 
   double get passSkill => (passingRating / 100).clamp(0.05, 0.99).toDouble();
   double get shotSkill => (shootingRating / 100).clamp(0.05, 0.99).toDouble();
+  double get finishingSkill =>
+      (finishingRating / 100).clamp(0.05, 0.99).toDouble();
+  double get shotPowerSkill =>
+      (shotPowerRating / 100).clamp(0.05, 0.99).toDouble();
+  double get longShotsSkill =>
+      (longShotsRating / 100).clamp(0.05, 0.99).toDouble();
+  double get curveSkill => (curveRating / 100).clamp(0.05, 0.99).toDouble();
+  double get composureSkill =>
+      (composureRating / 100).clamp(0.05, 0.99).toDouble();
+  double get balanceSkill =>
+      (balanceRating / 100).clamp(0.05, 0.99).toDouble();
+  PlayerShootingStats get shootingStats => PlayerShootingStats(
+    shooting: shotSkill,
+    finishing: finishingSkill,
+    shotPower: shotPowerSkill,
+    longShots: longShotsSkill,
+    curve: curveSkill,
+    composure: composureSkill,
+    balance: balanceSkill,
+    preferredFoot: preferredFoot,
+    weakFoot: weakFootRating.clamp(1, 5).toInt(),
+  );
   double get keeperSkill =>
       (goalkeepingRating / 100).clamp(0.05, 0.99).toDouble();
   double get speedSkill => (speedRating / 100).clamp(0.05, 0.99).toDouble();
@@ -296,6 +336,9 @@ class PlayerProfile {
     final height = 1.70 + rng.nextDouble() * 0.25;
     final stamp = DateTime.now().microsecondsSinceEpoch;
     final base = 48 + rng.nextDouble() * 28;
+    final shooting = isGoalkeeper
+        ? 28 + rng.nextDouble() * 22
+        : base + rng.nextDouble() * 8 - 4;
     return PlayerProfile(
       id: '$stamp-${rng.nextInt(999999)}',
       name: name.trim().isEmpty ? 'Oyuncu' : name.trim(),
@@ -303,9 +346,29 @@ class PlayerProfile {
       isGoalkeeper: isGoalkeeper,
       number: rng.nextInt(98) + 1,
       overallRating: base,
-      shootingRating: isGoalkeeper
-          ? 28 + rng.nextDouble() * 22
-          : base + rng.nextDouble() * 8 - 4,
+      shootingRating: shooting,
+      finishingRating: (shooting + rng.nextDouble() * 10 - 5)
+          .clamp(20, 96)
+          .toDouble(),
+      shotPowerRating: (shooting + 7 + rng.nextDouble() * 8 - 4)
+          .clamp(25, 97)
+          .toDouble(),
+      longShotsRating: (shooting - 8 + rng.nextDouble() * 10 - 5)
+          .clamp(15, 95)
+          .toDouble(),
+      curveRating: (shooting - 10 + rng.nextDouble() * 14 - 7)
+          .clamp(12, 95)
+          .toDouble(),
+      composureRating: (base + rng.nextDouble() * 14 - 6)
+          .clamp(20, 96)
+          .toDouble(),
+      balanceRating: (base + rng.nextDouble() * 12 - 5)
+          .clamp(25, 96)
+          .toDouble(),
+      preferredFoot: rng.nextDouble() < 0.24
+          ? PreferredFoot.left
+          : PreferredFoot.right,
+      weakFootRating: 1 + rng.nextInt(5),
       passingRating: base + rng.nextDouble() * 8 - 4,
       goalkeepingRating: isGoalkeeper
           ? base + 12 + rng.nextDouble() * 10
@@ -318,14 +381,41 @@ class PlayerProfile {
   }
 
   factory PlayerProfile.fromJson(Map<String, dynamic> json) {
+    final shooting = (json['shootingRating'] as num?)?.toDouble() ?? 60;
+    final overall = (json['overallRating'] as num?)?.toDouble() ?? 60;
+    final stamina = (json['staminaRating'] as num?)?.toDouble() ?? 60;
+    final intelligence = (json['zekaGucu'] as num?)?.toDouble() ?? 50;
     return PlayerProfile(
       id: json['id'] as String,
       name: json['name'] as String,
       heightMeters: (json['heightMeters'] as num).toDouble(),
       isGoalkeeper: json['isGoalkeeper'] as bool? ?? false,
       number: (json['number'] as num?)?.toInt(),
-      overallRating: (json['overallRating'] as num?)?.toDouble() ?? 60,
-      shootingRating: (json['shootingRating'] as num?)?.toDouble() ?? 60,
+      overallRating: overall,
+      shootingRating: shooting,
+      finishingRating:
+          (json['finishingRating'] as num?)?.toDouble() ?? shooting,
+      shotPowerRating:
+          (json['shotPowerRating'] as num?)?.toDouble() ??
+          (shooting + 7).clamp(20, 99).toDouble(),
+      longShotsRating:
+          (json['longShotsRating'] as num?)?.toDouble() ??
+          (shooting - 8).clamp(10, 99).toDouble(),
+      curveRating:
+          (json['curveRating'] as num?)?.toDouble() ??
+          (shooting - 10).clamp(10, 99).toDouble(),
+      composureRating:
+          (json['composureRating'] as num?)?.toDouble() ?? intelligence,
+      balanceRating:
+          (json['balanceRating'] as num?)?.toDouble() ??
+          ((overall + stamina) / 2).clamp(10, 99).toDouble(),
+      preferredFoot: PreferredFoot.values.firstWhere(
+        (foot) => foot.name == json['preferredFoot'],
+        orElse: () => PreferredFoot.right,
+      ),
+      weakFootRating: ((json['weakFootRating'] as num?)?.toInt() ?? 3)
+          .clamp(1, 5)
+          .toInt(),
       passingRating: (json['passingRating'] as num?)?.toDouble() ?? 60,
       goalkeepingRating:
           (json['goalkeepingRating'] as num?)?.toDouble() ?? 35,
@@ -382,6 +472,14 @@ class PlayerProfile {
         'number': number,
         'overallRating': double.parse(overallRating.toStringAsFixed(1)),
         'shootingRating': double.parse(shootingRating.toStringAsFixed(1)),
+        'finishingRating': double.parse(finishingRating.toStringAsFixed(1)),
+        'shotPowerRating': double.parse(shotPowerRating.toStringAsFixed(1)),
+        'longShotsRating': double.parse(longShotsRating.toStringAsFixed(1)),
+        'curveRating': double.parse(curveRating.toStringAsFixed(1)),
+        'composureRating': double.parse(composureRating.toStringAsFixed(1)),
+        'balanceRating': double.parse(balanceRating.toStringAsFixed(1)),
+        'preferredFoot': preferredFoot.name,
+        'weakFootRating': weakFootRating,
         'passingRating': double.parse(passingRating.toStringAsFixed(1)),
         'goalkeepingRating': double.parse(goalkeepingRating.toStringAsFixed(1)),
         'speedRating': double.parse(speedRating.toStringAsFixed(1)),

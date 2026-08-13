@@ -188,7 +188,8 @@ class PenaltyLogic {
         (tooHigh ? 0.62 : 0.03) +
         (highRisk ? 0.08 : 0) +
         (tooWeak ? 0.05 : 0) +
-        (1 - shooter.profile.shotSkill) * 0.16;
+        (1 - shooter.profile.finishingSkill) * 0.10 +
+        (1 - shooter.profile.composureSkill) * 0.12;
     final saveChance = guessed
         ? (height > 1.55 ? 0.32 : 0.27) + keeper.profile.keeperSkill * 0.18
         : (keeperDirection == PenaltyLane.center &&
@@ -197,7 +198,9 @@ class PenaltyLogic {
               : 0.05 + keeper.profile.keeperSkill * 0.06);
     final shooterBonus =
         (shooter.profile.heightMeters - 1.70) * 0.30 +
-        shooter.profile.shotSkill * 0.20 +
+        shooter.profile.finishingSkill * 0.12 +
+        shooter.profile.composureSkill * 0.12 +
+        shooter.profile.shotSkill * 0.05 +
         (shooter.role.isAttacker ? 0.04 : 0);
     final keeperBonus =
         (keeper.profile.heightMeters - 1.70) * 0.22 +
@@ -230,7 +233,8 @@ class PenaltyLogic {
         : 0.08;
     return roleBonus +
         player.profile.heightMeters +
-        player.profile.shotSkill * 0.60 +
+        player.profile.finishingSkill * 0.34 +
+        player.profile.composureSkill * 0.26 +
         random.nextDouble() * 0.18;
   }
 

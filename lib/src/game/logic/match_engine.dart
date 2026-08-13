@@ -14,6 +14,7 @@ import '../models/formation.dart';
 import '../models/match_event.dart';
 import '../models/player_game.dart';
 import '../models/player_profile.dart';
+import '../models/shooting.dart';
 import '../models/team_game.dart';
 import '../models/team_setup.dart';
 import 'ball_physics.dart';
@@ -21,6 +22,7 @@ import 'goalkeeper_ai.dart';
 import 'offside_logic.dart';
 import 'penalty_logic.dart';
 import 'player_ai.dart';
+import 'shot_calculator.dart';
 
 enum TeamMode { attack, defense, press }
 
@@ -63,6 +65,7 @@ class MatchEngine {
     _playerAi = PlayerAi(random, difficulty: setup.aiDifficulty);
     _goalkeeperAi = GoalkeeperAi(random, difficulty: setup.aiDifficulty);
     _penaltyLogic = PenaltyLogic(random);
+    _shotCalculator = ShotCalculator(random);
     firstHalfStoppage = (1 + random.nextInt(4)).toDouble();
     secondHalfStoppage = (2 + random.nextInt(5)).toDouble();
     extraFirstStoppage = random.nextInt(2).toDouble();
@@ -88,6 +91,8 @@ class MatchEngine {
   late final PlayerAi _playerAi;
   late final GoalkeeperAi _goalkeeperAi;
   late final PenaltyLogic _penaltyLogic;
+  late final ShotCalculator _shotCalculator;
+  final ShotDiagnostics shotDiagnostics = ShotDiagnostics();
 
   MatchPeriod period = MatchPeriod.firstHalf;
   double minute = 0;
@@ -520,9 +525,21 @@ class MatchEngine {
         60;
     controlled.pos = controlled.pos + step;
     _drainStamina(controlled, step.length);
-    controlled.lastDirection = step.normalized(
+    final movementDirection = step.normalized(
       Vec2(team.attackDirection.toDouble(), 0),
     );
+    controlled
+      ..turningIntensity = math.max(
+        controlled.turningIntensity,
+        ((1 - controlled.lastDirection.normalized().dot(movementDirection)) / 2)
+            .clamp(0.0, 1.0)
+            .toDouble(),
+      )
+      ..movementIntensity = math.max(
+        controlled.movementIntensity,
+        direction.length.clamp(0.0, 1.0).toDouble(),
+      )
+      ..lastDirection = movementDirection;
     controlled.keepInsideField();
     _clampRestartPosition(controlled);
     controlled.manualOverride = 0.28;
@@ -607,6 +624,8 @@ class MatchEngine {
       return;
     }
 
+    final incomingBallSpeed = ball.vel.length;
+    final incomingBallHeight = ball.heightMeters;
     final aerialContact = ball.owner == null && ball.heightMeters > 0.35;
     if (aerialContact) {
       final maximumManualReach = player.profile.heightMeters +
@@ -643,54 +662,22 @@ class MatchEngine {
     var kickDirection = direction;
     var loft = 0.0;
     var finalPower = clampedPower;
+    ShotResult? shotResult;
 
     if (type == KickType.shoot) {
-      final shotError = _shotError(player, team, clampedPower);
-      kickDirection =
-          shotTargetFor(
-            player,
-            team,
-            aimError: shotError,
-            power: clampedPower,
-          ) -
-          ball.pos;
-      final distanceToGoal = player.pos.distanceTo(goalCenterFor(team));
-      final inPenaltyBox = isInPenaltyBox(
-        player.pos,
-        opponentOf(team).id,
+      shotResult = _calculateShot(
+        player,
+        team,
+        clampedPower,
+        firstTime: aerialContact,
+        incomingBallSpeed: incomingBallSpeed,
+        incomingBallHeight: incomingBallHeight,
+        freeKick: restartKind == RestartKind.freeKick,
       );
-      final distanceFactor = (distanceToGoal / 420).clamp(0.0, 1.0);
-      final isDirectFreeKick = restartKind == RestartKind.freeKick;
-      if (isDirectFreeKick) {
-        final holdFactor = ((clampedPower - 0.55) / 1.0)
-            .clamp(0.0, 1.0)
-            .toDouble();
-        // A short press often hits the wall, a balanced press clears it, and
-        // an overpowered strike can naturally fly above the crossbar.
-        loft = 8.5 +
-            holdFactor * 16.0 +
-            (1 - player.profile.shotSkill) * random.nextDouble() * 1.4;
-        finalPower = 0.66 + clampedPower * 0.27 + distanceFactor * 0.20;
-      } else {
-        final highShotChance = 0.22 + distanceFactor * 0.54;
-        final maximumHeight = inPenaltyBox ? 3.3 : 4.25;
-        if (random.nextDouble() < highShotChance) {
-          final minimumHeight = inPenaltyBox ? 0.20 : 0.55;
-          final height = minimumHeight +
-              (maximumHeight - minimumHeight) *
-                  (0.28 + random.nextDouble() * 0.72) *
-                  (0.72 + distanceFactor * 0.28);
-          loft = math.sqrt(2 * GameConstants.gravityMeters * height)
-              .clamp(
-                0.0,
-                math.sqrt(2 * GameConstants.gravityMeters * maximumHeight),
-              )
-              .toDouble();
-        } else {
-          loft = 0;
-        }
-        finalPower = 0.68 + clampedPower * 0.20 + distanceFactor * 0.24;
-      }
+      kickDirection = shotResult.launchTarget - ball.pos;
+      loft = shotResult.verticalVelocity;
+      finalPower = shotResult.power;
+      shotDiagnostics.record(shotResult);
     } else if (restartKind == RestartKind.corner) {
       final highDelivery = type == KickType.highPass;
       final candidates = team.players.where(
@@ -741,10 +728,9 @@ class MatchEngine {
       }
     }
 
-    if (aerialContact) {
-      // Volleys and headers redirect the ball; they do not launch with the
-      // same speed as a grounded strike and retain a believable air path.
-      finalPower *= type == KickType.shoot ? 0.58 : 0.68;
+    if (aerialContact && type != KickType.shoot) {
+      // Aerial passes redirect the incoming ball and retain part of its lift.
+      finalPower *= 0.68;
       final retainedLift = ball.verticalVelocity > 0
           ? ball.verticalVelocity * 0.55
           : 1.15;
@@ -758,6 +744,9 @@ class MatchEngine {
       type: type,
       target: target,
       loft: loft,
+      curve: shotResult?.curve ?? 0,
+      spin: shotResult == null ? 0 : shotResult.curve.abs(),
+      shotType: shotResult?.shotType,
     );
     player.manualOverride = 0.36;
   }
@@ -924,7 +913,19 @@ class MatchEngine {
     player.pos = player.pos + step;
     _drainStamina(player, step.length);
     if (!step.isZero) {
-      player.lastDirection = step.normalized();
+      final movementDirection = step.normalized();
+      player
+        ..turningIntensity = math.max(
+          player.turningIntensity,
+          ((1 - player.lastDirection.normalized().dot(movementDirection)) / 2)
+              .clamp(0.0, 1.0)
+              .toDouble(),
+        )
+        ..movementIntensity = math.max(
+          player.movementIntensity,
+          force.clamp(0.0, 1.0).toDouble(),
+        )
+        ..lastDirection = movementDirection;
     }
     player.keepInsideField();
     _clampRestartPosition(player);
@@ -995,6 +996,9 @@ class MatchEngine {
     required KickType type,
     PlayerGame? target,
     double loft = 0,
+    double curve = 0,
+    double spin = 0,
+    ShotType? shotType,
   }) {
     final team = teamById(player.teamId);
     var adjustedDirection = direction;
@@ -1004,18 +1008,15 @@ class MatchEngine {
     final dippingFreeKick =
         restartKind == RestartKind.freeKick && type == KickType.shoot;
     var adjustedPower = type == KickType.shoot
-        ? power * (0.68 + player.stamina * 0.10 + skill * 0.30)
+        ? power
         : power * (0.76 + player.stamina * 0.12 + skill * 0.18);
-    if (player.errorFactor > 0 || skill < 0.90) {
+    if (type != KickType.shoot &&
+        (player.errorFactor > 0 || skill < 0.90)) {
       final side = Vec2(-adjustedDirection.y, adjustedDirection.x).normalized();
-      final errorScale =
-          (type == KickType.shoot ? 54.0 : 92.0) * (1.18 - skill * 0.55);
+      final errorScale = 92.0 * (1.18 - skill * 0.55);
       adjustedDirection +=
           side *
           ((random.nextDouble() - 0.5) * player.errorFactor * errorScale);
-      if (type == KickType.shoot) {
-        adjustedPower *= 1 - player.errorFactor * 0.08 + skill * 0.03;
-      }
     }
     _recordKickStats(
       player,
@@ -1024,6 +1025,7 @@ class MatchEngine {
       adjustedDirection,
       power: adjustedPower,
       loft: loft,
+      curve: curve,
     );
     ball.release(
       direction: adjustedDirection,
@@ -1034,6 +1036,9 @@ class MatchEngine {
       loft: loft,
       highPass: type == KickType.highPass,
       dippingFreeKick: dippingFreeKick,
+      curve: curve,
+      spin: spin,
+      shotType: shotType,
     );
     _recentKicker = player;
     _recentKickerGrace = type == KickType.highPass
@@ -1183,7 +1188,10 @@ class MatchEngine {
       ..lastKickType = null
       ..lastPassWasHigh = false
       ..hasBouncedSinceKick = false
-      ..goalLineMissCommitted = false;
+      ..goalLineMissCommitted = false
+      ..curve = 0
+      ..spin = 0
+      ..shotType = null;
   }
 
   void _tickCooldowns(double dt) {
@@ -1208,6 +1216,14 @@ class MatchEngine {
         player.handballReviewCooldown - dt,
       );
       player.manualOverride = math.max(0, player.manualOverride - dt);
+      player.movementIntensity = math.max(
+        0,
+        player.movementIntensity - dt * 1.35,
+      );
+      player.turningIntensity = math.max(
+        0,
+        player.turningIntensity - dt * 2.4,
+      );
       player.keeperGroundTimer = math.max(0, player.keeperGroundTimer - dt);
       player.keeperDiveCooldown = math.max(0, player.keeperDiveCooldown - dt);
       player.keeperParryCooldown = math.max(
@@ -1510,6 +1526,9 @@ class MatchEngine {
   }
 
   void _deflectFromPlayer(PlayerGame player, {required bool strong}) {
+    if (ball.lastKickType == KickType.shoot && !player.isGoalkeeper) {
+      shotDiagnostics.blocked += 1;
+    }
     final incoming = ball.vel.isZero
         ? (ball.pos - player.pos).normalized(
             Vec2(teamById(player.teamId).attackDirection.toDouble(), 0),
@@ -1528,7 +1547,9 @@ class MatchEngine {
       ..verticalVelocity = ball.heightMeters > 0.45
           ? math.max(0.2, ball.verticalVelocity * -0.18)
           : 0.45
-      ..heightMeters = math.max(ball.heightMeters, strong ? 0.18 : 0.05);
+      ..heightMeters = math.max(ball.heightMeters, strong ? 0.18 : 0.05)
+      ..curve *= 0.40
+      ..spin *= 0.55;
   }
 
   /// A saved shot normally remains live as a rebound instead of becoming a
@@ -1548,7 +1569,9 @@ class MatchEngine {
       ..intendedReceiver = null
       ..vel = reboundDirection * reboundSpeed
       ..heightMeters = math.max(ball.heightMeters, 0.12)
-      ..verticalVelocity = ball.heightMeters > 0.45 ? 0.55 : 0.18;
+      ..verticalVelocity = ball.heightMeters > 0.45 ? 0.55 : 0.18
+      ..curve *= 0.32
+      ..spin *= 0.48;
     final recoverySeconds = 1.62 - keeper.profile.keeperSkill * 0.16;
     keeper
       ..keeperState = 'kurtaris'
@@ -1566,6 +1589,7 @@ class MatchEngine {
     if (ball.lastKickType == KickType.shoot) {
       keeper.profile.saves += 1;
       keeper.matchSaves += 1;
+      shotDiagnostics.saved += 1;
     }
   }
 
@@ -1716,6 +1740,27 @@ class MatchEngine {
       return;
     }
 
+    final nearPost =
+        (ball.pos.y - goalTop).abs() <= GameConstants.ballRadius + 2.5 ||
+        (ball.pos.y - goalBottom).abs() <= GameConstants.ballRadius + 2.5;
+    if (nearPost &&
+        !ball.goalLineMissCommitted &&
+        ball.heightMeters < GameConstants.crossbarMinMeters + 0.10) {
+      shotDiagnostics.posts += 1;
+      final postY = (ball.pos.y - goalTop).abs() <
+              (ball.pos.y - goalBottom).abs()
+          ? goalTop
+          : goalBottom;
+      ball
+        ..pos.x = crossedLeft
+            ? GameConstants.leftBound + GameConstants.ballRadius + 0.5
+            : GameConstants.rightBound - GameConstants.ballRadius - 0.5
+        ..vel = Vec2(-ball.vel.x * 0.62, (ball.pos.y - postY).sign * 3.2)
+        ..curve *= 0.45
+        ..spin *= 0.65;
+      return;
+    }
+
     final inGoalMouth =
         ball.pos.y - GameConstants.ballRadius > goalTop &&
         ball.pos.y + GameConstants.ballRadius < goalBottom;
@@ -1724,6 +1769,7 @@ class MatchEngine {
           ball.heightMeters >= GameConstants.crossbarMinMeters - 0.16 &&
           ball.heightMeters <= GameConstants.crossbarMaxMeters + 0.16;
       if (hitsCrossbar) {
+        shotDiagnostics.crossbars += 1;
         ball
           ..pos = Vec2(
             crossedLeft
@@ -1813,6 +1859,9 @@ class MatchEngine {
     bool isPenalty = false,
     String? scorerName,
   }) {
+    if (ball.lastKickType == KickType.shoot) {
+      shotDiagnostics.goals += 1;
+    }
     // Credit the teammate who delivered the last completed pass before the
     // shot, but never credit the scorer as assisting himself.
     final assister = ball.potentialAssister;
@@ -3020,7 +3069,16 @@ class MatchEngine {
     final step = direction * player.speed * _teamStrengthFactor(team) * dt * 60;
     player.pos = player.pos + step;
     _drainStamina(player, step.length);
-    player.lastDirection = direction;
+    final movementDirection = direction.normalized();
+    player
+      ..turningIntensity = math.max(
+        player.turningIntensity,
+        ((1 - player.lastDirection.normalized().dot(movementDirection)) / 2)
+            .clamp(0.0, 1.0)
+            .toDouble(),
+      )
+      ..movementIntensity = 1.0
+      ..lastDirection = movementDirection;
     player.keepInsideField();
     _clampRestartPosition(player);
     player.manualOverride = 0.28;
@@ -3153,6 +3211,7 @@ class MatchEngine {
     Vec2 direction, {
     required double power,
     required double loft,
+    double curve = 0,
   }) {
     if (type == KickType.pass || type == KickType.highPass) {
       player.profile.passes += 1;
@@ -3177,7 +3236,7 @@ class MatchEngine {
       } else {
         redShots += 1;
       }
-      final projectedY = _shotTargetY(player, team, direction);
+      final projectedY = _shotTargetY(team, direction);
       final top =
           GameConstants.virtualHeight / 2 - GameConstants.goalPixelHeight / 2;
       final bottom =
@@ -3188,15 +3247,18 @@ class MatchEngine {
       final shotGravity = restartKind == RestartKind.freeKick
           ? GameConstants.gravityMeters * 5.30
           : GameConstants.gravityMeters;
+      final curvedProjectedY = projectedY == null
+          ? null
+          : projectedY + curve * flightSeconds * flightSeconds * 30;
       final projectedHeight = math.max(
         0.0,
         ball.heightMeters +
             loft * flightSeconds -
             0.5 * shotGravity * flightSeconds * flightSeconds,
       );
-      if (projectedY != null &&
-          projectedY > top &&
-          projectedY < bottom &&
+      if (curvedProjectedY != null &&
+          curvedProjectedY > top &&
+          curvedProjectedY < bottom &&
           projectedHeight < GameConstants.crossbarMinMeters) {
         player.profile.shotsOnTarget += 1;
         player.matchShotsOnTarget += 1;
@@ -3229,114 +3291,190 @@ class MatchEngine {
     receiver.matchSuccessfulDribbles += 1;
   }
 
-  double _shotError(PlayerGame player, TeamGame team, double power) {
-    final opponent = opponentOf(team);
-    final pressure = opponent.players
-        .where((p) => !p.isSentOff)
-        .map((p) => p.pos.distanceTo(player.pos))
-        .reduce(math.min);
-    final distance = player.pos.distanceTo(goalCenterFor(team));
-    final centerY = GameConstants.virtualHeight / 2;
-    final wideAngle = math.max(0.0, (player.pos.y - centerY).abs() - 82);
-    final skill = player.profile.shotSkill;
-    final pressurePenalty = pressure < 28
-        ? 34.0
-        : pressure < 52
-        ? 16.0
-        : 0.0;
-    final distancePenalty = math.max(0.0, distance - 105) *
-        (0.065 + (1 - skill) * 0.15);
-    final anglePenalty = wideAngle * (0.045 + (1 - skill) * 0.10);
-    final powerPenalty = (power - 1.04).abs() * (10 + (1 - skill) * 22);
-    final fatiguePenalty = (1 - player.stamina) * 30;
-    final skillSpread = 7 + (1 - skill) * 62;
-    final teamBonus = (team.rating - 50) * 0.10;
-    final spread = math.max(
-      4.0,
-      skillSpread +
-          pressurePenalty +
-          distancePenalty +
-          anglePenalty +
-          powerPenalty +
-          fatiguePenalty -
-          teamBonus,
-    );
-    // A triangular distribution keeps most shots near their intended point,
-    // while still allowing low-skill or long-range attempts to miss badly.
-    return (random.nextDouble() - random.nextDouble()) * spread;
-  }
-
-  double shotLoftFor(
+  void takeContextualShot(
     PlayerGame player,
     TeamGame team,
     double power, {
-    bool freeKick = false,
+    bool firstTime = false,
+    double incomingBallSpeed = 0,
+    double? incomingBallHeight,
   }) {
-    final distance = player.pos.distanceTo(goalCenterFor(team));
-    final distanceFactor = (distance / 430).clamp(0.0, 1.0).toDouble();
-    final skill = player.profile.shotSkill;
-    final liftChance = freeKick
-        ? 1.0
-        : (0.18 + distanceFactor * 0.55 + (1 - skill) * 0.12)
-            .clamp(0.12, 0.86);
-    if (random.nextDouble() > liftChance) {
-      return 0;
-    }
-    if (freeKick) {
-      return 9.5 +
-          power * 6.0 +
-          (1 - skill) * random.nextDouble() * 1.6;
-    }
-    final targetHeight = 0.18 +
-        distanceFactor * 2.55 +
-        random.nextDouble() * 1.25 +
-        (1 - skill) * 0.90 +
-        math.max(0, power - 1.08) * 1.15;
-    final height = targetHeight.clamp(0.12, 4.85).toDouble();
-    return math.sqrt(2 * GameConstants.gravityMeters * height);
+    final shot = _calculateShot(
+      player,
+      team,
+      power,
+      firstTime: firstTime,
+      incomingBallSpeed: incomingBallSpeed,
+      incomingBallHeight: incomingBallHeight ?? ball.heightMeters,
+      freeKick: restartKind == RestartKind.freeKick && restartTeamId == team.id,
+    );
+    shotDiagnostics.record(shot);
+    releaseFromPlayer(
+      player,
+      shot.launchTarget - ball.pos,
+      shot.power,
+      type: KickType.shoot,
+      loft: shot.verticalVelocity,
+      curve: shot.curve,
+      spin: shot.curve.abs(),
+      shotType: shot.shotType,
+    );
   }
 
-  /// Picks an intended goal point and then applies accuracy based on the
-  /// player's admin-configured shooting skill, pressure, angle and distance.
-  /// The result is deliberately allowed outside the posts.
-  Vec2 shotTargetFor(
+  ShotResult _calculateShot(
     PlayerGame player,
-    TeamGame attackingTeam, {
-    double? aimError,
-    double power = 1.05,
+    TeamGame team,
+    double rawPower, {
+    required bool firstTime,
+    required double incomingBallSpeed,
+    required double incomingBallHeight,
+    required bool freeKick,
   }) {
-    final goal = goalCenterFor(attackingTeam);
-    final keeper = opponentOf(attackingTeam).goalkeeper;
-    final centerY = GameConstants.virtualHeight / 2;
-    final top = centerY - GameConstants.goalPixelHeight / 2 + 10;
-    final bottom = centerY + GameConstants.goalPixelHeight / 2 - 10;
-    final keeperInPosition =
-        keeper.pos.distanceTo(goal) < 76 && keeper.keeperGroundTimer < 0.18;
-    final openGoal = !keeperInPosition;
-
-    double intendedY;
-    if (openGoal || random.nextDouble() < 0.78) {
-      final aimTop = openGoal ? random.nextBool() : keeper.pos.y >= centerY;
-      final edge = 6 + random.nextDouble() * 18;
-      intendedY = aimTop ? top + edge : bottom - edge;
-    } else {
-      intendedY = centerY + (random.nextDouble() - 0.5) * 30;
-    }
-    final error = aimError ?? _shotError(player, attackingTeam, power);
-    final targetY = (intendedY + error)
-        .clamp(
-          GameConstants.topBound - 85,
-          GameConstants.bottomBound + 85,
-        )
+    final intendedTarget = _intendedShotTarget(player, team);
+    final toTarget = intendedTarget - player.pos;
+    final facing = player.lastDirection.normalized(
+      Vec2(team.attackDirection.toDouble(), 0),
+    );
+    final targetDirection = toTarget.normalized(
+      Vec2(team.attackDirection.toDouble(), 0),
+    );
+    final dot = facing.dot(targetDirection).clamp(-1.0, 1.0).toDouble();
+    final facingAngleDegrees = math.acos(dot) * 180 / math.pi;
+    final opponents = opponentOf(team).players.where((p) => !p.isSentOff);
+    final nearestDefenderMeters = opponents.isEmpty
+        ? 10.0
+        : opponents
+              .map((defender) => _pitchDistanceMeters(defender.pos, player.pos))
+              .reduce(math.min);
+    final distanceMeters = _pitchDistanceMeters(player.pos, intendedTarget);
+    final powerInput = ((rawPower - 0.55) / 1.0)
+        .clamp(0.0, 1.0)
         .toDouble();
-    return Vec2(goal.x, targetY);
+    final shotType = _shotTypeFor(
+      player,
+      team,
+      distanceMeters,
+      powerInput,
+      firstTime: firstTime,
+      incomingBallHeight: incomingBallHeight,
+      freeKick: freeKick,
+    );
+    final leaningBack = (powerInput - 0.66) * 0.58 +
+        player.turningIntensity * 0.30 -
+        player.profile.balanceSkill * 0.08;
+    final supportFootQuality = (0.66 +
+            player.profile.balanceSkill * 0.24 +
+            player.profile.composureSkill * 0.10 -
+            player.turningIntensity * 0.22)
+        .clamp(0.15, 1.0)
+        .toDouble();
+    final lateral = (intendedTarget.y - player.pos.y) * team.attackDirection;
+    final usesRightFoot = lateral <= 0;
+    final usingPreferredFoot =
+        (usesRightFoot && player.profile.preferredFoot == PreferredFoot.right) ||
+        (!usesRightFoot && player.profile.preferredFoot == PreferredFoot.left);
+    final context = ShotContext(
+      stats: player.profile.shootingStats,
+      playerPosition: player.pos.copy(),
+      intendedTarget: intendedTarget,
+      facingAngleDegrees: facingAngleDegrees,
+      distanceMeters: distanceMeters,
+      nearestDefenderMeters: nearestDefenderMeters,
+      movementRatio: player.movementIntensity.clamp(0.0, 1.0).toDouble(),
+      sprinting: player.movementIntensity > 0.82,
+      turning: player.turningIntensity > 0.30,
+      incomingBallSpeed: incomingBallSpeed,
+      ballHeight: incomingBallHeight,
+      bodyLean: leaningBack.clamp(-1.0, 1.0).toDouble(),
+      supportFootQuality: supportFootQuality,
+      usingPreferredFoot: usingPreferredFoot,
+      firstTime: firstTime,
+      fatigue: (1 - player.stamina).clamp(0.0, 1.0).toDouble(),
+      powerInput: powerInput,
+      shotType: shotType,
+      goalWidthPixels: GameConstants.goalPixelHeight,
+      freeKick: freeKick,
+    );
+    return _shotCalculator.calculate(context);
+  }
+
+  ShotType _shotTypeFor(
+    PlayerGame player,
+    TeamGame team,
+    double distanceMeters,
+    double powerInput, {
+    required bool firstTime,
+    required double incomingBallHeight,
+    required bool freeKick,
+  }) {
+    if (firstTime) {
+      return incomingBallHeight >= player.profile.heightMeters * 0.70
+          ? ShotType.header
+          : ShotType.volley;
+    }
+    final keeper = opponentOf(team).goalkeeper;
+    final keeperAdvanced =
+        _pitchDistanceMeters(keeper.pos, goalCenterFor(team)) > 5.2;
+    if (!freeKick &&
+        keeperAdvanced &&
+        distanceMeters < 18 &&
+        powerInput < 0.42) {
+      return ShotType.chip;
+    }
+    if (powerInput <= 0.22) return ShotType.ground;
+    if (powerInput <= 0.40) return ShotType.low;
+    if (powerInput >= 0.80) return ShotType.power;
+    final wideBodyAngle =
+        (player.pos.y - GameConstants.virtualHeight / 2).abs() > 72;
+    if (player.profile.curveSkill >= 0.68 &&
+        (wideBodyAngle || freeKick) &&
+        powerInput < 0.76) {
+      return ShotType.finesse;
+    }
+    return ShotType.normal;
+  }
+
+  Vec2 _intendedShotTarget(PlayerGame player, TeamGame team) {
+    final goal = goalCenterFor(team);
+    final keeper = opponentOf(team).goalkeeper;
+    final centerY = GameConstants.virtualHeight / 2;
+    final top = centerY - GameConstants.goalPixelHeight / 2 + 9;
+    final bottom = centerY + GameConstants.goalPixelHeight / 2 - 9;
+    final openGoal =
+        keeper.pos.distanceTo(goal) >= 76 || keeper.keeperGroundTimer > 0.18;
+    final aimTop = openGoal
+        ? player.pos.y >= centerY
+        : keeper.pos.y >= centerY;
+    final edge = 9 + (1 - player.profile.composureSkill) * 11;
+    final tacticalY = aimTop ? top + edge : bottom - edge;
+    final facing = player.lastDirection.normalized(
+      Vec2(team.attackDirection.toDouble(), 0),
+    );
+    final towardGoal = facing.x * team.attackDirection > 0.12;
+    if (!towardGoal || facing.x.abs() < 0.05) {
+      return Vec2(goal.x, tacticalY);
+    }
+    final timeToGoalLine = (goal.x - player.pos.x) / facing.x;
+    final directionalY = (player.pos.y + facing.y * timeToGoalLine)
+        .clamp(top - 48, bottom + 48)
+        .toDouble();
+    // Direction supplies the user's target; composure contributes a limited
+    // tactical correction away from the goalkeeper without guaranteeing it.
+    final correction = 0.18 + player.profile.composureSkill * 0.14;
+    return Vec2(goal.x, directionalY * (1 - correction) + tacticalY * correction);
+  }
+
+  double _pitchDistanceMeters(Vec2 first, Vec2 second) {
+    final dx = (first.x - second.x) * 105 / GameConstants.pitchWidth;
+    final dy = (first.y - second.y) * 68 / GameConstants.pitchHeight;
+    return math.sqrt(dx * dx + dy * dy);
   }
 
   double _teamStrengthFactor(TeamGame team) {
     return (0.92 + team.rating.clamp(1, 99) / 100 * 0.16).clamp(0.92, 1.08);
   }
 
-  double? _shotTargetY(PlayerGame player, TeamGame team, Vec2 direction) {
+  double? _shotTargetY(TeamGame team, Vec2 direction) {
     if (direction.x.abs() < 0.01) {
       return null;
     }
@@ -4145,17 +4283,25 @@ class MatchEngine {
         final shotPower = 1.08 + random.nextDouble() * 0.22;
         final directFreeKick =
             restartKind == RestartKind.freeKick && restartTeamId == id;
+        final shot = _calculateShot(
+          controlled,
+          team,
+          shotPower,
+          firstTime: false,
+          incomingBallSpeed: 0,
+          incomingBallHeight: ball.heightMeters,
+          freeKick: directFreeKick,
+        );
+        shotDiagnostics.record(shot);
         releaseFromPlayer(
           controlled,
-          shotTargetFor(controlled, team, power: shotPower) - ball.pos,
-          shotPower,
+          shot.launchTarget - ball.pos,
+          shot.power,
           type: KickType.shoot,
-          loft: shotLoftFor(
-            controlled,
-            team,
-            shotPower,
-            freeKick: directFreeKick,
-          ),
+          loft: shot.verticalVelocity,
+          curve: shot.curve,
+          spin: shot.curve.abs(),
+          shotType: shot.shotType,
         );
         controlled.aiCooldown = 0.55 + random.nextDouble() * 0.35;
         return;

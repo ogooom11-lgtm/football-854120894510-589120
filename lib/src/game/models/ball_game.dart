@@ -2,6 +2,7 @@ import '../config/game_constants.dart';
 import '../enums/kick_type.dart';
 import '../math/vec2.dart';
 import 'player_game.dart';
+import 'shooting.dart';
 
 class BallGame {
   BallGame({required this.pos});
@@ -20,6 +21,9 @@ class BallGame {
   bool hasBouncedSinceKick = false;
   bool goalLineMissCommitted = false;
   bool dippingFreeKick = false;
+  double curve = 0;
+  double spin = 0;
+  ShotType? shotType;
 
   bool get isOnGround => heightMeters <= 0.04;
 
@@ -38,6 +42,9 @@ class BallGame {
     hasBouncedSinceKick = false;
     goalLineMissCommitted = false;
     dippingFreeKick = false;
+    curve = 0;
+    spin = 0;
+    shotType = null;
     final front = player.lastDirection.normalized(
       Vec2(player.teamId == lastTouch?.teamId ? 1 : -1, 0),
     );
@@ -53,6 +60,9 @@ class BallGame {
     double loft = 0,
     bool highPass = false,
     bool dippingFreeKick = false,
+    double curve = 0,
+    double spin = 0,
+    ShotType? shotType,
   }) {
     final dir = direction.normalized(toucher.lastDirection);
     owner = null;
@@ -67,6 +77,9 @@ class BallGame {
     hasBouncedSinceKick = false;
     goalLineMissCommitted = false;
     this.dippingFreeKick = dippingFreeKick;
+    this.curve = curve;
+    this.spin = spin;
+    this.shotType = shotType;
     final baseSpeed = kickType == KickType.shoot
         ? 8.2
         : highPass

@@ -31,6 +31,8 @@ class PlayerGame {
   double tackleContactCooldown = 0;
   double handballReviewCooldown = 0;
   double manualOverride = 0;
+  double movementIntensity = 0;
+  double turningIntensity = 0;
   double catchTimer = 0;
   double jumpBoostMeters = 0;
   double jumpAnimationTimer = 0;

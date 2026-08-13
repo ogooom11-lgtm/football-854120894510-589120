@@ -1,16 +1,23 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:new_football/src/game/config/game_constants.dart';
+import 'package:new_football/src/game/enums/kick_type.dart';
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
+import 'package:new_football/src/game/logic/ball_physics.dart';
 import 'package:new_football/src/game/logic/match_engine.dart';
+import 'package:new_football/src/game/logic/shot_calculator.dart';
 import 'package:new_football/src/game/math/vec2.dart';
+import 'package:new_football/src/game/models/ball_game.dart';
 import 'package:new_football/src/game/models/formation.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
 import 'package:new_football/src/game/models/league.dart';
 import 'package:new_football/src/game/models/match_event.dart';
 import 'package:new_football/src/game/models/player_game.dart';
 import 'package:new_football/src/game/models/player_profile.dart';
+import 'package:new_football/src/game/models/shooting.dart';
 import 'package:new_football/src/game/models/team_profile.dart';
 import 'package:new_football/src/storage/roster_storage.dart';
 
@@ -29,6 +36,14 @@ void main() {
         isGoalkeeper: false,
       )
         ..dayaniklilikGucu = 88
+        ..finishingRating = 84
+        ..shotPowerRating = 91
+        ..longShotsRating = 79
+        ..curveRating = 82
+        ..composureRating = 86
+        ..balanceRating = 77
+        ..preferredFoot = PreferredFoot.left
+        ..weakFootRating = 4
         ..yellowCards = 4
         ..redCards = 1
         ..suspendedMatchesRemaining = 3
@@ -36,6 +51,14 @@ void main() {
 
       final restored = PlayerProfile.fromJson(player.toJson());
       expect(restored.dayaniklilikGucu, 88);
+      expect(restored.finishingRating, 84);
+      expect(restored.shotPowerRating, 91);
+      expect(restored.longShotsRating, 79);
+      expect(restored.curveRating, 82);
+      expect(restored.composureRating, 86);
+      expect(restored.balanceRating, 77);
+      expect(restored.preferredFoot, PreferredFoot.left);
+      expect(restored.weakFootRating, 4);
       expect(restored.yellowCards, 4);
       expect(restored.redCards, 1);
       expect(restored.suspendedMatchesRemaining, 3);
@@ -58,6 +81,124 @@ void main() {
       final oldKits = JerseyFactory.defaultKits().take(3);
       final expanded = JerseyFactory.completeKits(oldKits);
       expect(expanded.length, 13);
+    });
+  });
+
+  group('realistic shot calculator', () {
+    const weak = PlayerShootingStats(
+      shooting: 0.55,
+      finishing: 0.50,
+      shotPower: 0.65,
+      longShots: 0.40,
+      curve: 0.35,
+      composure: 0.35,
+      balance: 0.45,
+      preferredFoot: PreferredFoot.right,
+      weakFoot: 2,
+    );
+    const worldClass = PlayerShootingStats(
+      shooting: 0.94,
+      finishing: 0.94,
+      shotPower: 0.94,
+      longShots: 0.91,
+      curve: 0.91,
+      composure: 0.94,
+      balance: 0.93,
+      preferredFoot: PreferredFoot.right,
+      weakFoot: 5,
+    );
+
+    ShotContext context(
+      PlayerShootingStats stats, {
+      double distance = 18,
+      ShotType type = ShotType.normal,
+      double pressure = 4,
+    }) {
+      return ShotContext(
+        stats: stats,
+        playerPosition: Vec2(300, 350),
+        intendedTarget: Vec2(1150, 320),
+        facingAngleDegrees: 10,
+        distanceMeters: distance,
+        nearestDefenderMeters: pressure,
+        movementRatio: 0.45,
+        sprinting: false,
+        turning: false,
+        incomingBallSpeed: 0,
+        ballHeight: 0,
+        bodyLean: 0,
+        supportFootQuality: 0.9,
+        usingPreferredFoot: true,
+        firstTime: false,
+        fatigue: 0.1,
+        powerInput: 0.68,
+        shotType: type,
+        goalWidthPixels: GameConstants.goalPixelHeight,
+        freeKick: false,
+      );
+    }
+
+    test('level presets match the supplied shooting plan', () {
+      final weakPreset = PlayerShootingStats.forLevel(PlayerLevel.weak);
+      final worldPreset = PlayerShootingStats.forLevel(PlayerLevel.worldClass);
+      expect(weakPreset.shooting, 0.55);
+      expect(weakPreset.shotPower, 0.65);
+      expect(worldPreset.finishing, 0.94);
+      expect(worldPreset.longShots, 0.91);
+      expect(worldPreset.balance, 0.93);
+    });
+
+    test('world-class players produce a tighter Gaussian spread', () {
+      final weakCalculator = ShotCalculator(math.Random(11));
+      final worldCalculator = ShotCalculator(math.Random(11));
+      var weakError = 0.0;
+      var worldError = 0.0;
+      for (var index = 0; index < 1000; index++) {
+        weakError += weakCalculator.calculate(context(weak)).lateralError.abs();
+        worldError += worldCalculator
+            .calculate(context(worldClass))
+            .lateralError
+            .abs();
+      }
+      expect(worldError / 1000, lessThan(weakError / 1000));
+    });
+
+    test('curve is executed by ball physics instead of changing accuracy', () {
+      final shooter = PlayerGame(
+        profile: PlayerProfile.generated(name: 'Curve', isGoalkeeper: false),
+        teamId: TeamId.blue,
+        role: PlayerRole.striker,
+        number: 9,
+        position: Vec2(200, 350),
+      );
+      final ball = BallGame(pos: Vec2(210, 350));
+      ball.release(
+        direction: Vec2(1, 0),
+        power: 1,
+        toucher: shooter,
+        kickType: KickType.shoot,
+        curve: 2,
+        spin: 2,
+        shotType: ShotType.finesse,
+      );
+      const BallPhysics().update(ball, 1 / 60);
+      expect(ball.vel.y, greaterThan(0));
+      expect(ball.curve, lessThan(2));
+    });
+
+    test('distance and shot type affect accuracy, height and power', () {
+      final calculator = ShotCalculator(math.Random(19));
+      final close = calculator.calculate(context(worldClass, distance: 10));
+      final far = calculator.calculate(context(worldClass, distance: 32));
+      final ground = calculator.calculate(
+        context(worldClass, type: ShotType.ground),
+      );
+      final power = calculator.calculate(
+        context(worldClass, type: ShotType.power),
+      );
+      expect(close.accuracy, greaterThan(far.accuracy));
+      expect(ground.targetHeight, lessThan(power.targetHeight));
+      expect(power.power, greaterThan(ground.power));
     });
   });
 

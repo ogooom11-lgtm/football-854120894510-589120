@@ -273,6 +273,24 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   _adminEditorSlider('دقة التسديد', player.shootingRating, (v) {
                     setDialogState(() => player.shootingRating = v);
                   }),
+                  _adminEditorSlider('إنهاء الهجمة', player.finishingRating, (v) {
+                    setDialogState(() => player.finishingRating = v);
+                  }),
+                  _adminEditorSlider('قوة التسديد', player.shotPowerRating, (v) {
+                    setDialogState(() => player.shotPowerRating = v);
+                  }),
+                  _adminEditorSlider('التسديد البعيد', player.longShotsRating, (v) {
+                    setDialogState(() => player.longShotsRating = v);
+                  }),
+                  _adminEditorSlider('الانحناء', player.curveRating, (v) {
+                    setDialogState(() => player.curveRating = v);
+                  }),
+                  _adminEditorSlider('الهدوء', player.composureRating, (v) {
+                    setDialogState(() => player.composureRating = v);
+                  }),
+                  _adminEditorSlider('التوازن', player.balanceRating, (v) {
+                    setDialogState(() => player.balanceRating = v);
+                  }),
                   _adminEditorSlider('دقة التمرير / الاحتفاظ', player.passingRating, (v) {
                     setDialogState(() => player.passingRating = v);
                   }),

@@ -10,14 +10,15 @@ import '../game/enums/match_mode.dart';
 import '../game/enums/player_role.dart';
 import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
+import '../game/models/jersey_kit.dart';
 import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
-import '../game/models/jersey_kit.dart';
+import '../game/models/shooting.dart';
 import '../game/models/team_profile.dart';
 import '../game/models/team_setup.dart';
 import '../storage/roster_storage.dart';
-import 'game_screen.dart';
 import 'account_detail_screen.dart';
+import 'game_screen.dart';
 import 'league_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -2196,6 +2197,36 @@ class _SetupScreenState extends State<SetupScreen> {
           onChanged: (value) => profile.shootingRating = value,
         ),
         _adminSkillSlider(
+          label: 'Bitiricilik',
+          value: profile.finishingRating,
+          onChanged: (value) => profile.finishingRating = value,
+        ),
+        _adminSkillSlider(
+          label: 'Sut gucu',
+          value: profile.shotPowerRating,
+          onChanged: (value) => profile.shotPowerRating = value,
+        ),
+        _adminSkillSlider(
+          label: 'Uzaktan sut',
+          value: profile.longShotsRating,
+          onChanged: (value) => profile.longShotsRating = value,
+        ),
+        _adminSkillSlider(
+          label: 'Falso',
+          value: profile.curveRating,
+          onChanged: (value) => profile.curveRating = value,
+        ),
+        _adminSkillSlider(
+          label: 'Sogukkanlilik',
+          value: profile.composureRating,
+          onChanged: (value) => profile.composureRating = value,
+        ),
+        _adminSkillSlider(
+          label: 'Denge',
+          value: profile.balanceRating,
+          onChanged: (value) => profile.balanceRating = value,
+        ),
+        _adminSkillSlider(
           label: 'Pas',
           value: profile.passingRating,
           onChanged: (value) => profile.passingRating = value,
@@ -2224,6 +2255,44 @@ class _SetupScreenState extends State<SetupScreen> {
           label: 'Zeka',
           value: profile.zekaGucu,
           onChanged: (value) => profile.zekaGucu = value,
+        ),
+        Row(
+          children: [
+            const SizedBox(width: 128, child: Text('Tercih edilen ayak')),
+            DropdownButton<PreferredFoot>(
+              value: profile.preferredFoot,
+              items: const [
+                DropdownMenuItem(
+                  value: PreferredFoot.left,
+                  child: Text('Sol'),
+                ),
+                DropdownMenuItem(
+                  value: PreferredFoot.right,
+                  child: Text('Sag'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => profile.preferredFoot = value);
+                _save();
+              },
+            ),
+            const Spacer(),
+            const Text('Zayif ayak'),
+            const SizedBox(width: 8),
+            DropdownButton<int>(
+              value: profile.weakFootRating.clamp(1, 5).toInt(),
+              items: [
+                for (var value = 1; value <= 5; value++)
+                  DropdownMenuItem(value: value, child: Text('$value/5')),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => profile.weakFootRating = value);
+                _save();
+              },
+            ),
+          ],
         ),
         _suspensionEditor(profile),
         Align(
@@ -3361,7 +3430,14 @@ class _SetupScreenState extends State<SetupScreen> {
               _formationStat('Forma no', player.number ?? 0),
               _formationStat('OVR', player.overallRating.round()),
               _formationStat('Efektif OVR', player.effectiveOverall.round()),
-              _formationStat('Sut gucu', player.shootingRating.round()),
+              _formationStat('Sut', player.shootingRating.round()),
+              _formationStat('Bitiricilik', player.finishingRating.round()),
+              _formationStat('Sut gucu', player.shotPowerRating.round()),
+              _formationStat('Uzaktan sut', player.longShotsRating.round()),
+              _formationStat('Falso', player.curveRating.round()),
+              _formationStat('Sogukkanlilik', player.composureRating.round()),
+              _formationStat('Denge', player.balanceRating.round()),
+              _formationStat('Zayif ayak', '${player.weakFootRating}/5'),
               _formationStat('Pas gucu', player.passingRating.round()),
               _formationStat('Kaleci gucu', player.goalkeepingRating.round()),
               _formationStat('Hiz gucu', player.speedRating.round()),

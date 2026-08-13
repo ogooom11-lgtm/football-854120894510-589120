@@ -274,18 +274,7 @@ class PlayerAi {
       final shotPower = emptyGoalChance
           ? 1.22
           : 1.06 + random.nextDouble() * 0.22;
-      engine.releaseFromPlayer(
-        player,
-        engine.shotTargetFor(player, team, power: shotPower) - engine.ball.pos,
-        shotPower,
-        type: KickType.shoot,
-        loft: engine.shotLoftFor(
-          player,
-          team,
-          shotPower,
-          freeKick: engine.restartKind == RestartKind.freeKick,
-        ),
-      );
+      engine.takeContextualShot(player, team, shotPower);
       player.aiCooldown = 0.62 + random.nextDouble() * 0.42;
       return;
     }
@@ -382,18 +371,7 @@ class PlayerAi {
     final action = decisions.first.action;
     if (action == 'shot') {
       final shotPower = 1.00 + random.nextDouble() * 0.35;
-      engine.releaseFromPlayer(
-        player,
-        engine.shotTargetFor(player, team, power: shotPower) - engine.ball.pos,
-        shotPower,
-        type: KickType.shoot,
-        loft: engine.shotLoftFor(
-          player,
-          team,
-          shotPower,
-          freeKick: engine.restartKind == RestartKind.freeKick,
-        ),
-      );
+      engine.takeContextualShot(player, team, shotPower);
       player.aiCooldown = 0.65 + random.nextDouble() * 0.55;
       return;
     }
