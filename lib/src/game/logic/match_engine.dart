@@ -797,9 +797,12 @@ class MatchEngine {
     final shooting = teamById(penalty.shootingTeam);
     final defending = opponentOf(shooting);
     if (isTeamAiControlled(defending.id)) {
+      final keeperStats = defending.goalkeeper.profile.goalkeeperStats;
+      final readAbility = keeperStats.reaction * 0.42 +
+          keeperStats.anticipation * 0.34 +
+          keeperStats.oneVsOne * 0.24;
       final readsShot = random.nextDouble() <
-          (0.18 + defending.goalkeeper.profile.keeperSkill * 0.34) *
-              aiDifficulty.anticipationFactor;
+          (0.12 + readAbility * 0.40) * aiDifficulty.anticipationFactor;
       penalty.keeperDirection = readsShot
           ? penalty.shotDirection
           : PenaltyLane.values[random.nextInt(PenaltyLane.values.length)];
@@ -1549,19 +1552,29 @@ class MatchEngine {
           : 0.45
       ..heightMeters = math.max(ball.heightMeters, strong ? 0.18 : 0.05)
       ..curve *= 0.40
-      ..spin *= 0.55;
+      ..spin *= 0.55
+      ..trajectoryId += 1;
   }
 
   /// A saved shot normally remains live as a rebound instead of becoming a
-  /// clean catch every time.
-  void parryFromGoalkeeper(PlayerGame keeper) {
+  /// clean catch every time. Better parrying sends it away from danger with
+  /// less random scatter; the goalkeeper never receives the shot finalTarget.
+  void parryFromGoalkeeper(PlayerGame keeper, {double? control}) {
     final team = teamById(keeper.teamId);
+    final parryControl = (control ?? keeper.profile.goalkeeperStats.parrying)
+        .clamp(0.05, 0.99)
+        .toDouble();
+    final sideScatter =
+        (random.nextDouble() - 0.5) * (1.45 - parryControl * 0.90);
     final reboundDirection = Vec2(
       team.attackDirection.toDouble(),
-      (random.nextDouble() - 0.5) * 1.35,
+      sideScatter,
     ).normalized(Vec2(team.attackDirection.toDouble(), 0));
-    final reboundSpeed = math.max(3.6, ball.vel.length * 0.66) +
-        random.nextDouble() * 1.25;
+    final reboundSpeed = math.max(
+          3.2,
+          ball.vel.length * (0.52 + (1 - parryControl) * 0.17),
+        ) +
+        random.nextDouble() * (1.15 - parryControl * 0.62);
     ball
       ..owner = null
       ..lastTouch = keeper
@@ -1571,8 +1584,12 @@ class MatchEngine {
       ..heightMeters = math.max(ball.heightMeters, 0.12)
       ..verticalVelocity = ball.heightMeters > 0.45 ? 0.55 : 0.18
       ..curve *= 0.32
-      ..spin *= 0.48;
-    final recoverySeconds = 1.62 - keeper.profile.keeperSkill * 0.16;
+      ..spin *= 0.48
+      ..trajectoryId += 1;
+    final stats = keeper.profile.goalkeeperStats;
+    final recoverySeconds = (1.76 - stats.diving * 0.23 - stats.reaction * 0.08)
+        .clamp(1.42, 1.68)
+        .toDouble();
     keeper
       ..keeperState = 'kurtaris'
       ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.12)
@@ -1591,6 +1608,38 @@ class MatchEngine {
       keeper.matchSaves += 1;
       shotDiagnostics.saved += 1;
     }
+  }
+
+  void punchFromGoalkeeper(PlayerGame keeper, {double control = 0.6}) {
+    final team = teamById(keeper.teamId);
+    final safeSide = keeper.pos.y < GameConstants.virtualHeight / 2 ? -1.0 : 1.0;
+    final controlled = control.clamp(0.05, 0.99).toDouble();
+    final direction = Vec2(
+      team.attackDirection.toDouble(),
+      safeSide * (0.55 + controlled * 0.48) +
+          (random.nextDouble() - 0.5) * (1 - controlled) * 0.65,
+    ).normalized(Vec2(team.attackDirection.toDouble(), safeSide));
+    ball
+      ..owner = null
+      ..lastTouch = keeper
+      ..lastPasser = null
+      ..intendedReceiver = null
+      ..vel = direction * (5.0 + controlled * 2.2)
+      ..verticalVelocity = 1.2 + controlled * 0.8
+      ..heightMeters = math.max(ball.heightMeters, 0.75)
+      ..curve *= 0.22
+      ..spin *= 0.38
+      ..trajectoryId += 1;
+    final recovery = (1.68 - keeper.profile.goalkeeperStats.jumping * 0.20)
+        .clamp(1.40, 1.62)
+        .toDouble();
+    keeper
+      ..keeperState = 'kurtaris'
+      ..jumpAnimationTimer = 0.62
+      ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.16)
+      ..keeperGroundTimer = math.max(keeper.keeperGroundTimer, recovery)
+      ..keeperDiveCooldown = math.max(keeper.keeperDiveCooldown, recovery + 0.2)
+      ..keeperParryCooldown = 0.24;
   }
 
   void _preventOverlap() {
@@ -1685,9 +1734,7 @@ class MatchEngine {
   }
 
   bool _tryEmergencyGoalkeeperSave({required bool crossedLeft}) {
-    if (ball.lastKickType != KickType.shoot) {
-      return false;
-    }
+    if (ball.lastKickType != KickType.shoot) return false;
     final defending = crossedLeft
         ? teamBySide(TeamSide.left)
         : teamBySide(TeamSide.right);
@@ -1697,31 +1744,21 @@ class MatchEngine {
         ball.heightMeters > keeper.bodyReachMeters) {
       return false;
     }
-    final skill = keeper.profile.keeperSkill;
-    final lateralGap = (keeper.pos.y - ball.pos.y).abs();
-    final diveReach = 17 + skill * 43 * aiDifficulty.anticipationFactor;
-    if (lateralGap > diveReach) {
-      return false;
-    }
-    final speedPenalty = math.max(0.0, ball.vel.length - 7.0) * 0.035;
-    final saveChance = (0.05 + skill * 0.80 - speedPenalty)
-        .clamp(0.04, 0.88)
-        .toDouble();
-    if (random.nextDouble() > saveChance) {
-      return false;
-    }
-
-    keeper.pos.y +=
-        (ball.pos.y - keeper.pos.y) * (0.55 + skill * 0.30);
-    keeper
-      ..keeperState = 'kurtaris'
-      ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.14)
-      ..jumpAnimationTimer = 0.62
-      ..keeperGroundTimer = math.max(keeper.keeperGroundTimer, 0.42);
+    // Goal-line resolution may run one frame after physical contact. Permit a
+    // save only when the real ball and goalkeeper bodies overlap; there is no
+    // random chance and no teleport toward a precomputed target.
+    final physicalReach = keeper.radius +
+        GameConstants.ballRadius +
+        3 +
+        keeper.profile.goalkeeperStats.reach * 8;
+    if (keeper.pos.distanceTo(ball.pos) > physicalReach) return false;
     ball.pos.x = crossedLeft
         ? GameConstants.leftBound + GameConstants.ballRadius + 2
         : GameConstants.rightBound - GameConstants.ballRadius - 2;
-    parryFromGoalkeeper(keeper);
+    parryFromGoalkeeper(
+      keeper,
+      control: keeper.profile.goalkeeperStats.parrying,
+    );
     return true;
   }
 
@@ -2023,8 +2060,9 @@ class MatchEngine {
           : defending.goalkeeper.jumpAnimationTimer > 0.10
           ? 'atlayis'
           : 'yerde';
-      final penaltyRecovery =
-          1.62 - defending.goalkeeper.profile.keeperSkill * 0.16;
+      final penaltyRecovery = 1.70 -
+          defending.goalkeeper.profile.goalkeeperStats.diving * 0.18 -
+          defending.goalkeeper.profile.goalkeeperStats.reaction * 0.06;
       defending.goalkeeper.keeperGroundTimer = math.max(
         defending.goalkeeper.keeperGroundTimer,
         penaltyRecovery,

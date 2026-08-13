@@ -7,11 +7,13 @@ import 'package:new_football/src/game/enums/kick_type.dart';
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
 import 'package:new_football/src/game/logic/ball_physics.dart';
+import 'package:new_football/src/game/logic/goalkeeper_prediction.dart';
 import 'package:new_football/src/game/logic/match_engine.dart';
 import 'package:new_football/src/game/logic/shot_calculator.dart';
 import 'package:new_football/src/game/math/vec2.dart';
 import 'package:new_football/src/game/models/ball_game.dart';
 import 'package:new_football/src/game/models/formation.dart';
+import 'package:new_football/src/game/models/goalkeeper.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
 import 'package:new_football/src/game/models/league.dart';
 import 'package:new_football/src/game/models/match_event.dart';
@@ -42,6 +44,10 @@ void main() {
         ..curveRating = 82
         ..composureRating = 86
         ..balanceRating = 77
+        ..goalkeeperReactionRating = 89
+        ..goalkeeperPositioningRating = 87
+        ..goalkeeperCatchingRating = 84
+        ..goalkeeperParryingRating = 86
         ..preferredFoot = PreferredFoot.left
         ..weakFootRating = 4
         ..yellowCards = 4
@@ -57,6 +63,10 @@ void main() {
       expect(restored.curveRating, 82);
       expect(restored.composureRating, 86);
       expect(restored.balanceRating, 77);
+      expect(restored.goalkeeperReactionRating, 89);
+      expect(restored.goalkeeperPositioningRating, 87);
+      expect(restored.goalkeeperCatchingRating, 84);
+      expect(restored.goalkeeperParryingRating, 86);
       expect(restored.preferredFoot, PreferredFoot.left);
       expect(restored.weakFootRating, 4);
       expect(restored.yellowCards, 4);
@@ -199,6 +209,67 @@ void main() {
       expect(close.accuracy, greaterThan(far.accuracy));
       expect(ground.targetHeight, lessThan(power.targetHeight));
       expect(power.power, greaterThan(ground.power));
+    });
+  });
+
+  group('goalkeeper prediction model', () {
+    GoalkeeperContext context({double ballY = 350, double curve = 0}) {
+      return GoalkeeperContext(
+        goalkeeperPosition: Vec2(68, 350),
+        goalkeeperHeight: 1.88,
+        goalCenter: Vec2(68, 350),
+        goalTop: 285,
+        goalBottom: 415,
+        goalLineX: 68,
+        ballPosition: Vec2(300, ballY),
+        ballVelocity: Vec2(-6, 0),
+        ballHeight: 0.6,
+        ballVerticalVelocity: 1.2,
+        ballCurve: curve,
+        shotType: ShotType.normal,
+        shooterPosition: Vec2(310, 350),
+        nearestDefenderDistance: 3,
+        numberOfAttackers: 1,
+        isBallOwned: false,
+        isCross: false,
+        isOneVsOne: false,
+        isThroughBall: false,
+        isCorner: false,
+        isFreeKick: false,
+        visibilityFactor: 1,
+        fatigue: 0,
+      );
+    }
+
+    test('goalkeeper level presets match the supplied plan', () {
+      final weak = GoalkeeperStats.forLevel(PlayerLevel.weak);
+      final world = GoalkeeperStats.forLevel(PlayerLevel.worldClass);
+      expect(weak.reaction, 0.45);
+      expect(weak.catching, 0.40);
+      expect(world.positioning, 0.96);
+      expect(world.diving, 0.96);
+      expect(world.highBalls, 0.94);
+    });
+
+    test('world-class prediction has tighter human error and confidence', () {
+      final weakStats = GoalkeeperStats.forLevel(PlayerLevel.weak);
+      final worldStats = GoalkeeperStats.forLevel(PlayerLevel.worldClass);
+      final weakPredictor = GoalkeeperPredictor(math.Random(31));
+      final worldPredictor = GoalkeeperPredictor(math.Random(31));
+      var weakError = 0.0;
+      var worldError = 0.0;
+      var weakConfidence = 0.0;
+      var worldConfidence = 0.0;
+      for (var index = 0; index < 1000; index++) {
+        final weak = weakPredictor.predict(weakStats, context());
+        final world = worldPredictor.predict(worldStats, context());
+        weakError += (weak.predictedImpact.y - 350).abs();
+        worldError += (world.predictedImpact.y - 350).abs();
+        weakConfidence += weak.confidence;
+        worldConfidence += world.confidence;
+      }
+      expect(worldError, lessThan(weakError));
+      expect(worldConfidence, greaterThan(weakConfidence));
     });
   });
 

@@ -2,6 +2,7 @@ import '../config/game_constants.dart';
 import '../enums/player_role.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
+import 'goalkeeper.dart';
 import 'player_profile.dart';
 
 class PlayerGame {
@@ -41,6 +42,16 @@ class PlayerGame {
   double stamina = 1.0;
   double minutesThisMatch = 0;
   String keeperState = 'hazir';
+  GoalkeeperState goalkeeperState = GoalkeeperState.idle;
+  GoalkeeperAction goalkeeperAction = GoalkeeperAction.stay;
+  final GoalkeeperDebugData goalkeeperDebug = GoalkeeperDebugData();
+  Vec2 goalkeeperVelocity = Vec2.zero();
+  Vec2? goalkeeperDecisionTarget;
+  GoalkeeperPrediction? goalkeeperPrediction;
+  int goalkeeperObservedTrajectoryId = -1;
+  double goalkeeperReactionTimer = 0;
+  double goalkeeperLastReactionTime = 0;
+  double goalkeeperDecisionLockTimer = 0;
   double keeperGroundTimer = 0;
   double keeperDiveCooldown = 0;
   double keeperParryCooldown = 0;
@@ -75,7 +86,7 @@ class PlayerGame {
   double get bodyReachMeters =>
       profile.heightMeters * (keeperGroundTimer > 0 ? 0.50 : 1.0) +
       jumpBoostMeters +
-      (isGoalkeeper ? 0.52 : 0.02);
+      (isGoalkeeper ? 0.40 + profile.goalkeeperStats.reach * 0.24 : 0.02);
 
   double get radius => isGoalkeeper
       ? GameConstants.goalkeeperRadius

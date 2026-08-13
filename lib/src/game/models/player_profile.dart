@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'goalkeeper.dart';
 import 'shooting.dart';
 
 class PlayerMatchRecord {
@@ -127,6 +128,22 @@ class PlayerProfile {
     this.weakFootRating = 3,
     this.passingRating = 60,
     this.goalkeepingRating = 45,
+    this.goalkeeperReactionRating = 60,
+    this.goalkeeperPositioningRating = 60,
+    this.goalkeeperDivingRating = 60,
+    this.goalkeeperHandlingRating = 58,
+    this.goalkeeperCatchingRating = 55,
+    this.goalkeeperJumpingRating = 60,
+    this.goalkeeperDecisionRating = 55,
+    this.goalkeeperOneVsOneRating = 60,
+    this.goalkeeperHighBallsRating = 55,
+    this.goalkeeperComposureRating = 58,
+    this.goalkeeperAccelerationRating = 60,
+    this.goalkeeperReachRating = 60,
+    this.goalkeeperFootworkRating = 60,
+    this.goalkeeperAnticipationRating = 60,
+    this.goalkeeperParryingRating = 58,
+    this.goalkeeperDistributionRating = 60,
     this.speedRating = 60,
     this.staminaRating = 60,
     this.dayaniklilikGucu = 60,
@@ -174,6 +191,22 @@ class PlayerProfile {
   int weakFootRating;
   double passingRating;
   double goalkeepingRating;
+  double goalkeeperReactionRating;
+  double goalkeeperPositioningRating;
+  double goalkeeperDivingRating;
+  double goalkeeperHandlingRating;
+  double goalkeeperCatchingRating;
+  double goalkeeperJumpingRating;
+  double goalkeeperDecisionRating;
+  double goalkeeperOneVsOneRating;
+  double goalkeeperHighBallsRating;
+  double goalkeeperComposureRating;
+  double goalkeeperAccelerationRating;
+  double goalkeeperReachRating;
+  double goalkeeperFootworkRating;
+  double goalkeeperAnticipationRating;
+  double goalkeeperParryingRating;
+  double goalkeeperDistributionRating;
   double speedRating;
   double staminaRating;
 
@@ -255,7 +288,7 @@ class PlayerProfile {
 
   double get effectiveOverall {
     final technical = isGoalkeeper
-        ? goalkeepingRating * 0.48 +
+        ? goalkeeperStats.composite * 100 * 0.48 +
             passingRating * 0.18 +
             speedRating * 0.14 +
             staminaRating * 0.20
@@ -292,6 +325,33 @@ class PlayerProfile {
   );
   double get keeperSkill =>
       (goalkeepingRating / 100).clamp(0.05, 0.99).toDouble();
+  GoalkeeperStats get goalkeeperStats => GoalkeeperStats(
+    reaction: (goalkeeperReactionRating / 100).clamp(0.05, 0.99).toDouble(),
+    positioning:
+        (goalkeeperPositioningRating / 100).clamp(0.05, 0.99).toDouble(),
+    diving: (goalkeeperDivingRating / 100).clamp(0.05, 0.99).toDouble(),
+    handling: (goalkeeperHandlingRating / 100).clamp(0.05, 0.99).toDouble(),
+    catching: (goalkeeperCatchingRating / 100).clamp(0.05, 0.99).toDouble(),
+    jumping: (goalkeeperJumpingRating / 100).clamp(0.05, 0.99).toDouble(),
+    decision: (goalkeeperDecisionRating / 100).clamp(0.05, 0.99).toDouble(),
+    oneVsOne:
+        (goalkeeperOneVsOneRating / 100).clamp(0.05, 0.99).toDouble(),
+    highBalls:
+        (goalkeeperHighBallsRating / 100).clamp(0.05, 0.99).toDouble(),
+    composure:
+        (goalkeeperComposureRating / 100).clamp(0.05, 0.99).toDouble(),
+    speed: speedSkill,
+    acceleration:
+        (goalkeeperAccelerationRating / 100).clamp(0.05, 0.99).toDouble(),
+    reach: (goalkeeperReachRating / 100).clamp(0.05, 0.99).toDouble(),
+    footwork: (goalkeeperFootworkRating / 100).clamp(0.05, 0.99).toDouble(),
+    anticipation:
+        (goalkeeperAnticipationRating / 100).clamp(0.05, 0.99).toDouble(),
+    parrying:
+        (goalkeeperParryingRating / 100).clamp(0.05, 0.99).toDouble(),
+    distribution:
+        (goalkeeperDistributionRating / 100).clamp(0.05, 0.99).toDouble(),
+  );
   double get speedSkill => (speedRating / 100).clamp(0.05, 0.99).toDouble();
   double get staminaSkill => (staminaRating / 100).clamp(0.05, 0.99).toDouble();
   double get dayaniklilikSkill =>
@@ -339,6 +399,13 @@ class PlayerProfile {
     final shooting = isGoalkeeper
         ? 28 + rng.nextDouble() * 22
         : base + rng.nextDouble() * 8 - 4;
+    final keeperRating = isGoalkeeper
+        ? base + 12 + rng.nextDouble() * 10
+        : 20 + rng.nextDouble() * 18;
+    double keeperVariation(double offset) =>
+        (keeperRating + offset + rng.nextDouble() * 8 - 4)
+            .clamp(15, 97)
+            .toDouble();
     return PlayerProfile(
       id: '$stamp-${rng.nextInt(999999)}',
       name: name.trim().isEmpty ? 'Oyuncu' : name.trim(),
@@ -370,9 +437,23 @@ class PlayerProfile {
           : PreferredFoot.right,
       weakFootRating: 1 + rng.nextInt(5),
       passingRating: base + rng.nextDouble() * 8 - 4,
-      goalkeepingRating: isGoalkeeper
-          ? base + 12 + rng.nextDouble() * 10
-          : 20 + rng.nextDouble() * 18,
+      goalkeepingRating: keeperRating,
+      goalkeeperReactionRating: keeperVariation(1),
+      goalkeeperPositioningRating: keeperVariation(1),
+      goalkeeperDivingRating: keeperVariation(1),
+      goalkeeperHandlingRating: keeperVariation(-2),
+      goalkeeperCatchingRating: keeperVariation(-3),
+      goalkeeperJumpingRating: keeperVariation(0),
+      goalkeeperDecisionRating: keeperVariation(-2),
+      goalkeeperOneVsOneRating: keeperVariation(0),
+      goalkeeperHighBallsRating: keeperVariation(-3),
+      goalkeeperComposureRating: keeperVariation(-2),
+      goalkeeperAccelerationRating: keeperVariation(-1),
+      goalkeeperReachRating: keeperVariation(1),
+      goalkeeperFootworkRating: keeperVariation(-1),
+      goalkeeperAnticipationRating: keeperVariation(0),
+      goalkeeperParryingRating: keeperVariation(-2),
+      goalkeeperDistributionRating: keeperVariation(-2),
       speedRating: base + rng.nextDouble() * 12 - 6,
       staminaRating: base + rng.nextDouble() * 12 - 6,
       dayaniklilikGucu: (base + rng.nextDouble() * 18 - 7).clamp(25, 95).toDouble(),
@@ -385,6 +466,11 @@ class PlayerProfile {
     final overall = (json['overallRating'] as num?)?.toDouble() ?? 60;
     final stamina = (json['staminaRating'] as num?)?.toDouble() ?? 60;
     final intelligence = (json['zekaGucu'] as num?)?.toDouble() ?? 50;
+    final goalkeeper =
+        (json['goalkeepingRating'] as num?)?.toDouble() ?? 35;
+    double goalkeeperValue(String key, [double offset = 0]) =>
+        (json[key] as num?)?.toDouble() ??
+        (goalkeeper + offset).clamp(10, 99).toDouble();
     return PlayerProfile(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -417,8 +503,29 @@ class PlayerProfile {
           .clamp(1, 5)
           .toInt(),
       passingRating: (json['passingRating'] as num?)?.toDouble() ?? 60,
-      goalkeepingRating:
-          (json['goalkeepingRating'] as num?)?.toDouble() ?? 35,
+      goalkeepingRating: goalkeeper,
+      goalkeeperReactionRating: goalkeeperValue('goalkeeperReactionRating', 1),
+      goalkeeperPositioningRating:
+          goalkeeperValue('goalkeeperPositioningRating', 1),
+      goalkeeperDivingRating: goalkeeperValue('goalkeeperDivingRating', 1),
+      goalkeeperHandlingRating: goalkeeperValue('goalkeeperHandlingRating', -2),
+      goalkeeperCatchingRating: goalkeeperValue('goalkeeperCatchingRating', -3),
+      goalkeeperJumpingRating: goalkeeperValue('goalkeeperJumpingRating'),
+      goalkeeperDecisionRating: goalkeeperValue('goalkeeperDecisionRating', -2),
+      goalkeeperOneVsOneRating: goalkeeperValue('goalkeeperOneVsOneRating'),
+      goalkeeperHighBallsRating:
+          goalkeeperValue('goalkeeperHighBallsRating', -3),
+      goalkeeperComposureRating:
+          goalkeeperValue('goalkeeperComposureRating', -2),
+      goalkeeperAccelerationRating:
+          goalkeeperValue('goalkeeperAccelerationRating', -1),
+      goalkeeperReachRating: goalkeeperValue('goalkeeperReachRating', 1),
+      goalkeeperFootworkRating: goalkeeperValue('goalkeeperFootworkRating', -1),
+      goalkeeperAnticipationRating:
+          goalkeeperValue('goalkeeperAnticipationRating'),
+      goalkeeperParryingRating: goalkeeperValue('goalkeeperParryingRating', -2),
+      goalkeeperDistributionRating:
+          goalkeeperValue('goalkeeperDistributionRating', -2),
       speedRating: (json['speedRating'] as num?)?.toDouble() ?? 60,
       staminaRating: (json['staminaRating'] as num?)?.toDouble() ?? 60,
       dayaniklilikGucu:
@@ -482,6 +589,38 @@ class PlayerProfile {
         'weakFootRating': weakFootRating,
         'passingRating': double.parse(passingRating.toStringAsFixed(1)),
         'goalkeepingRating': double.parse(goalkeepingRating.toStringAsFixed(1)),
+        'goalkeeperReactionRating':
+            double.parse(goalkeeperReactionRating.toStringAsFixed(1)),
+        'goalkeeperPositioningRating':
+            double.parse(goalkeeperPositioningRating.toStringAsFixed(1)),
+        'goalkeeperDivingRating':
+            double.parse(goalkeeperDivingRating.toStringAsFixed(1)),
+        'goalkeeperHandlingRating':
+            double.parse(goalkeeperHandlingRating.toStringAsFixed(1)),
+        'goalkeeperCatchingRating':
+            double.parse(goalkeeperCatchingRating.toStringAsFixed(1)),
+        'goalkeeperJumpingRating':
+            double.parse(goalkeeperJumpingRating.toStringAsFixed(1)),
+        'goalkeeperDecisionRating':
+            double.parse(goalkeeperDecisionRating.toStringAsFixed(1)),
+        'goalkeeperOneVsOneRating':
+            double.parse(goalkeeperOneVsOneRating.toStringAsFixed(1)),
+        'goalkeeperHighBallsRating':
+            double.parse(goalkeeperHighBallsRating.toStringAsFixed(1)),
+        'goalkeeperComposureRating':
+            double.parse(goalkeeperComposureRating.toStringAsFixed(1)),
+        'goalkeeperAccelerationRating':
+            double.parse(goalkeeperAccelerationRating.toStringAsFixed(1)),
+        'goalkeeperReachRating':
+            double.parse(goalkeeperReachRating.toStringAsFixed(1)),
+        'goalkeeperFootworkRating':
+            double.parse(goalkeeperFootworkRating.toStringAsFixed(1)),
+        'goalkeeperAnticipationRating':
+            double.parse(goalkeeperAnticipationRating.toStringAsFixed(1)),
+        'goalkeeperParryingRating':
+            double.parse(goalkeeperParryingRating.toStringAsFixed(1)),
+        'goalkeeperDistributionRating':
+            double.parse(goalkeeperDistributionRating.toStringAsFixed(1)),
         'speedRating': double.parse(speedRating.toStringAsFixed(1)),
         'staminaRating': double.parse(staminaRating.toStringAsFixed(1)),
         'dayaniklilikGucu': double.parse(dayaniklilikGucu.toStringAsFixed(1)),

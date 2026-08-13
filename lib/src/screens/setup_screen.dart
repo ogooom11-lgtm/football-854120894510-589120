@@ -1434,7 +1434,7 @@ class _SetupScreenState extends State<SetupScreen> {
           'Takimlar sayfasi: tum takimlari, takim sahibini, guc puanini ve galibiyet/maglubiyet durumunu gosterir. Sahipsiz takimlara buradan sahip sec.\n\n'
           'Oyuncular sayfasi: oyuncu ekle, adini duzenle, kaleci olarak isaretle ve oyuncuyu yalniz bir takima bagla. Bir oyuncu baska takima verilirse eski takimindan otomatik cikar.\n\n'
           'Mac kadrolari: her takim icin ilk 11, yedekler ve oyuncu mevkisini sec. Takim sahibi giris yapmadan kadro duzenlenmez.\n\n'
-          'Oyun icinde F1/F2 degisiklik ekranini acar. Enter once cikacak oyuncuyu, sonra girecek oyuncuyu onaylar.\n\n'
+          'Oyun icinde F1/F2 gorsel dizilis ve degisiklik ekranini acar. Oyuncularin yerini surukleyerek hak kullanmadan degistirebilir, yedegi sahadaki daireye birakarak degisiklik yapabilirsin. F8 kaleci tahmin, erisim ve karar debug cizgilerini acar.\n\n'
           'VAR icin R tusuna iki kez bas. Alt cubuk kaydi akici oynatir; oklar veya A/D kaydi 3 saniyelik adimlarla ileri geri alir. Gol dugmeleri golu iptal eder veya geri alir.',
           style: TextStyle(color: Colors.white70, height: 1.55, fontSize: 15),
         ),
@@ -2236,6 +2236,7 @@ class _SetupScreenState extends State<SetupScreen> {
           value: profile.goalkeepingRating,
           onChanged: (value) => profile.goalkeepingRating = value,
         ),
+        if (profile.isGoalkeeper) ..._goalkeeperAdminSliders(profile),
         _adminSkillSlider(
           label: 'Hiz',
           value: profile.speedRating,
@@ -2305,6 +2306,89 @@ class _SetupScreenState extends State<SetupScreen> {
       ],
     );
   }
+
+  List<Widget> _goalkeeperAdminSliders(PlayerProfile profile) => [
+    _adminSkillSlider(
+      label: 'GK Reaksiyon',
+      value: profile.goalkeeperReactionRating,
+      onChanged: (value) => profile.goalkeeperReactionRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Pozisyon',
+      value: profile.goalkeeperPositioningRating,
+      onChanged: (value) => profile.goalkeeperPositioningRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Atlayis',
+      value: profile.goalkeeperDivingRating,
+      onChanged: (value) => profile.goalkeeperDivingRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Handling',
+      value: profile.goalkeeperHandlingRating,
+      onChanged: (value) => profile.goalkeeperHandlingRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Yakalayis',
+      value: profile.goalkeeperCatchingRating,
+      onChanged: (value) => profile.goalkeeperCatchingRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Sicrama',
+      value: profile.goalkeeperJumpingRating,
+      onChanged: (value) => profile.goalkeeperJumpingRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Karar',
+      value: profile.goalkeeperDecisionRating,
+      onChanged: (value) => profile.goalkeeperDecisionRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Bire Bir',
+      value: profile.goalkeeperOneVsOneRating,
+      onChanged: (value) => profile.goalkeeperOneVsOneRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Yuksek Top',
+      value: profile.goalkeeperHighBallsRating,
+      onChanged: (value) => profile.goalkeeperHighBallsRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Sogukkanlilik',
+      value: profile.goalkeeperComposureRating,
+      onChanged: (value) => profile.goalkeeperComposureRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Hizlanma',
+      value: profile.goalkeeperAccelerationRating,
+      onChanged: (value) => profile.goalkeeperAccelerationRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Erisim',
+      value: profile.goalkeeperReachRating,
+      onChanged: (value) => profile.goalkeeperReachRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Ayak Hareketi',
+      value: profile.goalkeeperFootworkRating,
+      onChanged: (value) => profile.goalkeeperFootworkRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Ongoru',
+      value: profile.goalkeeperAnticipationRating,
+      onChanged: (value) => profile.goalkeeperAnticipationRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Sektirme',
+      value: profile.goalkeeperParryingRating,
+      onChanged: (value) => profile.goalkeeperParryingRating = value,
+    ),
+    _adminSkillSlider(
+      label: 'GK Dagitim',
+      value: profile.goalkeeperDistributionRating,
+      onChanged: (value) => profile.goalkeeperDistributionRating = value,
+    ),
+  ];
 
   Widget _suspensionEditor(PlayerProfile profile) {
     return Container(
@@ -3440,6 +3524,21 @@ class _SetupScreenState extends State<SetupScreen> {
               _formationStat('Zayif ayak', '${player.weakFootRating}/5'),
               _formationStat('Pas gucu', player.passingRating.round()),
               _formationStat('Kaleci gucu', player.goalkeepingRating.round()),
+              if (player.isGoalkeeper) ...[
+                _formationStat('GK Reaksiyon', player.goalkeeperReactionRating.round()),
+                _formationStat('GK Pozisyon', player.goalkeeperPositioningRating.round()),
+                _formationStat('GK Atlayis', player.goalkeeperDivingRating.round()),
+                _formationStat('GK Handling', player.goalkeeperHandlingRating.round()),
+                _formationStat('GK Yakalayis', player.goalkeeperCatchingRating.round()),
+                _formationStat('GK Sicrama', player.goalkeeperJumpingRating.round()),
+                _formationStat('GK Karar', player.goalkeeperDecisionRating.round()),
+                _formationStat('GK Bire Bir', player.goalkeeperOneVsOneRating.round()),
+                _formationStat('GK Yuksek Top', player.goalkeeperHighBallsRating.round()),
+                _formationStat('GK Erisim', player.goalkeeperReachRating.round()),
+                _formationStat('GK Ongoru', player.goalkeeperAnticipationRating.round()),
+                _formationStat('GK Sektirme', player.goalkeeperParryingRating.round()),
+                _formationStat('GK Dagitim', player.goalkeeperDistributionRating.round()),
+              ],
               _formationStat('Hiz gucu', player.speedRating.round()),
               _formationStat('Enerji gucu', player.staminaRating.round()),
               _formationStat('Dayaniklilik', player.dayaniklilikGucu.round()),

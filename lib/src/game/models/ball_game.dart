@@ -24,6 +24,7 @@ class BallGame {
   double curve = 0;
   double spin = 0;
   ShotType? shotType;
+  int trajectoryId = 0;
 
   bool get isOnGround => heightMeters <= 0.04;
 
@@ -80,6 +81,7 @@ class BallGame {
     this.curve = curve;
     this.spin = spin;
     this.shotType = shotType;
+    trajectoryId += 1;
     final baseSpeed = kickType == KickType.shoot
         ? 8.2
         : highPass

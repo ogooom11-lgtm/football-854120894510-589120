@@ -51,6 +51,7 @@ class _GameScreenState extends State<GameScreen>
   String? _selectedTimelineEventId;
   bool _exitConfirmationOpen = false;
   bool _varPanelMinimized = false;
+  bool _goalkeeperDebugVisible = false;
   double _varBallZoom = 1.0;
   String? _varTargetPlayerId;
 
@@ -213,6 +214,10 @@ class _GameScreenState extends State<GameScreen>
       }
       if (_handleSubstitutionKey(key)) {
         setState(() {});
+        return;
+      }
+      if (key == LogicalKeyboardKey.f8) {
+        setState(() => _goalkeeperDebugVisible = !_goalkeeperDebugVisible);
         return;
       }
       if (key == LogicalKeyboardKey.keyR && _handleReplayOpenKey()) {
@@ -682,10 +687,13 @@ class _GameScreenState extends State<GameScreen>
                   painter: GamePainter(
                     _engine,
                     replayZoom: _engine.replayMode ? _varBallZoom : 1.0,
+                    showGoalkeeperDebug: _goalkeeperDebugVisible,
                   ),
                 ),
               ),
               if (!_engine.replayMode && !_engine.finished) _matchHud(),
+              if (_goalkeeperDebugVisible && !_engine.replayMode)
+                _goalkeeperDebugPanel(),
               if (_engine.ball.owner?.isGoalkeeper == true &&
                   !_engine.isTeamAiControlled(_engine.ball.owner!.teamId) &&
                   !_engine.replayMode &&
@@ -705,6 +713,59 @@ class _GameScreenState extends State<GameScreen>
               if (_engine.finished && !_engine.replayMode) _resultPanel(),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _goalkeeperDebugPanel() {
+    Widget row(PlayerGame keeper, String teamName) {
+      final debug = keeper.goalkeeperDebug;
+      final impact = debug.predictedImpact;
+      return Text(
+        '$teamName • ${debug.state.name}/${debug.action.name} • '
+        'Impact ${impact == null ? "-" : "${impact.y.toStringAsFixed(1)}"} • '
+        'TTI ${debug.timeToImpact.isFinite ? debug.timeToImpact.toStringAsFixed(2) : "-"}s • '
+        'React ${debug.reactionTime.toStringAsFixed(2)}s • '
+        'Conf ${(debug.predictionConfidence * 100).round()}% • '
+        'Reach ${debug.reachRadius.toStringAsFixed(1)} • '
+        'Ball ${debug.ballSpeed.toStringAsFixed(2)} / ${debug.ballHeight.toStringAsFixed(2)}m • '
+        'Curve ${debug.ballCurve.toStringAsFixed(2)}',
+        style: const TextStyle(
+          color: Color(0xffb3e5fc),
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
+
+    return Positioned(
+      left: 14,
+      top: 76,
+      child: Container(
+        width: 600,
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: const Color(0xff07120e).withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xff40c4ff)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'GOALKEEPER DEBUG • F8',
+              style: TextStyle(
+                color: Color(0xffffd34d),
+                fontWeight: FontWeight.w900,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 4),
+            row(_engine.blueTeam.goalkeeper, _engine.blueTeam.name),
+            const SizedBox(height: 3),
+            row(_engine.redTeam.goalkeeper, _engine.redTeam.name),
+          ],
         ),
       ),
     );

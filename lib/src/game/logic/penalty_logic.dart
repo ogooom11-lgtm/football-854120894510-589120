@@ -181,6 +181,11 @@ class PenaltyLogic {
     final height = _heightFromPower(clampedPower, shotDirection);
     final shotLane = _laneWithHeight(shotDirection, height);
     final guessed = _sameSide(shotLane, keeperDirection);
+    final keeperStats = keeper.profile.goalkeeperStats;
+    final saveSkill = keeperStats.reaction * 0.36 +
+        keeperStats.diving * 0.28 +
+        keeperStats.oneVsOne * 0.24 +
+        keeperStats.positioning * 0.12;
     final highRisk = height > 1.65;
     final tooHigh = height > 2.44;
     final tooWeak = clampedPower < 0.72;
@@ -191,11 +196,11 @@ class PenaltyLogic {
         (1 - shooter.profile.finishingSkill) * 0.10 +
         (1 - shooter.profile.composureSkill) * 0.12;
     final saveChance = guessed
-        ? (height > 1.55 ? 0.32 : 0.27) + keeper.profile.keeperSkill * 0.18
+        ? (height > 1.55 ? 0.30 : 0.25) + saveSkill * 0.20
         : (keeperDirection == PenaltyLane.center &&
                   shotLane == PenaltyLane.center
-              ? 0.22 + keeper.profile.keeperSkill * 0.12
-              : 0.05 + keeper.profile.keeperSkill * 0.06);
+              ? 0.20 + saveSkill * 0.14
+              : 0.04 + saveSkill * 0.07);
     final shooterBonus =
         (shooter.profile.heightMeters - 1.70) * 0.30 +
         shooter.profile.finishingSkill * 0.12 +
@@ -203,8 +208,7 @@ class PenaltyLogic {
         shooter.profile.shotSkill * 0.05 +
         (shooter.role.isAttacker ? 0.04 : 0);
     final keeperBonus =
-        (keeper.profile.heightMeters - 1.70) * 0.22 +
-        keeper.profile.keeperSkill * 0.10;
+        (keeper.profile.heightMeters - 1.70) * 0.22 + saveSkill * 0.10;
     final scored =
         random.nextDouble() >
         (missChance + saveChance + keeperBonus - shooterBonus).clamp(
@@ -256,10 +260,14 @@ class PenaltyLogic {
   }
 
   PenaltyLane _chooseKeeperLane(PlayerGame keeper, PenaltyLane shotLane) {
+    final stats = keeper.profile.goalkeeperStats;
+    final readSkill = stats.reaction * 0.40 +
+        stats.anticipation * 0.34 +
+        stats.oneVsOne * 0.26;
     final readChance =
-        0.14 +
-        (keeper.profile.heightMeters - 1.70) * 0.45 +
-        keeper.profile.keeperSkill * 0.32;
+        0.10 +
+        (keeper.profile.heightMeters - 1.70) * 0.35 +
+        readSkill * 0.36;
     if (random.nextDouble() < readChance) {
       return shotLane;
     }

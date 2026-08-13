@@ -6,6 +6,7 @@ import '../enums/player_role.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
 import 'formation.dart';
+import 'goalkeeper.dart';
 import 'jersey_kit.dart';
 import 'match_event.dart';
 import 'player_game.dart';
@@ -219,6 +220,14 @@ class TeamGame {
         ..keeperDiveCooldown = 0
         ..keeperParryCooldown = 0
         ..keeperRehandleCooldown = 0
+        ..goalkeeperState = GoalkeeperState.idle
+        ..goalkeeperAction = GoalkeeperAction.stay
+        ..goalkeeperVelocity = Vec2.zero()
+        ..goalkeeperDecisionTarget = null
+        ..goalkeeperPrediction = null
+        ..goalkeeperObservedTrajectoryId = -1
+        ..goalkeeperReactionTimer = 0
+        ..goalkeeperDecisionLockTimer = 0
         ..keeperState = 'hazir';
     }
     resetDirections();

@@ -303,6 +303,47 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   _adminEditorSlider('مهارة الحارس', player.goalkeepingRating, (v) {
                     setDialogState(() => player.goalkeepingRating = v);
                   }),
+                  if (player.isGoalkeeper) ...[
+                    _adminEditorSlider('رد الفعل', player.goalkeeperReactionRating, (v) {
+                      setDialogState(() => player.goalkeeperReactionRating = v);
+                    }),
+                    _adminEditorSlider('التمركز', player.goalkeeperPositioningRating, (v) {
+                      setDialogState(() => player.goalkeeperPositioningRating = v);
+                    }),
+                    _adminEditorSlider('الارتماء', player.goalkeeperDivingRating, (v) {
+                      setDialogState(() => player.goalkeeperDivingRating = v);
+                    }),
+                    _adminEditorSlider('التعامل', player.goalkeeperHandlingRating, (v) {
+                      setDialogState(() => player.goalkeeperHandlingRating = v);
+                    }),
+                    _adminEditorSlider('الإمساك', player.goalkeeperCatchingRating, (v) {
+                      setDialogState(() => player.goalkeeperCatchingRating = v);
+                    }),
+                    _adminEditorSlider('القفز', player.goalkeeperJumpingRating, (v) {
+                      setDialogState(() => player.goalkeeperJumpingRating = v);
+                    }),
+                    _adminEditorSlider('القرار', player.goalkeeperDecisionRating, (v) {
+                      setDialogState(() => player.goalkeeperDecisionRating = v);
+                    }),
+                    _adminEditorSlider('واحد ضد واحد', player.goalkeeperOneVsOneRating, (v) {
+                      setDialogState(() => player.goalkeeperOneVsOneRating = v);
+                    }),
+                    _adminEditorSlider('الكرات العالية', player.goalkeeperHighBallsRating, (v) {
+                      setDialogState(() => player.goalkeeperHighBallsRating = v);
+                    }),
+                    _adminEditorSlider('مدى الوصول', player.goalkeeperReachRating, (v) {
+                      setDialogState(() => player.goalkeeperReachRating = v);
+                    }),
+                    _adminEditorSlider('التوقع', player.goalkeeperAnticipationRating, (v) {
+                      setDialogState(() => player.goalkeeperAnticipationRating = v);
+                    }),
+                    _adminEditorSlider('الإبعاد', player.goalkeeperParryingRating, (v) {
+                      setDialogState(() => player.goalkeeperParryingRating = v);
+                    }),
+                    _adminEditorSlider('التوزيع', player.goalkeeperDistributionRating, (v) {
+                      setDialogState(() => player.goalkeeperDistributionRating = v);
+                    }),
+                  ],
                   _adminEditorSlider(
                     'قوة التحمّل Dayaniklilik',
                     player.dayaniklilikGucu,
