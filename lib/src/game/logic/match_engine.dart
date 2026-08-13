@@ -2455,8 +2455,9 @@ class MatchEngine {
     int? minuteOverride,
     int? replayIndexOverride,
   }) {
+    final serial = _timelineSerial++;
     final event = MatchTimelineEvent(
-      id: '${matchId}-${_timelineSerial++}',
+      id: '$matchId-$serial',
       kind: kind,
       title: title,
       detail: detail,
@@ -2555,7 +2556,7 @@ class MatchEngine {
           player,
           violent: kind == 'redCard',
           reckless: kind == 'yellowCard',
-          reason: "VAR ${eventMinute}' karari",
+          reason: "VAR $eventMinute' karari",
           forcedCard: kind == 'redCard' ? 'red' : 'yellow',
           eventMinute: eventMinute,
           eventReplayIndex: eventFrame,

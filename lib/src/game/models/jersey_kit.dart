@@ -54,11 +54,11 @@ class JerseyKit {
 
   Map<String, dynamic> toJson() => {
         'name': name,
-        'shirtColor': shirtColor.value,
-        'shortsColor': shortsColor.value,
-        'socksColor': socksColor.value,
-        'numberColor': numberColor.value,
-        'goalkeeperShirtColor': goalkeeperShirtColor.value,
+        'shirtColor': shirtColor.toARGB32(),
+        'shortsColor': shortsColor.toARGB32(),
+        'socksColor': socksColor.toARGB32(),
+        'numberColor': numberColor.toARGB32(),
+        'goalkeeperShirtColor': goalkeeperShirtColor.toARGB32(),
       };
 }
 

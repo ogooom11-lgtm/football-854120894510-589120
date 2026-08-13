@@ -32,7 +32,7 @@ enum GoalkeeperAction {
   diveLeft,
   diveRight,
   jump,
-  catch,
+  catchBall,
   parry,
   punch,
   rushOut,

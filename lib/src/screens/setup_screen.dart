@@ -3263,7 +3263,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   ? const Color(0xffffd34d)
                   : player == null
                   ? Colors.black.withValues(alpha: 0.30)
-                  : player!.id == selectedPlayerId
+                  : player.id == selectedPlayerId
                   ? const Color(0xffffd34d).withValues(alpha: 0.88)
                   : const Color(0xff102019).withValues(alpha: 0.94),
               border: Border.all(
@@ -3302,9 +3302,9 @@ class _SetupScreenState extends State<SetupScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        '${player!.number ?? spot.number}',
+                        '${player.number ?? spot.number}',
                         style: TextStyle(
-                          color: player!.id == selectedPlayerId
+                          color: player.id == selectedPlayerId
                               ? Colors.black
                               : const Color(0xffffd34d),
                           fontWeight: FontWeight.w900,
@@ -3314,12 +3314,12 @@ class _SetupScreenState extends State<SetupScreen> {
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 5),
                         child: Text(
-                          player!.name,
+                          player.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: player!.id == selectedPlayerId
+                            color: player.id == selectedPlayerId
                                 ? Colors.black
                                 : Colors.white,
                             fontSize: 9,
@@ -3328,9 +3328,9 @@ class _SetupScreenState extends State<SetupScreen> {
                         ),
                       ),
                       Text(
-                        '${spot.role.code} • ${player!.effectiveOverall.round()}',
+                        '${spot.role.code} • ${player.effectiveOverall.round()}',
                         style: TextStyle(
-                          color: player!.id == selectedPlayerId
+                          color: player.id == selectedPlayerId
                               ? Colors.black87
                               : Colors.white60,
                           fontSize: 8,
@@ -3341,15 +3341,15 @@ class _SetupScreenState extends State<SetupScreen> {
           );
           if (player == null) return content;
           return Draggable<PlayerProfile>(
-            data: player!,
+            data: player,
             feedback: Material(
               color: Colors.transparent,
-              child: _dragPlayerCard(player!),
+              child: _dragPlayerCard(player),
             ),
             childWhenDragging: Opacity(opacity: 0.28, child: content),
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: () => onSelected(player!.id),
+              onTap: () => onSelected(player.id),
               child: content,
             ),
           );

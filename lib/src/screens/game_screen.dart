@@ -724,7 +724,7 @@ class _GameScreenState extends State<GameScreen>
       final impact = debug.predictedImpact;
       return Text(
         '$teamName • ${debug.state.name}/${debug.action.name} • '
-        'Impact ${impact == null ? "-" : "${impact.y.toStringAsFixed(1)}"} • '
+        'Impact ${impact == null ? "-" : impact.y.toStringAsFixed(1)} • '
         'TTI ${debug.timeToImpact.isFinite ? debug.timeToImpact.toStringAsFixed(2) : "-"}s • '
         'React ${debug.reactionTime.toStringAsFixed(2)}s • '
         'Conf ${(debug.predictionConfidence * 100).round()}% • '
@@ -990,10 +990,8 @@ class _GameScreenState extends State<GameScreen>
                 for (final player in candidates)
                   FilterChip(
                     label: Text(
-                      player.profile.name +
-                          ' — ' +
-                          player.profile.heightMeters.toStringAsFixed(2) +
-                          ' m',
+                      '${player.profile.name} — '
+                      '${player.profile.heightMeters.toStringAsFixed(2)} m',
                     ),
                     selected: _wallPlayerIds.contains(player.id),
                     onSelected: (selected) {
@@ -1027,9 +1025,7 @@ class _GameScreenState extends State<GameScreen>
                     _wallPlayerIds.clear();
                     setState(() {});
                   },
-                  child: Text(
-                    'تأكيد الحائط (' + _wallPlayerIds.length.toString() + ')',
-                  ),
+                  child: Text('تأكيد الحائط (${_wallPlayerIds.length})'),
                 ),
               ],
             ),
@@ -1242,7 +1238,7 @@ class _GameScreenState extends State<GameScreen>
               ),
             if (!_engine.redAiControlled)
               Text(
-                'Kirmizi: 0=Pres  \`=Defans',
+                'Kirmizi: 0=Pres  `=Defans',
                 style: TextStyle(
                   color: _redPressing
                       ? Colors.orangeAccent
@@ -2244,7 +2240,7 @@ class _GameScreenState extends State<GameScreen>
                       ),
                       OutlinedButton.icon(
                         onPressed: () {
-                          _engine.seekReplayToEvent(selectedEvent!);
+                          _engine.seekReplayToEvent(selectedEvent);
                           setState(() {});
                         },
                         icon: const Icon(Icons.my_location, size: 17),
@@ -2254,7 +2250,7 @@ class _GameScreenState extends State<GameScreen>
                         const SizedBox(width: 8),
                         FilledButton.tonalIcon(
                           onPressed: () {
-                            _engine.toggleTimelineDecision(selectedEvent!);
+                            _engine.toggleTimelineDecision(selectedEvent);
                             setState(() {});
                           },
                           icon: Icon(

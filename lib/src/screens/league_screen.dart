@@ -861,7 +861,7 @@ class _LeagueScreenState extends State<LeagueScreen>
                         ),
                       ),
                       Text(
-                        '${home.rating.toStringAsFixed(0)}',
+                        home.rating.toStringAsFixed(0),
                         style: const TextStyle(color: Colors.white60),
                       ),
                       const SizedBox(height: 4),
@@ -912,7 +912,7 @@ class _LeagueScreenState extends State<LeagueScreen>
                         ),
                       ),
                       Text(
-                        '${away.rating.toStringAsFixed(0)}',
+                        away.rating.toStringAsFixed(0),
                         style: const TextStyle(color: Colors.white60),
                       ),
                       const SizedBox(height: 4),

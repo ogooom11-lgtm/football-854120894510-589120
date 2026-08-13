@@ -227,10 +227,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                           ListTile(
                             title: Text(player.name),
                             subtitle: Text(
-                              'تسديد ' + player.shootingRating.toStringAsFixed(0) +
-                                  ' | تمرير ' + player.passingRating.toStringAsFixed(0) +
-                                  ' | سرعة ' + player.speedRating.toStringAsFixed(0) +
-                                  ' | طاقة ' + player.staminaRating.toStringAsFixed(0),
+                              'تسديد ${player.shootingRating.toStringAsFixed(0)}'
+                              ' | تمرير ${player.passingRating.toStringAsFixed(0)}'
+                              ' | سرعة ${player.speedRating.toStringAsFixed(0)}'
+                              ' | طاقة ${player.staminaRating.toStringAsFixed(0)}',
                             ),
                             trailing: const Icon(Icons.edit),
                             onTap: () => _showPlayerEditor(player),
@@ -261,7 +261,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xff102019),
-          title: Text('تعديل ' + player.name),
+          title: Text('تعديل ${player.name}'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
@@ -497,7 +497,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  '${team.rating.toStringAsFixed(0)}',
+                  team.rating.toStringAsFixed(0),
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     color: Color(0xffffd34d),
@@ -869,7 +869,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      '${team.rating.toStringAsFixed(0)}',
+                      team.rating.toStringAsFixed(0),
                       style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         color: Color(0xffffd34d),
@@ -882,7 +882,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               Row(
                 children: [
                   Text(
-                    '$ownerName',
+                    ownerName,
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const Spacer(),

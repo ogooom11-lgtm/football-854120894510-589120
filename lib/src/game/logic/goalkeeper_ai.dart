@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../config/game_constants.dart';
 import '../enums/ai_difficulty.dart';
 import '../enums/kick_type.dart';
+import '../enums/team_id.dart';
 import '../math/vec2.dart';
 import '../models/goalkeeper.dart';
 import '../models/player_game.dart';
@@ -330,7 +331,7 @@ class GoalkeeperAi {
     }
     final catchScore = _catchScore(stats, context, prediction.impactSpeed);
     return catchScore >= 0.58
-        ? GoalkeeperAction.catch
+        ? GoalkeeperAction.catchBall
         : GoalkeeperAction.parry;
   }
 
@@ -610,7 +611,7 @@ class GoalkeeperAi {
       keeper
         ..catchTimer = 0
         ..goalkeeperVelocity = Vec2.zero();
-      _setState(keeper, GoalkeeperState.catching, GoalkeeperAction.catch);
+      _setState(keeper, GoalkeeperState.catching, GoalkeeperAction.catchBall);
       return;
     }
 
