@@ -173,9 +173,15 @@ class PlayerPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.2,
       );
+      final groundCue =
+          player.jumpAnimationTimer <= 0.10 || player.keeperState == 'yerde'
+          ? 'YERDE'
+          : player.keeperState == 'kurtaris'
+          ? 'KURTARIS'
+          : 'ATLAYIS';
       _text(
         canvas,
-        player.keeperState == 'kurtaris' ? 'KURTARIS' : 'ATLAYIS',
+        groundCue,
         center.translate(0, -24),
         8,
         const Color(0xffbde8ff),

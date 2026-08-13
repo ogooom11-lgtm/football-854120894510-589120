@@ -84,12 +84,20 @@ class PlayerGame {
     final staminaFactor = 0.58 + stamina * 0.42;
     final speedFactor = 0.74 + profile.speedSkill * 0.52;
     if (role == PlayerRole.goalkeeper) {
-      final keeperMotionFactor = keeperGroundTimer > 0
-          ? keeperState == 'atlayis'
-              ? 1.34
-              : 0.33
-          : 1.0;
-      return 2.48 * speedFactor * staminaFactor * keeperMotionFactor;
+      const realisticKeeperBaseSpeed = 2.18;
+      if (keeperGroundTimer > 0) {
+        final stillDiving =
+            jumpAnimationTimer > 0.10 && keeperState == 'atlayis';
+        // Lateral travel only happens during the actual dive animation. Once
+        // the keeper lands, he is locked to the ground until recovery ends.
+        return stillDiving
+            ? realisticKeeperBaseSpeed *
+                  speedFactor *
+                  staminaFactor *
+                  0.72
+            : 0;
+      }
+      return realisticKeeperBaseSpeed * speedFactor * staminaFactor;
     }
     if (role.isWide) {
       return 3.38 * speedFactor * staminaFactor;

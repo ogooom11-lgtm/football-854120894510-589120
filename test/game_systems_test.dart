@@ -2,10 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
+import 'package:new_football/src/game/math/vec2.dart';
 import 'package:new_football/src/game/models/formation.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
 import 'package:new_football/src/game/models/league.dart';
 import 'package:new_football/src/game/models/match_event.dart';
+import 'package:new_football/src/game/models/player_game.dart';
 import 'package:new_football/src/game/models/player_profile.dart';
 import 'package:new_football/src/game/models/team_profile.dart';
 import 'package:new_football/src/storage/roster_storage.dart';
@@ -54,6 +56,39 @@ void main() {
       final oldKits = JerseyFactory.defaultKits().take(3);
       final expanded = JerseyFactory.completeKits(oldKits);
       expect(expanded.length, 13);
+    });
+  });
+
+  group('goalkeeper recovery', () {
+    test('keeper moves only during the dive and stays locked after landing', () {
+      final profile = PlayerProfile.generated(
+        name: 'Recovery Keeper',
+        isGoalkeeper: true,
+      )..speedRating = 80;
+      final keeper = PlayerGame(
+        profile: profile,
+        teamId: TeamId.blue,
+        role: PlayerRole.goalkeeper,
+        number: 1,
+        position: Vec2.zero(),
+      );
+      final standingSpeed = keeper.speed;
+
+      keeper
+        ..keeperState = 'atlayis'
+        ..keeperGroundTimer = 1.4
+        ..jumpAnimationTimer = 0.62;
+      final diveSpeed = keeper.speed;
+      expect(diveSpeed, greaterThan(0));
+      expect(diveSpeed, lessThan(standingSpeed));
+
+      keeper
+        ..keeperState = 'yerde'
+        ..jumpAnimationTimer = 0.05;
+      expect(keeper.speed, 0);
+
+      keeper.keeperGroundTimer = 0;
+      expect(keeper.speed, standingSpeed);
     });
   });
 

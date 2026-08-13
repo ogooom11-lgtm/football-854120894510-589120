@@ -928,7 +928,10 @@ class MatchEngine {
     required bool high,
     double power = 1.0,
   }) {
-    if (!keeper.isGoalkeeper || ball.owner != keeper || isFrozen) {
+    if (!keeper.isGoalkeeper ||
+        ball.owner != keeper ||
+        isFrozen ||
+        keeper.keeperGroundTimer > 0) {
       return false;
     }
     final team = teamById(keeper.teamId);
@@ -1195,10 +1198,15 @@ class MatchEngine {
         0,
         player.keeperParryCooldown - dt,
       );
-      if (player.isGoalkeeper && player.keeperGroundTimer <= 0) {
-        player.keeperState = ball.owner == player ? 'top elde' : 'hazir';
-      }
       player.jumpAnimationTimer = math.max(0, player.jumpAnimationTimer - dt);
+      if (player.isGoalkeeper) {
+        if (player.keeperGroundTimer <= 0) {
+          player.keeperState = ball.owner == player ? 'top elde' : 'hazir';
+        } else if (player.jumpAnimationTimer <= 0.10 &&
+            ball.owner != player) {
+          player.keeperState = 'yerde';
+        }
+      }
       if (player.jumpBoostMeters > 0) {
         player.jumpBoostMeters = math.max(
           0,
@@ -1518,12 +1526,20 @@ class MatchEngine {
       ..vel = reboundDirection * reboundSpeed
       ..heightMeters = math.max(ball.heightMeters, 0.12)
       ..verticalVelocity = ball.heightMeters > 0.45 ? 0.55 : 0.18;
+    final recoverySeconds = 1.62 - keeper.profile.keeperSkill * 0.16;
     keeper
       ..keeperState = 'kurtaris'
       ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.12)
       ..jumpAnimationTimer = 0.62
-      ..keeperGroundTimer = math.max(keeper.keeperGroundTimer, 0.32)
-      ..keeperParryCooldown = 0.18;
+      ..keeperGroundTimer = math.max(
+        keeper.keeperGroundTimer,
+        recoverySeconds,
+      )
+      ..keeperDiveCooldown = math.max(
+        keeper.keeperDiveCooldown,
+        recoverySeconds + 0.22,
+      )
+      ..keeperParryCooldown = 0.24;
     if (ball.lastKickType == KickType.shoot) {
       keeper.profile.saves += 1;
       keeper.matchSaves += 1;
@@ -1629,7 +1645,9 @@ class MatchEngine {
         ? teamBySide(TeamSide.left)
         : teamBySide(TeamSide.right);
     final keeper = defending.goalkeeper;
-    if (keeper.isSentOff || ball.heightMeters > keeper.bodyReachMeters) {
+    if (keeper.isSentOff ||
+        keeper.keeperState == 'yerde' ||
+        ball.heightMeters > keeper.bodyReachMeters) {
       return false;
     }
     final skill = keeper.profile.keeperSkill;
@@ -1639,33 +1657,6 @@ class MatchEngine {
       return false;
     }
     final speedPenalty = math.max(0.0, ball.vel.length - 7.0) * 0.035;
-    final centralBall =
-        lateralGap <= 10 + skill * 9 &&
-        ball.heightMeters <= keeper.profile.heightMeters + 0.22;
-    ball.pos.x = crossedLeft
-        ? GameConstants.leftBound + GameConstants.ballRadius + 2
-        : GameConstants.rightBound - GameConstants.ballRadius - 2;
-
-    if (centralBall) {
-      final catchChance = (0.38 + skill * 0.58 - speedPenalty)
-          .clamp(0.18, 0.96)
-          .toDouble();
-      if (random.nextDouble() <= catchChance) {
-        keeper.pos.y += (ball.pos.y - keeper.pos.y) * 0.68;
-        keeper.profile.saves += 1;
-        keeper.matchSaves += 1;
-        ball.attachTo(keeper);
-        keeper
-          ..keeperState = 'top elde'
-          ..catchTimer = 0
-          ..keeperGroundTimer = 0
-          ..jumpBoostMeters = 0
-          ..jumpAnimationTimer = 0;
-        return true;
-      }
-      return false;
-    }
-
     final saveChance = (0.05 + skill * 0.80 - speedPenalty)
         .clamp(0.04, 0.88)
         .toDouble();
@@ -1680,6 +1671,9 @@ class MatchEngine {
       ..jumpBoostMeters = math.max(keeper.jumpBoostMeters, 0.14)
       ..jumpAnimationTimer = 0.62
       ..keeperGroundTimer = math.max(keeper.keeperGroundTimer, 0.42);
+    ball.pos.x = crossedLeft
+        ? GameConstants.leftBound + GameConstants.ballRadius + 2
+        : GameConstants.rightBound - GameConstants.ballRadius - 2;
     parryFromGoalkeeper(keeper);
     return true;
   }
@@ -1952,10 +1946,16 @@ class MatchEngine {
     final defending = opponentOf(shooting);
     final target = _penaltyKeeperTarget;
     if (target != null) {
-      defending.goalkeeper.keeperState = 'atlayis';
+      defending.goalkeeper.keeperState = _penaltyBallDeflected
+          ? 'kurtaris'
+          : defending.goalkeeper.jumpAnimationTimer > 0.10
+          ? 'atlayis'
+          : 'yerde';
+      final penaltyRecovery =
+          1.62 - defending.goalkeeper.profile.keeperSkill * 0.16;
       defending.goalkeeper.keeperGroundTimer = math.max(
         defending.goalkeeper.keeperGroundTimer,
-        0.55,
+        penaltyRecovery,
       );
       moveTowards(defending.goalkeeper, target, 1.18, dt);
     }
