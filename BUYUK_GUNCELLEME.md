@@ -102,23 +102,18 @@
 
 ---
 
-### 9. 🏆 نظام الدوري
-- 8 فرق افتراضية (Super Lig 2026)
-- جدول ذهاب وإياب تلقائي
-- ترتيب، إحصائيات، هدافين
-- محاكاة تلقائية لكل المباريات
-- حفظ تلقائي لحالة الدوري
+### 9. ~~🏆 نظام الدوري~~ (تمت إزالته)
+> تم حذف طور الدوري (LIG MODU) بالكامل من اللعبة: شاشة الدوري، نماذج الموسم/الجدول/الترتيب، وحفظ حالة الموسم.
+> ما زال بإمكانك اختيار نوع المباراة **Lig maci** (90 دقيقة بدون تمديد) مقابل **Eleme** من إعدادات المباراة.
 
 ---
 
-## 📁 الملفات الجديدة (6):
+## 📁 الملفات الجديدة (4):
 | الملف | عدد الأسطر | الغرض |
 |-------|-----------|--------|
 | `lib/src/game/enums/ai_difficulty.dart` | 61 | مستويات صعوبة AI |
 | `lib/src/game/enums/ai_play_style.dart` | 124 | أنماط لعب AI |
-| `lib/src/game/models/league.dart` | 393 | نظام الدوري |
 | `lib/src/game/models/team_profile.dart` | 288 | نماذج الفرق المحفوظة |
-| `lib/src/screens/league_screen.dart` | 702 | شاشة الدوري |
 | `lib/src/screens/account_detail_screen.dart` | 463 | شاشة الحساب التفصيلية |
 
 ## 📝 الملفات المعدلة (10):
@@ -133,4 +128,4 @@
 | `game_screen.dart` | +tactical buttons, +injury handling, +stats display |
 | `setup_screen.dart` | +admin login, +account button, +team delete, +zekaGucu |
 | `team_setup.dart` | +AI play style, +AI team control |
-| `roster_storage.dart` | +team_profile import, +league, +playStyle |
+| `roster_storage.dart` | +team_profile import, +playStyle |

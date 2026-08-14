@@ -18,7 +18,6 @@ import '../game/models/team_setup.dart';
 import '../storage/roster_storage.dart';
 import 'game_screen.dart';
 import 'account_detail_screen.dart';
-import 'league_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -505,16 +504,6 @@ class _SetupScreenState extends State<SetupScreen> {
     _load();
   }
 
-  Future<void> _openLeague() async {
-    await _save();
-    if (!mounted) return;
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const LeagueScreen()));
-    // Reload after returning from league screen
-    _load();
-  }
-
   Future<void> _startMatch() async {
     final data = _data;
     if (data == null) {
@@ -886,29 +875,6 @@ class _SetupScreenState extends State<SetupScreen> {
                   side: const BorderSide(color: Colors.white24, width: 1),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _openLeague,
-                icon: const Icon(
-                  Icons.emoji_events,
-                  size: 18,
-                  color: Color(0xffffd34d),
-                ),
-                label: const Text(
-                  'LIG MODU',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xffffd34d),
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xffffd34d), width: 1.5),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
                     vertical: 10,
                   ),
                 ),

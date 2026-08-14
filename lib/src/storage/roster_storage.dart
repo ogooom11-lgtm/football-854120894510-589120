@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import '../game/enums/match_mode.dart';
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/models/league.dart';
 import '../game/models/formation.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
@@ -103,7 +102,6 @@ class SavedGameData {
   AiDifficulty aiDifficulty;
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
-  LeagueSeason? leagueSeason;
 
   SavedAccountProfile get activeAccount => accounts.firstWhere(
     (account) => account.id == activeAccountId,
@@ -288,47 +286,44 @@ class SavedGameData {
           playableTeams.length > 1 ? playableTeams[1] : playableTeams.first,
     );
     return SavedGameData(
-        accounts: accounts,
-        activeAccountId: activeAccountId,
-        loggedInAccountIds: loggedInAccountIds,
-        adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
-        adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
-        players: players,
-        teams: teams,
-        blueTeamId: blueTeam.id,
-        redTeamId: redTeam.id,
-        blueName: blueTeam.name,
-        redName: redTeam.name,
-        blueFormation: formationFromName(
-          json['blueFormation'] ?? blueTeam.formation.name,
-        ),
-        redFormation: formationFromName(
-          json['redFormation'] ?? redTeam.formation.name,
-        ),
-        mode: MatchMode.values.firstWhere(
-          (mode) => mode.name == json['mode'],
-          orElse: () => MatchMode.league,
-        ),
-        bluePlayerIds: blueTeam.playerIds,
-        redPlayerIds: redTeam.playerIds,
-        blueAiControlled: json['blueAiControlled'] as bool? ?? false,
-        redAiControlled: json['redAiControlled'] as bool? ?? false,
-        aiDifficulty: AiDifficulty.values.firstWhere(
-          (d) => d.name == json['aiDifficulty'],
-          orElse: () => AiDifficulty.medium,
-        ),
-        bluePlayStyle: AiPlayStyle.values.firstWhere(
-          (s) => s.name == json['bluePlayStyle'],
-          orElse: () => AiPlayStyle.balanced,
-        ),
-        redPlayStyle: AiPlayStyle.values.firstWhere(
-          (s) => s.name == json['redPlayStyle'],
-          orElse: () => AiPlayStyle.balanced,
-        ),
-      )
-      ..leagueSeason = json['leagueSeason'] != null
-          ? LeagueSeason.fromJson(json['leagueSeason'] as Map<String, dynamic>)
-          : null;
+      accounts: accounts,
+      activeAccountId: activeAccountId,
+      loggedInAccountIds: loggedInAccountIds,
+      adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
+      adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
+      players: players,
+      teams: teams,
+      blueTeamId: blueTeam.id,
+      redTeamId: redTeam.id,
+      blueName: blueTeam.name,
+      redName: redTeam.name,
+      blueFormation: formationFromName(
+        json['blueFormation'] ?? blueTeam.formation.name,
+      ),
+      redFormation: formationFromName(
+        json['redFormation'] ?? redTeam.formation.name,
+      ),
+      mode: MatchMode.values.firstWhere(
+        (mode) => mode.name == json['mode'],
+        orElse: () => MatchMode.league,
+      ),
+      bluePlayerIds: blueTeam.playerIds,
+      redPlayerIds: redTeam.playerIds,
+      blueAiControlled: json['blueAiControlled'] as bool? ?? false,
+      redAiControlled: json['redAiControlled'] as bool? ?? false,
+      aiDifficulty: AiDifficulty.values.firstWhere(
+        (d) => d.name == json['aiDifficulty'],
+        orElse: () => AiDifficulty.medium,
+      ),
+      bluePlayStyle: AiPlayStyle.values.firstWhere(
+        (s) => s.name == json['bluePlayStyle'],
+        orElse: () => AiPlayStyle.balanced,
+      ),
+      redPlayStyle: AiPlayStyle.values.firstWhere(
+        (s) => s.name == json['redPlayStyle'],
+        orElse: () => AiPlayStyle.balanced,
+      ),
+    );
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
@@ -388,7 +383,6 @@ class SavedGameData {
       'aiDifficulty': aiDifficulty.name,
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
-      'leagueSeason': leagueSeason?.toJson(),
     };
   }
 }
