@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../game/enums/ai_play_style.dart';
+import '../game/models/formation.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
@@ -141,7 +143,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  '${team.rating.toStringAsFixed(0)}',
+                  team.rating.toStringAsFixed(0),
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     color: Color(0xffffd34d),
@@ -489,7 +491,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      '${team.rating.toStringAsFixed(0)}',
+                      team.rating.toStringAsFixed(0),
                       style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         color: Color(0xffffd34d),
@@ -502,7 +504,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               Row(
                 children: [
                   Text(
-                    '$ownerName',
+                    ownerName,
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const Spacer(),
