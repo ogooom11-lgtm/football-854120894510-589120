@@ -59,6 +59,10 @@ class _SetupScreenState extends State<SetupScreen> {
   /// Gates the hidden player data / player editing section.
   bool _playerDataUnlocked = false;
 
+  /// Kilitli sekmeye tiklandiginda, sifre dogrulaninca acilacak sekme.
+  /// 5 = Yonetim, 6 = CEZALAR.
+  int _pendingAdminTab = 5;
+
   @override
   void initState() {
     super.initState();
@@ -267,6 +271,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _openAdminLogin() async {
     setState(() {
+      _pendingAdminTab = 5;
       _showAdminPasswordField = true;
       _adminPasswordError = false;
     });
@@ -290,7 +295,7 @@ class _SetupScreenState extends State<SetupScreen> {
         _playerDataUnlocked = unlockPlayers;
         _showAdminPasswordField = false;
         _adminPasswordController.clear();
-        _setupTab = 5;
+        _setupTab = _pendingAdminTab;
       });
       await _save();
       return;
@@ -304,7 +309,7 @@ class _SetupScreenState extends State<SetupScreen> {
       _playerDataUnlocked = unlockPlayers;
       _showAdminPasswordField = false;
       _adminPasswordController.clear();
-      _setupTab = 5;
+      _setupTab = _pendingAdminTab;
     });
     await _save();
   }
@@ -321,7 +326,8 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() {
       data.adminLoggedIn = false;
       _playerDataUnlocked = false;
-      _setupTab = 0;
+      // Sekme gizlenmez; ayni sekmede kilitli ekran gosterilir.
+      _pendingAdminTab = (_setupTab == 5 || _setupTab == 6) ? _setupTab : 5;
     });
     await _save();
   }
@@ -866,6 +872,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _setupTabs() {
     final data = _data;
+    final locked = data?.adminLoggedIn != true;
     final segments = <ButtonSegment<int>>[
       const ButtonSegment(
         value: 0,
@@ -892,18 +899,20 @@ class _SetupScreenState extends State<SetupScreen> {
         icon: Icon(Icons.help_outline),
         label: Text('Aciklama'),
       ),
-      if (data?.adminLoggedIn == true)
-        const ButtonSegment(
-          value: 6,
-          icon: Icon(Icons.gavel),
-          label: Text('CEZALAR'),
+      // Yonetici sekmeleri HER ZAMAN gorunur. Kilitliyken tiklaninca
+      // sifre sorulur, sekme gizlenmez.
+      ButtonSegment(
+        value: 6,
+        icon: Icon(locked ? Icons.lock_outline : Icons.gavel),
+        label: const Text('CEZALAR'),
+      ),
+      ButtonSegment(
+        value: 5,
+        icon: Icon(
+          locked ? Icons.lock_outline : Icons.admin_panel_settings,
         ),
-      if (data?.adminLoggedIn == true)
-        const ButtonSegment(
-          value: 5,
-          icon: Icon(Icons.admin_panel_settings),
-          label: Text('Yonetim'),
-        ),
+        label: const Text('Yonetim'),
+      ),
     ];
     final selectedValue = segments.any((segment) => segment.value == _setupTab)
         ? _setupTab
@@ -911,9 +920,23 @@ class _SetupScreenState extends State<SetupScreen> {
     return SegmentedButton<int>(
       segments: segments,
       selected: {selectedValue},
-      onSelectionChanged: (selection) =>
-          setState(() => _setupTab = selection.first),
+      onSelectionChanged: (selection) => _onTabSelected(selection.first),
     );
+  }
+
+  /// Kilitli bir yonetici sekmesine tiklanirsa sekmeyi gizlemek yerine
+  /// sifre alanini acar.
+  void _onTabSelected(int tab) {
+    final adminTab = tab == 5 || tab == 6;
+    if (adminTab && _data?.adminLoggedIn != true) {
+      setState(() {
+        _pendingAdminTab = tab;
+        _showAdminPasswordField = true;
+        _adminPasswordError = false;
+      });
+      return;
+    }
+    setState(() => _setupTab = tab);
   }
 
   Widget _setupPage(SavedGameData data) {
@@ -929,8 +952,8 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
       2 => _teamsPage(data),
       3 => _playerPool(data),
-      5 => data.adminLoggedIn ? _adminPage(data) : _helpPage(),
-      6 => data.adminLoggedIn ? _penaltiesPage(data) : _helpPage(),
+      5 => data.adminLoggedIn ? _adminPage(data) : _lockedPage('Yonetim'),
+      6 => data.adminLoggedIn ? _penaltiesPage(data) : _lockedPage('CEZALAR'),
       _ => _helpPage(),
     };
   }
@@ -1659,6 +1682,46 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
+  /// Kilitli yonetici sayfasi icin bilgi ekrani. Sekme gizlenmez,
+  /// sadece icerik kilitli gosterilir.
+  Widget _lockedPage(String title) {
+    return Container(
+      decoration: _panelDecoration(),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, size: 54, color: Colors.white24),
+            const SizedBox(height: 14),
+            Text(
+              '$title kilitli',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Devam etmek icin yonetici sifresini gir.',
+              style: TextStyle(color: Colors.white54),
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () => setState(() {
+                _pendingAdminTab = _setupTab;
+                _showAdminPasswordField = true;
+                _adminPasswordError = false;
+              }),
+              icon: const Icon(Icons.key),
+              label: const Text('Sifre gir'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// CEZALAR sayfasi — normal yonetici sifresi ile acilir (kimo@ gerekmez).
   Widget _penaltiesPage(SavedGameData data) {
     return PenaltiesPage(
@@ -1702,8 +1765,8 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
                 TextButton.icon(
                   onPressed: () => _adminLogout(data),
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Cikis'),
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text('Kilitle'),
                 ),
               ],
             ),
