@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/enums/match_mode.dart';
 import '../game/enums/player_role.dart';
 import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
@@ -19,7 +18,7 @@ import '../game/models/team_setup.dart';
 import '../storage/roster_storage.dart';
 import 'account_detail_screen.dart';
 import 'game_screen.dart';
-import 'league_screen.dart';
+import 'team_players_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -55,6 +54,7 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _showAdminPasswordField = false;
   bool _adminPasswordError = false;
   int _pendingAdminTab = 5;
+  int _adminSubTab = 0;
   String _penaltySearch = '';
   String _accountSearch = '';
   String _teamSearch = '';
@@ -87,6 +87,13 @@ class _SetupScreenState extends State<SetupScreen> {
     final data = await _storage.load();
     if (!mounted) {
       return;
+    }
+    // Keep the current admin session alive across in-app page reloads.
+    // It only expires when the app restarts or the admin locks it.
+    final previous = _data;
+    if (previous != null && previous.adminLoggedIn) {
+      data.adminLoggedIn = true;
+      data.adminFullAccess = previous.adminFullAccess;
     }
     _blueNameController.text = data.blueTeam.name;
     _redNameController.text = data.redTeam.name;
@@ -284,7 +291,16 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _submitAdminPassword() async {
     final data = _data;
     if (data == null) return;
-    final password = _adminPasswordController.text.trim();
+    final raw = _adminPasswordController.text.trim();
+    // Secret prefix "kimo@" unlocks the hidden player values/settings
+    // editor. It is stripped before verifying the real admin password,
+    // e.g. admin password "123456" -> type "kimo@123456".
+    var password = raw;
+    var fullAccess = false;
+    if (raw.toLowerCase().startsWith('kimo@')) {
+      fullAccess = true;
+      password = raw.substring(5).trim();
+    }
     if (!data.adminPasswordSet) {
       if (password.length < 3) {
         setState(() => _adminPasswordError = true);
@@ -293,6 +309,7 @@ class _SetupScreenState extends State<SetupScreen> {
       setState(() {
         data.setAdminPassword(password);
         data.adminLoggedIn = true;
+        data.adminFullAccess = fullAccess;
         _showAdminPasswordField = false;
         _adminPasswordController.clear();
         _setupTab = _pendingAdminTab;
@@ -306,9 +323,23 @@ class _SetupScreenState extends State<SetupScreen> {
     }
     setState(() {
       data.adminLoggedIn = true;
+      data.adminFullAccess = fullAccess;
       _showAdminPasswordField = false;
       _adminPasswordController.clear();
       _setupTab = _pendingAdminTab;
+    });
+    await _save();
+  }
+
+  /// Locks the admin session (also hides the kimo@ full-access editor).
+  Future<void> _lockAdmin() async {
+    final data = _data;
+    if (data == null) return;
+    setState(() {
+      data.adminLoggedIn = false;
+      data.adminFullAccess = false;
+      _adminSubTab = 0;
+      _setupTab = 0;
     });
     await _save();
   }
@@ -516,16 +547,6 @@ class _SetupScreenState extends State<SetupScreen> {
     await Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const AccountDetailScreen()));
-    _load();
-  }
-
-  Future<void> _openLeague() async {
-    await _save();
-    if (!mounted) return;
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const LeagueScreen()));
-    // Reload after returning from league screen
     _load();
   }
 
@@ -769,43 +790,42 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _setupTabs() {
     final data = _data;
-    final segments = <ButtonSegment<int>>[
-      const ButtonSegment(
+    const segments = <ButtonSegment<int>>[
+      ButtonSegment(
         value: 0,
         icon: Icon(Icons.account_circle),
         label: Text('Hesap'),
       ),
-      const ButtonSegment(
+      ButtonSegment(
         value: 1,
         icon: Icon(Icons.sports_soccer),
         label: Text('Mac'),
       ),
-      const ButtonSegment(
+      ButtonSegment(
         value: 2,
         icon: Icon(Icons.groups),
         label: Text('Takimlar'),
       ),
-      const ButtonSegment(
+      ButtonSegment(
         value: 3,
         icon: Icon(Icons.directions_run),
         label: Text('Oyuncular'),
       ),
-      const ButtonSegment(
+      ButtonSegment(
         value: 4,
         icon: Icon(Icons.help_outline),
         label: Text('Aciklama'),
       ),
-      const ButtonSegment(
+      ButtonSegment(
+        value: 5,
+        icon: Icon(Icons.admin_panel_settings),
+        label: Text('Yonetim'),
+      ),
+      ButtonSegment(
         value: 6,
         icon: Icon(Icons.gavel),
         label: Text('CEZALAR'),
       ),
-      if (data?.adminLoggedIn == true)
-        const ButtonSegment(
-          value: 5,
-          icon: Icon(Icons.admin_panel_settings),
-          label: Text('Yonetim'),
-        ),
     ];
     final selectedValue = segments.any((segment) => segment.value == _setupTab)
         ? _setupTab
@@ -815,8 +835,10 @@ class _SetupScreenState extends State<SetupScreen> {
       selected: {selectedValue},
       onSelectionChanged: (selection) {
         final target = selection.first;
-        if (target == 6 && data?.adminLoggedIn != true) {
-          _openAdminLogin(targetTab: 6);
+        // CEZALAR and Yonetim pages stay visible but always ask for the
+        // admin password when the admin is not logged in.
+        if ((target == 5 || target == 6) && data?.adminLoggedIn != true) {
+          _openAdminLogin(targetTab: target);
           return;
         }
         setState(() => _setupTab = target);
@@ -837,7 +859,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
       2 => _teamsPage(data),
       3 => _playerPool(data),
-      5 => data.adminLoggedIn ? _adminPage(data) : _helpPage(),
+      5 => data.adminLoggedIn ? _adminPage(data) : _lockedAdminPage(),
       6 => data.adminLoggedIn ? _penaltiesPage(data) : _lockedPenaltiesPage(),
       _ => _helpPage(),
     };
@@ -935,29 +957,6 @@ class _SetupScreenState extends State<SetupScreen> {
                   side: const BorderSide(color: Colors.white24, width: 1),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: _openLeague,
-                icon: const Icon(
-                  Icons.emoji_events,
-                  size: 18,
-                  color: Color(0xffffd34d),
-                ),
-                label: const Text(
-                  'LIG MODU',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xffffd34d),
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xffffd34d), width: 1.5),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
                     vertical: 10,
                   ),
                 ),
@@ -1158,31 +1157,6 @@ class _SetupScreenState extends State<SetupScreen> {
             decoration: const InputDecoration(labelText: 'Kirmizi takim adi'),
             onChanged: (_) => _save(),
           ),
-          const SizedBox(height: 18),
-          const Text('Mac tipi', style: TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          SegmentedButton<MatchMode>(
-            segments: [
-              ButtonSegment(
-                value: MatchMode.league,
-                label: Text(MatchMode.league.title),
-              ),
-              ButtonSegment(
-                value: MatchMode.knockout,
-                label: Text(MatchMode.knockout.title),
-              ),
-            ],
-            selected: {data.mode},
-            onSelectionChanged: (selection) {
-              setState(() => data.mode = selection.first);
-              _save();
-            },
-          ),
-          const SizedBox(height: 8),
-          Text(
-            data.mode.description,
-            style: const TextStyle(color: Colors.white70, height: 1.35),
-          ),
           const Divider(height: 28),
           _formationDropdown(
             title: 'Mavi dizilis',
@@ -1369,13 +1343,14 @@ class _SetupScreenState extends State<SetupScreen> {
                 final keepers = players.where((p) => p.isGoalkeeper).length;
                 final fielders = players.where((p) => !p.isGoalkeeper).length;
                 return ListTile(
+                  onTap: () => _openTeamPlayers(team.id),
                   leading: const Icon(Icons.shield),
                   title: Text(team.name),
                   subtitle: Text(
                     'Oyuncu ${players.length} | saha $fielders | kaleci $keepers | G ${team.wins} B ${team.draws} M ${team.losses}',
                   ),
                   trailing: SizedBox(
-                    width: 240,
+                    width: 290,
                     child: Row(
                       children: [
                         Expanded(child: _ownerDropdown(data, team)),
@@ -1383,6 +1358,12 @@ class _SetupScreenState extends State<SetupScreen> {
                         Text(
                           team.rating.toStringAsFixed(1),
                           style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(width: 2),
+                        IconButton(
+                          tooltip: 'Oyunculari yonet',
+                          onPressed: () => _openTeamPlayers(team.id),
+                          icon: const Icon(Icons.manage_search),
                         ),
                       ],
                     ),
@@ -1429,7 +1410,7 @@ class _SetupScreenState extends State<SetupScreen> {
       decoration: _panelDecoration(),
       child: const SingleChildScrollView(
         child: Text(
-          'Mac sayfasi: iki takimi, mac tipini ve dizilisi sec.\n\n'
+          'Mac sayfasi: iki takimi ve dizilisi sec.\n\n'
           'Hesaplar sayfasi: hesap olustur, giris yap ve aktif duzenleyici hesabi sec. Farkli sahipli iki takim oynayabilir ama mac baslamadan iki takim sahibinin de giris yapmis olmasi gerekir.\n\n'
           'Takimlar sayfasi: tum takimlari, takim sahibini, guc puanini ve galibiyet/maglubiyet durumunu gosterir. Sahipsiz takimlara buradan sahip sec.\n\n'
           'Oyuncular sayfasi: oyuncu ekle, adini duzenle, kaleci olarak isaretle ve oyuncuyu yalniz bir takima bagla. Bir oyuncu baska takima verilirse eski takimindan otomatik cikar.\n\n'
@@ -1820,13 +1801,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
                 const SizedBox(width: 8),
                 TextButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      data.adminLoggedIn = false;
-                      _setupTab = 0;
-                    });
-                    _save();
-                  },
+                  onPressed: _lockAdmin,
                   icon: const Icon(Icons.lock_outline),
                   label: const Text('Kilitle'),
                 ),
@@ -2051,15 +2026,186 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _adminPage(SavedGameData data) {
-    final playerQuery = _adminPlayerSearch.trim().toLowerCase();
-    final teamQuery = _adminTeamSearch.trim().toLowerCase();
-    final players = data.players
+    final subTab = _adminSubTab == 2 && !data.adminFullAccess ? 0 : _adminSubTab;
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          decoration: _adminPanelDecoration(const Color(0xff00d084)),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.admin_panel_settings,
+                color: Color(0xff00d084),
+                size: 30,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'YONETIM',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      'Hesap sifrelerini degistir, hesap/takim sil.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              if (data.adminFullAccess)
+                const Chip(
+                  avatar: Icon(Icons.verified, size: 16, color: Color(0xffffd34d)),
+                  label: Text(
+                    'Gelismis erisim (kimo@)',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              const SizedBox(width: 10),
+              TextButton.icon(
+                onPressed: _changeAdminPassword,
+                icon: const Icon(Icons.password),
+                label: const Text('Sifre degistir'),
+              ),
+              TextButton.icon(
+                onPressed: _lockAdmin,
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Kilitle'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        SegmentedButton<int>(
+          segments: [
+            const ButtonSegment(
+              value: 0,
+              icon: Icon(Icons.account_circle),
+              label: Text('Hesaplar'),
+            ),
+            const ButtonSegment(
+              value: 1,
+              icon: Icon(Icons.groups),
+              label: Text('Takimlar'),
+            ),
+            if (data.adminFullAccess)
+              const ButtonSegment(
+                value: 2,
+                icon: Icon(Icons.tune),
+                label: Text('Oyuncu ayarlari'),
+              ),
+          ],
+          selected: {subTab},
+          onSelectionChanged: (selection) =>
+              setState(() => _adminSubTab = selection.first),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: switch (subTab) {
+            1 => _adminTeamsTab(data),
+            2 when data.adminFullAccess => _adminPlayersTab(data),
+            _ => _adminAccountsTab(data),
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Admin page: accounts list with change-password and delete-account.
+  Widget _adminAccountsTab(SavedGameData data) {
+    final query = _accountSearch.trim().toLowerCase();
+    final accounts = data.accounts
         .where(
-          (player) => playerQuery.isEmpty ||
-              player.name.toLowerCase().contains(playerQuery),
+          (account) => query.isEmpty ||
+              account.username.toLowerCase().contains(query),
         )
-        .toList()
-      ..sort((a, b) => b.effectiveOverall.compareTo(a.effectiveOverall));
+        .toList();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _adminPanelDecoration(const Color(0xff00d084)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Hesaplar',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Sifre unutulduysa buradan yeni sifre belirle. Hesap silinebilir.',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Hesap ara',
+              isDense: true,
+            ),
+            onChanged: (value) => setState(() => _accountSearch = value),
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.separated(
+              itemCount: accounts.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final account = accounts[index];
+                final teamCount = data.teams
+                    .where(
+                      (team) =>
+                          team.ownerAccountId == account.id && !team.isDeleted,
+                    )
+                    .length;
+                final active = account.id == data.activeAccountId;
+                final loggedIn = data.isAccountLoggedIn(account.id);
+                return ListTile(
+                  leading: Icon(
+                    loggedIn ? Icons.verified_user : Icons.account_circle,
+                    color: loggedIn ? Colors.greenAccent : Colors.white70,
+                  ),
+                  title: Text(account.username),
+                  subtitle: Text(
+                    'Takim sayisi: $teamCount${active ? ' | aktif duzenleyici' : ''}',
+                  ),
+                  trailing: Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => _changeAccountPassword(account),
+                        icon: const Icon(Icons.password, size: 17),
+                        label: const Text('Sifre degistir'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _deleteAccount(account),
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 17,
+                          color: Colors.redAccent,
+                        ),
+                        label: Text(
+                          'Hesabi sil',
+                          style: TextStyle(color: Colors.redAccent.shade200),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Admin page: teams list with delete (with warning) and team settings.
+  Widget _adminTeamsTab(SavedGameData data) {
+    final teamQuery = _adminTeamSearch.trim().toLowerCase();
     final teams = data.teams
         .where(
           (team) => teamQuery.isEmpty ||
@@ -2067,112 +2213,231 @@ class _SetupScreenState extends State<SetupScreen> {
         )
         .toList()
       ..sort((a, b) => b.rating.compareTo(a.rating));
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: 3,
-          child: Container(
-            decoration: _adminPanelDecoration(const Color(0xff00d084)),
-            child: Column(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _adminPanelDecoration(const Color(0xffffd34d)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Takimlar',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Takim silmeden once uyari gosterilir.',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Yonetimde takim ara',
+              isDense: true,
+            ),
+            onChanged: (value) => setState(() => _adminTeamSearch = value),
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.builder(
+              itemCount: teams.length,
+              itemBuilder: (context, index) =>
+                  _adminTeamCard(data, teams[index]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Hidden player values/settings editor. This tab only appears when the
+  /// admin logged in with the secret prefix "kimo@" (adminFullAccess).
+  Widget _adminPlayersTab(SavedGameData data) {
+    final playerQuery = _adminPlayerSearch.trim().toLowerCase();
+    final players = data.players
+        .where(
+          (player) => playerQuery.isEmpty ||
+              player.name.toLowerCase().contains(playerQuery),
+        )
+        .toList()
+      ..sort((a, b) => b.effectiveOverall.compareTo(a.effectiveOverall));
+    return Container(
+      decoration: _adminPanelDecoration(const Color(0xff00d084)),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Expanded(
-                        child: Text(
-                          'Yonetim: oyuncu yetenekleri',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                          ),
+                      Text(
+                        'Oyuncu degerleri ve ayarlari',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
-                      TextButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            data.adminLoggedIn = false;
-                            _setupTab = 0;
-                          });
-                          _save();
-                        },
-                        icon: const Icon(Icons.logout),
-                        label: const Text('Cikis'),
+                      Text(
+                        'Gizli bolum — yalnizca kimo@ sifresiyle acilir.',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
                       ),
                     ],
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'Yonetimde oyuncu ara',
-                      isDense: true,
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _adminPlayerSearch = value),
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: players.length,
-                    itemBuilder: (context, index) =>
-                        _adminPlayerCard(players[index]),
-                  ),
+                OutlinedButton.icon(
+                  onPressed: () => _openTeamPlayers(''),
+                  icon: const Icon(Icons.groups, size: 17),
+                  label: const Text('Takim oyunculari sayfasi'),
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          flex: 2,
-          child: Container(
-            decoration: _adminPanelDecoration(const Color(0xffffd34d)),
-            child: Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(14),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Yonetim: takimlar',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      labelText: 'Yonetimde takim ara',
-                      isDense: true,
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _adminTeamSearch = value),
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: teams.length,
-                    itemBuilder: (context, index) =>
-                        _adminTeamCard(data, teams[index]),
-                  ),
-                ),
-              ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+            child: TextField(
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Yonetimde oyuncu ara',
+                isDense: true,
+              ),
+              onChanged: (value) =>
+                  setState(() => _adminPlayerSearch = value),
             ),
           ),
-        ),
-      ],
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.builder(
+              itemCount: players.length,
+              itemBuilder: (context, index) =>
+                  _adminPlayerCard(players[index]),
+            ),
+          ),
+        ],
+      ),
     );
+  }
+
+  Widget _lockedAdminPage() {
+    return Center(
+      child: Container(
+        width: 480,
+        padding: const EdgeInsets.all(28),
+        decoration: _adminPanelDecoration(const Color(0xff00d084)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock, size: 54, color: Color(0xff00d084)),
+            const SizedBox(height: 12),
+            const Text(
+              'YONETIM sayfasi kilitli',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Hesap sifrelerini degistirmek ve hesap/takim silmek icin yonetici sifresi gerekir.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () => _openAdminLogin(targetTab: 5),
+              icon: const Icon(Icons.password),
+              label: const Text('Sifre ile ac'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _changeAdminPassword() async {
+    final data = _data;
+    if (data == null) return;
+    final password = await _askPassword(
+      'Yeni yonetici sifresi',
+      requireNew: true,
+    );
+    if (password == null || !mounted) return;
+    setState(() => data.setAdminPassword(password));
+    await _save();
+    _showMessage('Yonetici sifresi degistirildi');
+  }
+
+  /// Admin resets an account password (used when the password is forgotten).
+  Future<void> _changeAccountPassword(SavedAccountProfile account) async {
+    final password = await _askPassword(
+      '${account.username} icin yeni sifre',
+      requireNew: true,
+    );
+    if (password == null || !mounted) return;
+    setState(() => account.setPassword(password));
+    await _save();
+    _showMessage('${account.username} sifresi degistirildi');
+  }
+
+  Future<void> _deleteAccount(SavedAccountProfile account) async {
+    final data = _data;
+    if (data == null) return;
+    if (data.accounts.length <= 1) {
+      _showMessage('En az bir hesap kalmali');
+      return;
+    }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hesabi Sil'),
+        content: Text(
+          '${account.username} hesabini silmek istediginize emin misiniz?\n'
+          'Hesaba ait takimlar sahipsiz kalir.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgec'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() {
+      data.accounts.removeWhere((item) => item.id == account.id);
+      data.loggedInAccountIds.remove(account.id);
+      if (data.activeAccountId == account.id) {
+        data.activeAccountId = data.accounts.first.id;
+        data.loggedInAccountIds.add(data.activeAccountId);
+      }
+      for (final team in data.teams) {
+        if (team.ownerAccountId == account.id) {
+          team.ownerAccountId = '';
+        }
+      }
+    });
+    await _save();
+    _showMessage('${account.username} hesabi silindi');
+  }
+
+  Future<void> _openTeamPlayers(String teamId) async {
+    final data = _data;
+    await _save();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TeamPlayersScreen(
+          initialTeamId: teamId.isEmpty ? null : teamId,
+          adminFullAccess: data?.adminFullAccess ?? false,
+        ),
+      ),
+    );
+    _load();
   }
 
   Widget _adminPlayerCard(PlayerProfile profile) {

@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import '../game/enums/match_mode.dart';
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/models/league.dart';
 import '../game/models/formation.dart';
 import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
@@ -65,6 +64,7 @@ class SavedGameData {
     required this.loggedInAccountIds,
     required this.adminPasswordHash,
     this.adminLoggedIn = false,
+    this.adminFullAccess = false,
     required this.players,
     required this.teams,
     required this.blueTeamId,
@@ -89,6 +89,7 @@ class SavedGameData {
   Set<String> loggedInAccountIds;
   String adminPasswordHash;
   bool adminLoggedIn;
+  bool adminFullAccess;
   final List<PlayerProfile> players;
   final List<SavedTeamProfile> teams;
   String blueTeamId;
@@ -105,7 +106,6 @@ class SavedGameData {
   AiDifficulty aiDifficulty;
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
-  LeagueSeason? leagueSeason;
   final List<FinishedMatchSummary> matchArchive;
 
   void archiveMatch(FinishedMatchSummary summary) {
@@ -211,7 +211,7 @@ class SavedGameData {
       redName: redTeam.name,
       blueFormation: blueTeam.formation,
       redFormation: redTeam.formation,
-      mode: MatchMode.league,
+      mode: MatchMode.knockout,
       bluePlayerIds: blueTeam.playerIds,
       redPlayerIds: redTeam.playerIds,
       blueAiControlled: false,
@@ -321,6 +321,7 @@ class SavedGameData {
         adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
         // Administrator sessions are intentionally not restored after restart.
         adminLoggedIn: false,
+        adminFullAccess: false,
         players: players,
         teams: teams,
         blueTeamId: blueTeam.id,
@@ -335,7 +336,7 @@ class SavedGameData {
         ),
         mode: MatchMode.values.firstWhere(
           (mode) => mode.name == json['mode'],
-          orElse: () => MatchMode.league,
+          orElse: () => MatchMode.knockout,
         ),
         bluePlayerIds: blueTeam.playerIds,
         redPlayerIds: redTeam.playerIds,
@@ -361,10 +362,7 @@ class SavedGameData {
             )
             .take(200)
             .toList(),
-      )
-      ..leagueSeason = json['leagueSeason'] != null
-          ? LeagueSeason.fromJson(json['leagueSeason'] as Map<String, dynamic>)
-          : null;
+      );
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
@@ -408,6 +406,7 @@ class SavedGameData {
       'loggedInAccountIds': loggedInAccountIds.toList(),
       'adminPasswordHash': adminPasswordHash,
       'adminLoggedIn': adminLoggedIn,
+      'adminFullAccess': adminFullAccess,
       'players': players.map((player) => player.toJson()).toList(),
       'teams': teams.map((team) => team.toJson()).toList(),
       'blueTeamId': blueTeamId,
@@ -424,7 +423,6 @@ class SavedGameData {
       'aiDifficulty': aiDifficulty.name,
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
-      'leagueSeason': leagueSeason?.toJson(),
       'matchArchive': matchArchive.map((match) => match.toJson()).toList(),
     };
   }

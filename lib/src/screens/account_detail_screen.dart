@@ -162,10 +162,12 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   Future<void> _showAdminPanel() async {
     final data = _data;
     if (data == null) return;
-    if (!data.adminLoggedIn) {
+    if (!data.adminLoggedIn || !data.adminFullAccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('افتح لوحة الإدارة وسجّل دخول المدير أولاً'),
+          content: Text(
+            'هذا القسم مخفي: سجّل دخول المدير بكلمة المرور مع kimo@ في البداية',
+          ),
         ),
       );
       return;

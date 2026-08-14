@@ -423,34 +423,6 @@ class TeamMatchRecord {
   }
 }
 
-/// Team ranking entry for public leaderboard.
-class TeamRankEntry {
-  const TeamRankEntry({
-    required this.rank,
-    required this.name,
-    required this.rating,
-    required this.played,
-    required this.wins,
-    required this.draws,
-    required this.losses,
-    required this.goalsFor,
-    required this.goalsAgainst,
-  });
-
-  final int rank;
-  final String name;
-  final double rating;
-  final int played;
-  final int wins;
-  final int draws;
-  final int losses;
-  final int goalsFor;
-  final int goalsAgainst;
-
-  int get points => wins * 3 + draws;
-  int get goalDifference => goalsFor - goalsAgainst;
-}
-
 PlayerRole _roleFromName(Object? value) {
   final name = value?.toString();
   if (name == null || name.isEmpty) return PlayerRole.midfieldLeft;

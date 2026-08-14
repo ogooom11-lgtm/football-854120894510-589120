@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:new_football/src/game/config/game_constants.dart';
 import 'package:new_football/src/game/enums/kick_type.dart';
+import 'package:new_football/src/game/enums/match_mode.dart';
 import 'package:new_football/src/game/enums/player_role.dart';
 import 'package:new_football/src/game/enums/team_id.dart';
 import 'package:new_football/src/game/logic/ball_physics.dart';
@@ -15,13 +16,51 @@ import 'package:new_football/src/game/models/ball_game.dart';
 import 'package:new_football/src/game/models/formation.dart';
 import 'package:new_football/src/game/models/goalkeeper.dart';
 import 'package:new_football/src/game/models/jersey_kit.dart';
-import 'package:new_football/src/game/models/league.dart';
 import 'package:new_football/src/game/models/match_event.dart';
 import 'package:new_football/src/game/models/player_game.dart';
 import 'package:new_football/src/game/models/player_profile.dart';
 import 'package:new_football/src/game/models/shooting.dart';
 import 'package:new_football/src/game/models/team_profile.dart';
+import 'package:new_football/src/game/models/team_setup.dart';
 import 'package:new_football/src/storage/roster_storage.dart';
+
+/// Builds a match setup from the default saved game (LIG MODU removed).
+MatchSetup _testMatchSetup() {
+  final data = SavedGameData.defaults();
+  return MatchSetup(
+    mode: MatchMode.knockout,
+    blue: TeamSetup(
+      id: TeamId.blue,
+      name: data.blueName,
+      formation: data.blueFormation,
+      players: data.players
+          .where((player) => data.bluePlayerIds.contains(player.id))
+          .toList(),
+      starterPlayerIds: data.blueTeam.starterPlayerIds,
+      roleByPlayerId: data.blueTeam.roleByPlayerId,
+      slotByPlayerId: data.blueTeam.slotByPlayerId,
+      storageTeamId: data.blueTeam.id,
+      rating: data.blueTeam.rating,
+      jerseyKit: data.blueTeam.activeKit,
+      goalkeeperKit: data.blueTeam.goalkeeperKit,
+    ),
+    red: TeamSetup(
+      id: TeamId.red,
+      name: data.redName,
+      formation: data.redFormation,
+      players: data.players
+          .where((player) => data.redPlayerIds.contains(player.id))
+          .toList(),
+      starterPlayerIds: data.redTeam.starterPlayerIds,
+      roleByPlayerId: data.redTeam.roleByPlayerId,
+      slotByPlayerId: data.redTeam.slotByPlayerId,
+      storageTeamId: data.redTeam.id,
+      rating: data.redTeam.rating,
+      jerseyKit: data.redTeam.activeKit,
+      goalkeeperKit: data.redTeam.goalkeeperKit,
+    ),
+  );
+}
 
 void main() {
   group('local account security', () {
@@ -306,9 +345,8 @@ void main() {
     });
 
     test('keeper cannot distribute while down or recollect his own release', () {
-      final setup = LeagueFactory.createDefaultSeason().createCurrentMatchSetup();
-      expect(setup, isNotNull);
-      final engine = MatchEngine(setup!);
+      final setup = _testMatchSetup();
+      final engine = MatchEngine(setup);
       final keeper = engine.blueTeam.goalkeeper;
       engine.ball.attachTo(keeper);
 
@@ -336,8 +374,8 @@ void main() {
     });
 
     test('position swaps are free and injury bonus raises the limit', () {
-      final setup = LeagueFactory.createDefaultSeason().createCurrentMatchSetup();
-      final engine = MatchEngine(setup!);
+      final setup = _testMatchSetup();
+      final engine = MatchEngine(setup);
       final team = engine.blueTeam;
       final firstProfile = team.players[1].profile;
       final secondProfile = team.players[2].profile;
@@ -479,27 +517,4 @@ void main() {
     });
   });
 
-  group('league progression', () {
-    test('current fixture follows matchday order', () {
-      final season = LeagueFactory.createDefaultSeason();
-      final first = season.currentFixture!;
-      expect(first.matchday, 1);
-
-      season.recordResult(first, 1, 0, const ['Golcu'], const []);
-      expect(season.currentFixture!.matchday, 1);
-      expect(season.currentMatchday, 1);
-    });
-
-    test('champion is persisted', () {
-      final season = LeagueFactory.createDefaultSeason();
-      while (!season.seasonFinished) {
-        final fixture = season.currentFixture!;
-        season.recordResult(fixture, 1, 0, const ['Golcu'], const []);
-      }
-
-      final restored = LeagueSeason.fromJson(season.toJson());
-      expect(restored.seasonFinished, isTrue);
-      expect(restored.championTeamName, season.championTeamName);
-    });
-  });
 }

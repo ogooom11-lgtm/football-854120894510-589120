@@ -178,7 +178,7 @@ class PlayerProfile {
   String name;
   final double heightMeters;
   final bool isGoalkeeper;
-  final int? number;
+  int? number;
   double overallRating;
   double shootingRating;
   double finishingRating;
