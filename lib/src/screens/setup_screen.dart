@@ -63,6 +63,9 @@ class _SetupScreenState extends State<SetupScreen> {
   /// 5 = Yonetim, 6 = CEZALAR.
   int _pendingAdminTab = 5;
 
+  /// Ust uste hatali yonetici sifresi denemesi sayisi.
+  int _adminFailCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -301,10 +304,14 @@ class _SetupScreenState extends State<SetupScreen> {
       return;
     }
     if (!data.checkAdminPassword(password)) {
-      setState(() => _adminPasswordError = true);
+      setState(() {
+        _adminPasswordError = true;
+        _adminFailCount += 1;
+      });
       return;
     }
     setState(() {
+      _adminFailCount = 0;
       data.adminLoggedIn = true;
       _playerDataUnlocked = unlockPlayers;
       _showAdminPasswordField = false;
@@ -320,6 +327,49 @@ class _SetupScreenState extends State<SetupScreen> {
       _adminPasswordController.clear();
       _adminPasswordError = false;
     });
+  }
+
+  /// 3 basarisiz denemeden sonra yonetici sifresini tamamen sifirlar.
+  /// Kayitli hash silinir; bir sonraki girilen sifre YENI sifre olur.
+  Future<void> _resetAdminPasswordFlow() async {
+    final data = _data;
+    if (data == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(
+          Icons.lock_reset,
+          color: Colors.orangeAccent,
+          size: 34,
+        ),
+        title: const Text('Yonetici sifresini sifirla'),
+        content: const Text(
+          'Kayitli yonetici sifresi silinecek.\n\n'
+          'Bundan sonra sifre alanina yazacagin ilk sifre '
+          'YENI yonetici sifresi olarak kaydedilir.\n\n'
+          'Devam edilsin mi?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgec'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Sifirla'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    setState(() {
+      data.adminPasswordHash = '';
+      _adminFailCount = 0;
+      _adminPasswordError = false;
+      _adminPasswordController.clear();
+    });
+    await _save();
+    _showMessage('Sifre sifirlandi — yeni sifreni yaz');
   }
 
   Future<void> _adminLogout(SavedGameData data) async {
@@ -1013,7 +1063,12 @@ class _SetupScreenState extends State<SetupScreen> {
                       vertical: 8,
                     ),
                     isDense: true,
-                    errorText: _adminPasswordError ? 'Hatali sifre' : null,
+                    errorText: _adminPasswordError
+                        ? (_adminFailCount >= 3
+                              ? 'Hatali sifre — sifirlamak icin X yanindaki ? '
+                                    'butonunu kullan'
+                              : 'Hatali sifre')
+                        : null,
                   ),
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                   onSubmitted: (_) => _submitAdminPassword(),
@@ -1030,6 +1085,15 @@ class _SetupScreenState extends State<SetupScreen> {
                 onPressed: _cancelAdminLogin,
                 tooltip: 'Iptal',
               ),
+              if (_adminFailCount >= 3)
+                IconButton(
+                  icon: const Icon(
+                    Icons.help_outline,
+                    color: Colors.orangeAccent,
+                  ),
+                  onPressed: _resetAdminPasswordFlow,
+                  tooltip: 'Sifreyi sifirla',
+                ),
             ],
           ),
         if (!_showAdminPasswordField)

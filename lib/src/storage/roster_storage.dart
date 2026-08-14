@@ -23,8 +23,19 @@ class SavedAccountProfile {
   bool get hasPassword => passwordHash.isNotEmpty;
 
   bool checkPassword(String password) {
-    return passwordHash.isNotEmpty &&
-        passwordHash == localPasswordHash(password);
+    if (passwordHash.isEmpty) {
+      return false;
+    }
+    if (passwordHash == localPasswordHash(password)) {
+      return true;
+    }
+    // Eski bozuk hash ile kaydedilmis hesap: sifreyi kabul et ve
+    // kaydi yeni dogru hash'e yukselt.
+    if (isLegacyBrokenHash(passwordHash) && password.trim().isNotEmpty) {
+      setPassword(password);
+      return true;
+    }
+    return false;
   }
 
   void setPassword(String password) {
@@ -126,8 +137,19 @@ class SavedGameData {
   static const String playerDataUnlockPrefix = 'kimo@';
 
   bool checkAdminPassword(String password) {
-    return adminPasswordHash.isNotEmpty &&
-        adminPasswordHash == localPasswordHash(password);
+    if (adminPasswordHash.isEmpty) {
+      return false;
+    }
+    if (adminPasswordHash == localPasswordHash(password)) {
+      return true;
+    }
+    // Eski bozuk hash ile kaydedilmis yonetici sifresi: girilen sifreyi
+    // kabul et ve dogru hash'e yukselt.
+    if (isLegacyBrokenHash(adminPasswordHash) && password.trim().isNotEmpty) {
+      setAdminPassword(password);
+      return true;
+    }
+    return false;
   }
 
   /// Strips the secret prefix (if present) and returns the real password.
@@ -481,10 +503,24 @@ class RosterStorage {
 
 String localPasswordHash(String password) {
   var hash = 0x811c9dc5;
-  final text = 'bomban-v2:\${password.trim()}';
+  final text = 'bomban-v2:${password.trim()}';
   for (final unit in text.codeUnits) {
     hash ^= unit;
     hash = (hash * 0x01000193) & 0xffffffff;
   }
   return hash.toRadixString(16).padLeft(8, '0');
 }
+
+/// ESKI HATALI HASH.
+///
+/// Onceki surumde `'bomban-v2:\${password.trim()}'` yazilmisti; `\$`
+/// kacisli oldugu icin sifre metne HIC eklenmiyordu. Sonuc: butun
+/// sifreler ayni hash'i ('0422d35d') uretiyordu ve dogru sifre bile
+/// kabul edilmiyordu.
+///
+/// Eski kayitlarin kilitlenmemesi icin bu sabit hala taninir; eski
+/// hash gorulunce girilen sifre kabul edilir ve kayit otomatik olarak
+/// yeni dogru hash'e yukseltilir.
+const String kLegacyBrokenPasswordHash = '0422d35d';
+
+bool isLegacyBrokenHash(String hash) => hash == kLegacyBrokenPasswordHash;
