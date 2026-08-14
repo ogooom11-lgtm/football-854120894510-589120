@@ -238,6 +238,18 @@ class PlayerProfile {
   /// Number of team matches the player must still miss.
   int suspendedMatchesRemaining;
 
+  /// Ban counter used by the standalone penalties page
+  /// (penalties_page.dart). Kept in sync with
+  /// [suspendedMatchesRemaining] so a ban really prevents the player
+  /// from playing.
+  int get banMatches => suspendedMatchesRemaining;
+  set banMatches(int value) {
+    suspendedMatchesRemaining = value.clamp(0, 99).toInt();
+  }
+
+  /// Whether the player is currently banned from matches.
+  bool get isBanned => suspendedMatchesRemaining > 0;
+
   int minutesPlayed;
   int matchesPlayed;
   double points;

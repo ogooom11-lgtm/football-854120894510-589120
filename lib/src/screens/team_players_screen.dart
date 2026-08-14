@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../game/enums/player_role.dart';
 import '../game/models/player_profile.dart';
+import '../game/models/shooting.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
 
