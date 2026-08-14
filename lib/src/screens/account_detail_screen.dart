@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import '../game/enums/ai_play_style.dart';
-import '../game/models/formation.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
@@ -21,23 +18,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   SavedGameData? _data;
   late final TabController _tabController;
   bool _loading = true;
-  final FocusNode _adminShortcutFocus = FocusNode();
-  String _adminShortcutBuffer = '';
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _load();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _adminShortcutFocus.requestFocus(),
-    );
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    _adminShortcutFocus.dispose();
     super.dispose();
   }
 
@@ -60,11 +51,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
     }
 
     final data = _data!;
-    return KeyboardListener(
-      focusNode: _adminShortcutFocus,
-      autofocus: true,
-      onKeyEvent: _handleAdminShortcut,
-      child: Scaffold(
+    return Scaffold(
       backgroundColor: const Color(0xff08140f),
       appBar: AppBar(
         title: const Text('Hesap Detayi'),
@@ -85,195 +72,6 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
         controller: _tabController,
         children: [_myTeamsTab(data), _myPlayersTab(data), _allTeamsTab(data)],
       ),
-    ),
-    );
-  }
-
-  void _handleAdminShortcut(KeyEvent event) {
-    if (event is! KeyDownEvent) {
-      return;
-    }
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    final allPressed = (pressed.contains(LogicalKeyboardKey.controlLeft) ||
-            pressed.contains(LogicalKeyboardKey.controlRight)) &&
-        (pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-            pressed.contains(LogicalKeyboardKey.shiftRight)) &&
-        pressed.contains(LogicalKeyboardKey.keyA) &&
-        pressed.contains(LogicalKeyboardKey.keyD) &&
-        pressed.contains(LogicalKeyboardKey.keyC);
-    if (allPressed) {
-      _adminShortcutBuffer = '';
-      _showAdminPanel();
-      return;
-    }
-    if (!HardwareKeyboard.instance.isControlPressed ||
-        !HardwareKeyboard.instance.isShiftPressed) {
-      _adminShortcutBuffer = '';
-      return;
-    }
-    final key = event.logicalKey;
-    final letter = key == LogicalKeyboardKey.keyA
-        ? 'a'
-        : key == LogicalKeyboardKey.keyD
-        ? 'd'
-        : key == LogicalKeyboardKey.keyC
-        ? 'c'
-        : '';
-    if (letter.isEmpty) {
-      _adminShortcutBuffer = '';
-      return;
-    }
-    _adminShortcutBuffer = (_adminShortcutBuffer + letter).replaceAll(
-      RegExp(r'[^adc]'),
-      '',
-    );
-    if (_adminShortcutBuffer.endsWith('adc')) {
-      _adminShortcutBuffer = '';
-      _showAdminPanel();
-    }
-  }
-
-  Future<void> _showAdminPanel() async {
-    final data = _data;
-    if (data == null) return;
-    final teams = data.teams.where((team) => !team.isDeleted).toList();
-    if (teams.isEmpty) return;
-    var selectedTeamId = teams.first.id;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final team = teams.firstWhere((item) => item.id == selectedTeamId);
-          final players = data.players
-              .where((player) => team.playerIds.contains(player.id))
-              .toList();
-          return AlertDialog(
-            backgroundColor: const Color(0xff102019),
-            title: const Text('لوحة الإدارة — الفرق واللاعبون'),
-            content: SizedBox(
-              width: 640,
-              height: 500,
-              child: Column(
-                children: [
-                  DropdownButton<String>(
-                    value: selectedTeamId,
-                    isExpanded: true,
-                    items: [
-                      for (final item in teams)
-                        DropdownMenuItem(value: item.id, child: Text(item.name)),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setDialogState(() => selectedTeamId = value);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        for (final player in players)
-                          ListTile(
-                            title: Text(player.name),
-                            subtitle: Text(
-                              'تسديد ' + player.shootingRating.toStringAsFixed(0) +
-                                  ' | تمرير ' + player.passingRating.toStringAsFixed(0) +
-                                  ' | سرعة ' + player.speedRating.toStringAsFixed(0) +
-                                  ' | طاقة ' + player.staminaRating.toStringAsFixed(0),
-                            ),
-                            trailing: const Icon(Icons.edit),
-                            onTap: () => _showPlayerEditor(player),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _showPlayerEditor(PlayerProfile player) async {
-    final data = _data;
-    if (data == null) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xff102019),
-          title: Text('تعديل ' + player.name),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  _adminEditorSlider('القوة العامة', player.overallRating, (v) {
-                    setDialogState(() => player.overallRating = v);
-                  }),
-                  _adminEditorSlider('دقة التسديد', player.shootingRating, (v) {
-                    setDialogState(() => player.shootingRating = v);
-                  }),
-                  _adminEditorSlider('دقة التمرير / الاحتفاظ', player.passingRating, (v) {
-                    setDialogState(() => player.passingRating = v);
-                  }),
-                  _adminEditorSlider('السرعة', player.speedRating, (v) {
-                    setDialogState(() => player.speedRating = v);
-                  }),
-                  _adminEditorSlider('الطاقة', player.staminaRating, (v) {
-                    setDialogState(() => player.staminaRating = v);
-                  }),
-                  _adminEditorSlider('مهارة الحارس', player.goalkeepingRating, (v) {
-                    setDialogState(() => player.goalkeepingRating = v);
-                  }),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            FilledButton(
-              onPressed: () async {
-                await _storage.save(data);
-                if (context.mounted) Navigator.pop(context);
-                if (mounted) setState(() {});
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _adminEditorSlider(
-    String label,
-    double value,
-    ValueChanged<double> onChanged,
-  ) {
-    return Row(
-      children: [
-        SizedBox(width: 155, child: Text(label)),
-        Expanded(
-          child: Slider(
-            value: value.clamp(1, 99).toDouble(),
-            min: 1,
-            max: 99,
-            divisions: 98,
-            label: value.toStringAsFixed(0),
-            onChanged: onChanged,
-          ),
-        ),
-        SizedBox(width: 32, child: Text(value.toStringAsFixed(0))),
-      ],
     );
   }
 
@@ -500,9 +298,12 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
         .where((t) => t.ownerAccountId == data.activeAccountId && !t.isDeleted)
         .expand((t) => t.playerIds)
         .toSet();
+    // Oyuncular isme gore siralanir; guc/puan degisince sira kaymaz.
     final myPlayers =
         data.players.where((p) => myTeamIds.contains(p.id)).toList()
-          ..sort((a, b) => b.points.compareTo(a.points));
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
 
     if (myPlayers.isEmpty) {
       return const Center(

@@ -120,13 +120,65 @@ class SavedGameData {
 
   bool get adminPasswordSet => adminPasswordHash.isNotEmpty;
 
+  /// Secret prefix that unlocks the hidden player-editing section.
+  /// Typing `kimo@<adminPassword>` logs in as admin AND reveals the
+  /// "Oyuncu bilgileri" (player data) section.
+  static const String playerDataUnlockPrefix = 'kimo@';
+
   bool checkAdminPassword(String password) {
     return adminPasswordHash.isNotEmpty &&
         adminPasswordHash == localPasswordHash(password);
   }
 
+  /// Strips the secret prefix (if present) and returns the real password.
+  static String stripPlayerDataPrefix(String input) {
+    return input.startsWith(playerDataUnlockPrefix)
+        ? input.substring(playerDataUnlockPrefix.length)
+        : input;
+  }
+
+  /// True when the typed text starts with the secret prefix.
+  static bool hasPlayerDataPrefix(String input) =>
+      input.startsWith(playerDataUnlockPrefix);
+
   void setAdminPassword(String password) {
     adminPasswordHash = localPasswordHash(password);
+  }
+
+  /// Admin: force a new password for an account without knowing the old one.
+  bool adminResetAccountPassword(String accountId, String newPassword) {
+    final matches = accounts.where((account) => account.id == accountId);
+    if (matches.isEmpty || newPassword.trim().length < 3) {
+      return false;
+    }
+    matches.first.setPassword(newPassword.trim());
+    return true;
+  }
+
+  /// Admin: delete an account. Its teams become owner-less (not deleted).
+  /// The last remaining account can never be removed.
+  bool adminDeleteAccount(String accountId) {
+    if (accounts.length <= 1) {
+      return false;
+    }
+    final index = accounts.indexWhere((account) => account.id == accountId);
+    if (index < 0) {
+      return false;
+    }
+    accounts.removeAt(index);
+    loggedInAccountIds.remove(accountId);
+    for (final team in teams) {
+      if (team.ownerAccountId == accountId) {
+        team.ownerAccountId = '';
+      }
+    }
+    if (activeAccountId == accountId) {
+      activeAccountId = loggedInAccountIds.isNotEmpty
+          ? loggedInAccountIds.first
+          : accounts.first.id;
+      loggedInAccountIds.add(activeAccountId);
+    }
+    return true;
   }
 
   factory SavedGameData.defaults() {
