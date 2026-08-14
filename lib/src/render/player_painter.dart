@@ -48,6 +48,30 @@ class PlayerPainter {
       );
       canvas.drawOval(rect, body);
       canvas.drawOval(rect, border);
+    } else if (player.isGoalkeeper && jumpPhase > 0.02) {
+      // While diving/jumping the keeper stretches vertically — a narrow,
+      // tall body shape — instead of staying a plain circle.
+      final stretch = 0.55 + jumpPhase * 0.45;
+      final rect = Rect.fromCenter(
+        center: center.translate(0, -player.radius * 0.55),
+        width: player.radius * (2.1 - jumpPhase * 0.5),
+        height: player.radius * (2.05 + jumpPhase * 1.1),
+      );
+      canvas.drawOval(rect, body);
+      canvas.drawOval(rect, border);
+      if (stretch > 0.85) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: center.translate(0, player.radius * 1.05),
+              width: player.radius * 1.1,
+              height: player.radius * 0.45,
+            ),
+            const Radius.circular(2),
+          ),
+          Paint()..color = shortsColor,
+        );
+      }
     } else {
       canvas.drawCircle(center, player.radius, body);
       canvas.drawRRect(

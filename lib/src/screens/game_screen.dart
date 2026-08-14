@@ -945,10 +945,27 @@ class _GameScreenState extends State<GameScreen>
             const SizedBox(height: 4),
             Text(
               _engine.restartKind == RestartKind.corner
-                  ? 'Oyuncular yerlesince vurusunu sen kullanacaksin.'
+                  ? 'Korneri kullanmak icin HAZIR dugmesine bas.'
                   : 'Rakip izin verilen mesafenin disinda tutulur.',
               style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
+            if (_engine.restartKind == RestartKind.corner &&
+                _engine.isCornerWaitingForManualInputFor(
+                  _engine.teamById(teamId),
+                )) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => _engine.markCornerReady(teamId),
+                  icon: const Icon(Icons.check_circle, size: 18),
+                  label: const Text('HAZIR — korneri kullan'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xff00a86b),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 4),
             Text(controls, style: const TextStyle(fontSize: 11)),
           ],

@@ -517,4 +517,123 @@ void main() {
     });
   });
 
+  group('shot speed realism', () {
+    test('shots are clearly faster than passes', () {
+      final engine = MatchEngine(_testMatchSetup());
+      final shooter = engine.blueTeam.players[1];
+      shooter.profile.shotPowerRating = 70;
+      shooter.profile.passingRating = 70;
+      engine.ball
+        ..owner = shooter
+        ..pos = shooter.pos.copy();
+      engine.releaseFromPlayer(
+        shooter,
+        Vec2(1, 0),
+        1.0,
+        type: KickType.shoot,
+      );
+      final shotSpeed = engine.ball.vel.length;
+
+      final passer = engine.blueTeam.players[2];
+      engine.ball
+        ..owner = passer
+        ..pos = passer.pos.copy();
+      engine.releaseFromPlayer(
+        passer,
+        Vec2(1, 0),
+        1.0,
+        type: KickType.pass,
+      );
+      final passSpeed = engine.ball.vel.length;
+      expect(shotSpeed, greaterThan(passSpeed));
+    });
+
+    test('shot speed scales with shot power rating', () {
+      final weak = MatchEngine(_testMatchSetup());
+      final weakShooter = weak.blueTeam.players[1];
+      weakShooter.profile.shotPowerRating = 30;
+      weak.ball
+        ..owner = weakShooter
+        ..pos = weakShooter.pos.copy();
+      weak.releaseFromPlayer(
+        weakShooter,
+        Vec2(1, 0),
+        1.0,
+        type: KickType.shoot,
+      );
+      final weakSpeed = weak.ball.vel.length;
+
+      final strong = MatchEngine(_testMatchSetup());
+      final strongShooter = strong.blueTeam.players[1];
+      strongShooter.profile.shotPowerRating = 95;
+      strong.ball
+        ..owner = strongShooter
+        ..pos = strongShooter.pos.copy();
+      strong.releaseFromPlayer(
+        strongShooter,
+        Vec2(1, 0),
+        1.0,
+        type: KickType.shoot,
+      );
+      final strongSpeed = strong.ball.vel.length;
+      expect(strongSpeed, greaterThan(weakSpeed * 1.08));
+    });
+
+    test('high pass keeps a forward cruise speed while airborne', () {
+      final engine = MatchEngine(_testMatchSetup());
+      final passer = engine.blueTeam.players[1];
+      engine.ball
+        ..owner = passer
+        ..pos = passer.pos.copy();
+      engine.releaseFromPlayer(
+        passer,
+        Vec2(1, 0),
+        1.0,
+        type: KickType.highPass,
+        loft: 5.0,
+      );
+      expect(engine.ball.highPassCruiseSpeed, greaterThan(0));
+      expect(engine.ball.lastPassWasHigh, isTrue);
+    });
+  });
+
+  group('clean pass tracking', () {
+    test('opponent touch clears the clean-pass marker', () {
+      final engine = MatchEngine(_testMatchSetup());
+      final passer = engine.blueTeam.players[1];
+      final receiver = engine.blueTeam.players[2];
+      final opponent = engine.redTeam.players.firstWhere(
+        (player) => !player.isGoalkeeper,
+      );
+      engine.ball
+        ..owner = passer
+        ..pos = passer.pos.copy();
+      engine.releaseFromPlayer(
+        passer,
+        receiver.pos - passer.pos,
+        0.8,
+        type: KickType.pass,
+        target: receiver,
+      );
+      expect(engine.ball.potentialAssister, passer);
+      engine.ball.attachTo(opponent);
+      expect(engine.ball.potentialAssister, isNull);
+    });
+  });
+
+  group('ban fields for penalties page', () {
+    test('banMatches/isBanned stay in sync with suspension', () {
+      final player = PlayerProfile.generated(
+        name: 'Banned',
+        isGoalkeeper: false,
+      );
+      expect(player.isBanned, isFalse);
+      player.banMatches = 4;
+      expect(player.banMatches, 4);
+      expect(player.suspendedMatchesRemaining, 4);
+      expect(player.isBanned, isTrue);
+      player.banMatches = 0;
+      expect(player.isBanned, isFalse);
+    });
+  });
 }

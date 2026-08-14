@@ -52,22 +52,35 @@ class BallPhysics {
     }
 
     final highPass = ball.lastPassWasHigh;
-    final drag = ball.heightMeters > 0.08 ? (highPass ? 0.978 : 0.966) : 0.985;
+    // Shots and lofted passes keep much more of their speed in the air so
+    // they travel realistically fast instead of dying out mid-flight.
+    final drag = ball.heightMeters > 0.08 ? (highPass ? 0.986 : 0.977) : 0.985;
     ball.vel = ball.vel * math.pow(drag, frameScale).toDouble();
     final airSpeedLimit = ball.lastKickType == KickType.shoot
         ? switch (ball.shotType) {
-            ShotType.power => 11.8,
-            ShotType.finesse => 9.2,
-            ShotType.chip => 7.4,
-            ShotType.volley => 8.8,
-            ShotType.header => 7.2,
-            _ => 10.2,
+            ShotType.power => 13.4,
+            ShotType.finesse => 10.6,
+            ShotType.chip => 8.8,
+            ShotType.volley => 10.4,
+            ShotType.header => 8.4,
+            _ => 11.4,
           }
         : highPass
-        ? 9.4
+        ? 11.2
         : 6.6;
     if (ball.heightMeters > 0.08 && ball.vel.length > airSpeedLimit) {
       ball.vel = ball.vel.normalized() * airSpeedLimit;
+    }
+    // A lofted ball keeps advancing toward its target while it is still
+    // in the air (it never parks in one spot and drops straight down).
+    if (highPass &&
+        !ball.hasBouncedSinceKick &&
+        ball.heightMeters > 0.25 &&
+        ball.highPassCruiseSpeed > 0 &&
+        ball.vel.length < ball.highPassCruiseSpeed) {
+      ball.vel = ball.vel.normalized(
+        ball.lastTouch?.lastDirection ?? Vec2(1, 0),
+      ) * ball.highPassCruiseSpeed;
     }
     if (ball.vel.length < 0.07) {
       ball.vel = ball.vel * 0;

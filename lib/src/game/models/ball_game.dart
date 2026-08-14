@@ -26,6 +26,11 @@ class BallGame {
   ShotType? shotType;
   int trajectoryId = 0;
 
+  /// Minimum horizontal speed kept while a lofted ball is still airborne
+  /// (0 when the ball is not an in-flight high pass). Prevents the ball
+  /// from stopping mid-air and dropping straight down.
+  double highPassCruiseSpeed = 0;
+
   bool get isOnGround => heightMeters <= 0.04;
 
   void attachTo(PlayerGame player) {
@@ -46,6 +51,7 @@ class BallGame {
     curve = 0;
     spin = 0;
     shotType = null;
+    highPassCruiseSpeed = 0;
     final front = player.lastDirection.normalized(
       Vec2(player.teamId == lastTouch?.teamId ? 1 : -1, 0),
     );
@@ -82,14 +88,24 @@ class BallGame {
     this.spin = spin;
     this.shotType = shotType;
     trajectoryId += 1;
+    // Shooting must be clearly faster than passing, and every player's
+    // shot speed comes from his shot-power rating:
+    //   weak shot power (~30)  -> ~10.1 px/frame
+    //   average shot power     -> ~11.3 px/frame
+    //   strong shot power (~90)-> ~12.4 px/frame
+    final shotPowerSkill = toucher.profile.shotPowerRating / 100.0;
+    final passSkill = toucher.profile.passingRating / 100.0;
     final baseSpeed = kickType == KickType.shoot
-        ? 8.2
+        ? 9.2 + shotPowerSkill * 3.6
         : highPass
-        ? 7.45
+        ? 7.6 + passSkill * 2.0
         : loft > 0.2
-        ? 6.65
-        : 8.85;
+        ? 6.9
+        : 8.7 + passSkill * 1.7;
     vel = dir * (baseSpeed * power);
+    // While an aerial ball is still travelling, keep enough forward
+    // momentum so it never hangs in place and drops straight down.
+    highPassCruiseSpeed = highPass ? baseSpeed * power * 0.34 : 0;
     verticalVelocity = loft;
     if (loft > 0.2) {
       heightMeters = heightMeters < 0.08 ? 0.08 : heightMeters;
