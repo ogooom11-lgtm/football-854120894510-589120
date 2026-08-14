@@ -5,7 +5,6 @@ import 'dart:math' as math;
 import '../game/enums/match_mode.dart';
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/models/league.dart';
 import '../game/models/formation.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
@@ -24,8 +23,19 @@ class SavedAccountProfile {
   bool get hasPassword => passwordHash.isNotEmpty;
 
   bool checkPassword(String password) {
-    return passwordHash.isNotEmpty &&
-        passwordHash == localPasswordHash(password);
+    if (passwordHash.isEmpty) {
+      return false;
+    }
+    if (passwordHash == localPasswordHash(password)) {
+      return true;
+    }
+    // Eski bozuk hash ile kaydedilmis hesap: sifreyi kabul et ve
+    // kaydi yeni dogru hash'e yukselt.
+    if (isLegacyBrokenHash(passwordHash) && password.trim().isNotEmpty) {
+      setPassword(password);
+      return true;
+    }
+    return false;
   }
 
   void setPassword(String password) {
@@ -103,7 +113,6 @@ class SavedGameData {
   AiDifficulty aiDifficulty;
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
-  LeagueSeason? leagueSeason;
 
   SavedAccountProfile get activeAccount => accounts.firstWhere(
     (account) => account.id == activeAccountId,
@@ -122,13 +131,76 @@ class SavedGameData {
 
   bool get adminPasswordSet => adminPasswordHash.isNotEmpty;
 
+  /// Secret prefix that unlocks the hidden player-editing section.
+  /// Typing `kimo@<adminPassword>` logs in as admin AND reveals the
+  /// "Oyuncu bilgileri" (player data) section.
+  static const String playerDataUnlockPrefix = 'kimo@';
+
   bool checkAdminPassword(String password) {
-    return adminPasswordHash.isNotEmpty &&
-        adminPasswordHash == localPasswordHash(password);
+    if (adminPasswordHash.isEmpty) {
+      return false;
+    }
+    if (adminPasswordHash == localPasswordHash(password)) {
+      return true;
+    }
+    // Eski bozuk hash ile kaydedilmis yonetici sifresi: girilen sifreyi
+    // kabul et ve dogru hash'e yukselt.
+    if (isLegacyBrokenHash(adminPasswordHash) && password.trim().isNotEmpty) {
+      setAdminPassword(password);
+      return true;
+    }
+    return false;
   }
+
+  /// Strips the secret prefix (if present) and returns the real password.
+  static String stripPlayerDataPrefix(String input) {
+    return input.startsWith(playerDataUnlockPrefix)
+        ? input.substring(playerDataUnlockPrefix.length)
+        : input;
+  }
+
+  /// True when the typed text starts with the secret prefix.
+  static bool hasPlayerDataPrefix(String input) =>
+      input.startsWith(playerDataUnlockPrefix);
 
   void setAdminPassword(String password) {
     adminPasswordHash = localPasswordHash(password);
+  }
+
+  /// Admin: force a new password for an account without knowing the old one.
+  bool adminResetAccountPassword(String accountId, String newPassword) {
+    final matches = accounts.where((account) => account.id == accountId);
+    if (matches.isEmpty || newPassword.trim().length < 3) {
+      return false;
+    }
+    matches.first.setPassword(newPassword.trim());
+    return true;
+  }
+
+  /// Admin: delete an account. Its teams become owner-less (not deleted).
+  /// The last remaining account can never be removed.
+  bool adminDeleteAccount(String accountId) {
+    if (accounts.length <= 1) {
+      return false;
+    }
+    final index = accounts.indexWhere((account) => account.id == accountId);
+    if (index < 0) {
+      return false;
+    }
+    accounts.removeAt(index);
+    loggedInAccountIds.remove(accountId);
+    for (final team in teams) {
+      if (team.ownerAccountId == accountId) {
+        team.ownerAccountId = '';
+      }
+    }
+    if (activeAccountId == accountId) {
+      activeAccountId = loggedInAccountIds.isNotEmpty
+          ? loggedInAccountIds.first
+          : accounts.first.id;
+      loggedInAccountIds.add(activeAccountId);
+    }
+    return true;
   }
 
   factory SavedGameData.defaults() {
@@ -288,47 +360,44 @@ class SavedGameData {
           playableTeams.length > 1 ? playableTeams[1] : playableTeams.first,
     );
     return SavedGameData(
-        accounts: accounts,
-        activeAccountId: activeAccountId,
-        loggedInAccountIds: loggedInAccountIds,
-        adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
-        adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
-        players: players,
-        teams: teams,
-        blueTeamId: blueTeam.id,
-        redTeamId: redTeam.id,
-        blueName: blueTeam.name,
-        redName: redTeam.name,
-        blueFormation: formationFromName(
-          json['blueFormation'] ?? blueTeam.formation.name,
-        ),
-        redFormation: formationFromName(
-          json['redFormation'] ?? redTeam.formation.name,
-        ),
-        mode: MatchMode.values.firstWhere(
-          (mode) => mode.name == json['mode'],
-          orElse: () => MatchMode.league,
-        ),
-        bluePlayerIds: blueTeam.playerIds,
-        redPlayerIds: redTeam.playerIds,
-        blueAiControlled: json['blueAiControlled'] as bool? ?? false,
-        redAiControlled: json['redAiControlled'] as bool? ?? false,
-        aiDifficulty: AiDifficulty.values.firstWhere(
-          (d) => d.name == json['aiDifficulty'],
-          orElse: () => AiDifficulty.medium,
-        ),
-        bluePlayStyle: AiPlayStyle.values.firstWhere(
-          (s) => s.name == json['bluePlayStyle'],
-          orElse: () => AiPlayStyle.balanced,
-        ),
-        redPlayStyle: AiPlayStyle.values.firstWhere(
-          (s) => s.name == json['redPlayStyle'],
-          orElse: () => AiPlayStyle.balanced,
-        ),
-      )
-      ..leagueSeason = json['leagueSeason'] != null
-          ? LeagueSeason.fromJson(json['leagueSeason'] as Map<String, dynamic>)
-          : null;
+      accounts: accounts,
+      activeAccountId: activeAccountId,
+      loggedInAccountIds: loggedInAccountIds,
+      adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
+      adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
+      players: players,
+      teams: teams,
+      blueTeamId: blueTeam.id,
+      redTeamId: redTeam.id,
+      blueName: blueTeam.name,
+      redName: redTeam.name,
+      blueFormation: formationFromName(
+        json['blueFormation'] ?? blueTeam.formation.name,
+      ),
+      redFormation: formationFromName(
+        json['redFormation'] ?? redTeam.formation.name,
+      ),
+      mode: MatchMode.values.firstWhere(
+        (mode) => mode.name == json['mode'],
+        orElse: () => MatchMode.league,
+      ),
+      bluePlayerIds: blueTeam.playerIds,
+      redPlayerIds: redTeam.playerIds,
+      blueAiControlled: json['blueAiControlled'] as bool? ?? false,
+      redAiControlled: json['redAiControlled'] as bool? ?? false,
+      aiDifficulty: AiDifficulty.values.firstWhere(
+        (d) => d.name == json['aiDifficulty'],
+        orElse: () => AiDifficulty.medium,
+      ),
+      bluePlayStyle: AiPlayStyle.values.firstWhere(
+        (s) => s.name == json['bluePlayStyle'],
+        orElse: () => AiPlayStyle.balanced,
+      ),
+      redPlayStyle: AiPlayStyle.values.firstWhere(
+        (s) => s.name == json['redPlayStyle'],
+        orElse: () => AiPlayStyle.balanced,
+      ),
+    );
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
@@ -388,7 +457,6 @@ class SavedGameData {
       'aiDifficulty': aiDifficulty.name,
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
-      'leagueSeason': leagueSeason?.toJson(),
     };
   }
 }
@@ -435,10 +503,24 @@ class RosterStorage {
 
 String localPasswordHash(String password) {
   var hash = 0x811c9dc5;
-  final text = 'bomban-v2:\${password.trim()}';
+  final text = 'bomban-v2:${password.trim()}';
   for (final unit in text.codeUnits) {
     hash ^= unit;
     hash = (hash * 0x01000193) & 0xffffffff;
   }
   return hash.toRadixString(16).padLeft(8, '0');
 }
+
+/// ESKI HATALI HASH.
+///
+/// Onceki surumde `'bomban-v2:\${password.trim()}'` yazilmisti; `\$`
+/// kacisli oldugu icin sifre metne HIC eklenmiyordu. Sonuc: butun
+/// sifreler ayni hash'i ('0422d35d') uretiyordu ve dogru sifre bile
+/// kabul edilmiyordu.
+///
+/// Eski kayitlarin kilitlenmemesi icin bu sabit hala taninir; eski
+/// hash gorulunce girilen sifre kabul edilir ve kayit otomatik olarak
+/// yeni dogru hash'e yukseltilir.
+const String kLegacyBrokenPasswordHash = '0422d35d';
+
+bool isLegacyBrokenHash(String hash) => hash == kLegacyBrokenPasswordHash;
