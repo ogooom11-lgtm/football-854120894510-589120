@@ -18,6 +18,7 @@ import '../game/models/team_setup.dart';
 import '../storage/roster_storage.dart';
 import 'game_screen.dart';
 import 'account_detail_screen.dart';
+import 'penalties_page.dart';
 import 'team_players_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -723,6 +724,14 @@ class _SetupScreenState extends State<SetupScreen> {
     if (injuredStarter.isNotEmpty) {
       return team.name + ': ' + injuredStarter.first.name + ' sakat ve oynayamaz';
     }
+    final bannedStarter = data.players.where(
+      (player) => team.starterPlayerIds.contains(player.id) && player.isBanned,
+    );
+    if (bannedStarter.isNotEmpty) {
+      final banned = bannedStarter.first;
+      return '${team.name}: ${banned.name} cezali '
+          '(${banned.banMatches} mac) ve oynayamaz';
+    }
     team.ensureLineupDefaults(data.players);
     final selected = data.players
         .where((profile) => team.playerIds.contains(profile.id))
@@ -757,6 +766,13 @@ class _SetupScreenState extends State<SetupScreen> {
     }
     final blueTeam = blue.first;
     final redTeam = red.first;
+    // Mac oynandi: bu iki takimin cezali oyuncularinin ceza suresi 1 azalir.
+    final involvedIds = {...blueTeam.playerIds, ...redTeam.playerIds};
+    for (final player in data.players) {
+      if (involvedIds.contains(player.id)) {
+        player.serveBanMatch();
+      }
+    }
     final blueBefore = blueTeam.rating;
     final redBefore = redTeam.rating;
     late final String blueResult;
@@ -878,6 +894,12 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
       if (data?.adminLoggedIn == true)
         const ButtonSegment(
+          value: 6,
+          icon: Icon(Icons.gavel),
+          label: Text('CEZALAR'),
+        ),
+      if (data?.adminLoggedIn == true)
+        const ButtonSegment(
           value: 5,
           icon: Icon(Icons.admin_panel_settings),
           label: Text('Yonetim'),
@@ -908,6 +930,7 @@ class _SetupScreenState extends State<SetupScreen> {
       2 => _teamsPage(data),
       3 => _playerPool(data),
       5 => data.adminLoggedIn ? _adminPage(data) : _helpPage(),
+      6 => data.adminLoggedIn ? _penaltiesPage(data) : _helpPage(),
       _ => _helpPage(),
     };
   }
@@ -1633,6 +1656,16 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// CEZALAR sayfasi — normal yonetici sifresi ile acilir (kimo@ gerekmez).
+  Widget _penaltiesPage(SavedGameData data) {
+    return PenaltiesPage(
+      key: ValueKey('cezalar-${data.players.length}'),
+      data: data,
+      onSave: _save,
+      onLock: () => _adminLogout(data),
     );
   }
 

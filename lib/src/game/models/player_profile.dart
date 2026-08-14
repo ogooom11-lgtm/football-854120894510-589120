@@ -128,6 +128,9 @@ class PlayerProfile {
     this.foulsReceived = 0,
     this.minutesPlayed = 0,
     this.matchesPlayed = 0,
+    this.yellowCards = 0,
+    this.redCards = 0,
+    this.banMatches = 0,
     this.points = 0,
     this.injuredDaysRemaining = 0,
     this.fitness = 1.0,
@@ -169,6 +172,15 @@ class PlayerProfile {
   int matchesPlayed;
   double points;
 
+  /// Toplam sari kart sayisi.
+  int yellowCards;
+
+  /// Toplam kirmizi kart sayisi.
+  int redCards;
+
+  /// Kalan ceza (men) mac sayisi. 0 = oynayabilir.
+  int banMatches;
+
   /// Injury: number of days remaining before recovery. 0 = fit.
   int injuredDaysRemaining;
 
@@ -179,6 +191,19 @@ class PlayerProfile {
   final List<PlayerMatchRecord> matchHistory;
 
   bool get isInjured => injuredDaysRemaining > 0;
+
+  /// Cezali (men edilmis) mi?
+  bool get isBanned => banMatches > 0;
+
+  /// Sakat veya cezali oyuncu maca cikamaz.
+  bool get isAvailable => !isInjured && !isBanned;
+
+  /// Bir mac oynandiktan sonra ceza suresini bir azaltir.
+  void serveBanMatch() {
+    if (banMatches > 0) {
+      banMatches -= 1;
+    }
+  }
 
   void recoverFitness(DateTime now) {
     if (fitnessUpdatedAt <= 0) {
@@ -307,6 +332,9 @@ class PlayerProfile {
       foulsReceived: (json['foulsReceived'] as num?)?.toInt() ?? 0,
       minutesPlayed: (json['minutesPlayed'] as num?)?.toInt() ?? 0,
       matchesPlayed: (json['matchesPlayed'] as num?)?.toInt() ?? 0,
+      yellowCards: (json['yellowCards'] as num?)?.toInt() ?? 0,
+      redCards: (json['redCards'] as num?)?.toInt() ?? 0,
+      banMatches: (json['banMatches'] as num?)?.toInt() ?? 0,
       points: (json['points'] as num?)?.toDouble() ?? 0,
       injuredDaysRemaining: (json['injuredDaysRemaining'] as num?)?.toInt() ?? 0,
       fitness: (json['fitness'] as num?)?.toDouble() ?? 1.0,
@@ -354,6 +382,9 @@ class PlayerProfile {
         'foulsReceived': foulsReceived,
         'minutesPlayed': minutesPlayed,
         'matchesPlayed': matchesPlayed,
+        'yellowCards': yellowCards,
+        'redCards': redCards,
+        'banMatches': banMatches,
         'points': double.parse(points.toStringAsFixed(1)),
         'injuredDaysRemaining': injuredDaysRemaining,
         'fitness': double.parse(fitness.toStringAsFixed(3)),
