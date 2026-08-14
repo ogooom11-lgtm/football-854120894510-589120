@@ -63,6 +63,14 @@ MatchSetup _testMatchSetup() {
 }
 
 void main() {
+  group('match modes', () {
+    test('both Eleme and Lig maci exist', () {
+      expect(MatchMode.values.length, 2);
+      expect(MatchMode.league.title, 'Lig maci');
+      expect(MatchMode.knockout.title, 'Eleme');
+    });
+  });
+
   group('local account security', () {
     test('different passwords produce different hashes', () {
       expect(localPasswordHash('alpha'), isNot(localPasswordHash('bravo')));

@@ -1791,6 +1791,14 @@ class _GameScreenState extends State<GameScreen>
   ) {
     final activeIndex = team.players.indexOf(dragged);
     if (activeIndex >= 0) {
+      // If the two players are standing almost on top of each other, the
+      // swap would just flip them back and forth without any real change —
+      // reject it so the game doesn't keep swapping between close players.
+      final target = team.players[targetSlot];
+      if (dragged != target &&
+          dragged.pos.distanceTo(target.pos) < 20) {
+        return;
+      }
       setState(() {
         _engine.swapPlayerPositions(team.id, activeIndex, targetSlot);
       });

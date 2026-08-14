@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
+import '../game/enums/match_mode.dart';
 import '../game/enums/player_role.dart';
 import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
@@ -1156,6 +1157,31 @@ class _SetupScreenState extends State<SetupScreen> {
             controller: _redNameController,
             decoration: const InputDecoration(labelText: 'Kirmizi takim adi'),
             onChanged: (_) => _save(),
+          ),
+          const SizedBox(height: 18),
+          const Text('Mac tipi', style: TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          SegmentedButton<MatchMode>(
+            segments: [
+              ButtonSegment(
+                value: MatchMode.league,
+                label: Text(MatchMode.league.title),
+              ),
+              ButtonSegment(
+                value: MatchMode.knockout,
+                label: Text(MatchMode.knockout.title),
+              ),
+            ],
+            selected: {data.mode},
+            onSelectionChanged: (selection) {
+              setState(() => data.mode = selection.first);
+              _save();
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            data.mode.description,
+            style: const TextStyle(color: Colors.white70, height: 1.35),
           ),
           const Divider(height: 28),
           _formationDropdown(

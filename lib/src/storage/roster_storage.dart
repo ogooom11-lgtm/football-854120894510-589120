@@ -211,7 +211,7 @@ class SavedGameData {
       redName: redTeam.name,
       blueFormation: blueTeam.formation,
       redFormation: redTeam.formation,
-      mode: MatchMode.knockout,
+      mode: MatchMode.league,
       bluePlayerIds: blueTeam.playerIds,
       redPlayerIds: redTeam.playerIds,
       blueAiControlled: false,
@@ -336,7 +336,7 @@ class SavedGameData {
         ),
         mode: MatchMode.values.firstWhere(
           (mode) => mode.name == json['mode'],
-          orElse: () => MatchMode.knockout,
+          orElse: () => MatchMode.league,
         ),
         bluePlayerIds: blueTeam.playerIds,
         redPlayerIds: redTeam.playerIds,

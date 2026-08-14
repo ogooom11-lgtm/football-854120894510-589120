@@ -51,6 +51,10 @@ class ShotCalculator {
         .clamp(0.05, 0.98)
         .toDouble();
 
+    // Shots from inside the penalty area are extremely dangerous: the
+    // closer the shot, the more accurate and the faster it arrives.
+    final closeRangeBoost = context.distanceMeters <= 16 ? 1.0 : 0.0;
+
     final baseSigma = switch (stats.level) {
       PlayerLevel.weak => 0.22,
       PlayerLevel.normal => 0.16,
@@ -69,7 +73,8 @@ class ShotCalculator {
     final sigmaPixels = (baseSigma *
             context.goalWidthPixels *
             (0.82 + (1 - accuracy) * 0.75) /
-            math.sqrt(conditions))
+            math.sqrt(conditions) *
+            (closeRangeBoost > 0 ? 0.66 : 1.0))
         .clamp(2.4, context.goalWidthPixels * 0.72)
         .toDouble();
     final lateralError = _gaussian() * sigmaPixels;
@@ -87,7 +92,8 @@ class ShotCalculator {
         .clamp(0.0, context.shotType == ShotType.chip ? 5.2 : 4.9)
         .toDouble();
 
-    final releasePower = _releasePower(context);
+    final releasePower = _releasePower(context) *
+        (closeRangeBoost > 0 ? 1.09 : 1.0);
     final gravity = context.freeKick
         ? GameConstants.gravityMeters * 5.30
         : GameConstants.gravityMeters;

@@ -37,27 +37,6 @@ enum MatchPeriod {
 
 enum RestartKind { kickoff, goalKick, corner, throwIn, freeKick }
 
-/// Frozen state of the pitch at the moment a goal was scored. Used by VAR:
-/// when a goal is canceled the game resumes from exactly where the attack
-/// was instead of restarting from the midfield kickoff.
-class _GoalSnapshot {
-  _GoalSnapshot({
-    required this.ballPos,
-    required this.ballVel,
-    required this.ballHeight,
-    required this.ballVerticalVel,
-    required this.ballOwnerId,
-    required this.players,
-  });
-
-  final Vec2 ballPos;
-  final Vec2 ballVel;
-  final double ballHeight;
-  final double ballVerticalVel;
-  final String? ballOwnerId;
-  final Map<String, Vec2> players;
-}
-
 class MatchEngine {
   MatchEngine(MatchSetup setup)
     : mode = setup.mode,
@@ -147,7 +126,6 @@ class MatchEngine {
   TeamId? _cornerManualWaitTeamId;
   double _cornerManualWaitTimer = 0;
   bool _cornerReadyOverride = false;
-  final Map<GoalEvent, _GoalSnapshot> _goalSnapshots = <GoalEvent, _GoalSnapshot>{};
   bool wallSelectionPending = false;
   TeamId? wallDefendingTeamId;
   final List<PlayerGame> _wallCandidates = [];
@@ -463,6 +441,22 @@ class MatchEngine {
 
     if (activePenalty != null) {
       if (activePenalty!.result == null) {
+        // The keeper stays glued to his goal line until the shot is
+        // actually taken — he never wanders off the line beforehand.
+        final defending = penaltyDefendingTeam;
+        if (defending != null) {
+          final keeper = defending.goalkeeper;
+          keeper.pos = Vec2(
+            defending.side == TeamSide.left
+                ? GameConstants.leftBound + 14
+                : GameConstants.rightBound - 14,
+            GameConstants.virtualHeight / 2,
+          );
+          keeper
+            ..keeperState = 'hazir'
+            ..keeperGroundTimer = 0
+            ..lastDirection = Vec2(defending.attackDirection.toDouble(), 0);
+        }
         _tickAiPenalty(dt);
       } else {
         _tickPenalty(dt);
@@ -681,6 +675,8 @@ class MatchEngine {
       ball.attachTo(player);
     }
 
+    // The maximum shot power depends on the player's shot-power rating:
+    // weak shooters physically cannot hit rockets, strong ones can.
     final maxPower = type == KickType.highPass
         ? restartKind == RestartKind.goalKick
             ? 2.65
@@ -688,7 +684,9 @@ class MatchEngine {
             ? 2.40
             : 1.95
         : type == KickType.shoot
-        ? 1.55
+        ? (1.18 + player.profile.shotPowerRating / 100.0 * 0.52)
+              .clamp(1.18, 1.70)
+              .toDouble()
         : 1.45;
     final clampedPower = power.clamp(0.55, maxPower).toDouble();
     final direction = player.lastDirection.normalized(
@@ -734,6 +732,21 @@ class MatchEngine {
       } else {
         finalPower = 0.74 + clampedPower * 0.22;
       }
+    } else if (restartKind == RestartKind.throwIn) {
+      // Throw-in: even the long-pass button makes a short, safe toss to
+      // the nearest teammate — never a long ball.
+      final mates = team.players.where(
+        (mate) => mate != player && !mate.isGoalkeeper && !mate.isSentOff,
+      ).toList()
+        ..sort(
+          (a, b) => a.pos
+              .distanceTo(player.pos)
+              .compareTo(b.pos.distanceTo(player.pos)),
+        );
+      target = mates.isEmpty ? null : mates.first;
+      kickDirection = target == null ? direction : target.pos - ball.pos;
+      loft = 1.5 + clampedPower * 0.6;
+      finalPower = 0.52 + clampedPower * 0.20;
     } else {
       target = player.isGoalkeeper
           ? chooseBestPass(
@@ -1328,12 +1341,10 @@ class MatchEngine {
           final extremelyViolent = contactSeverity >= 1.22;
           final violent = contactSeverity >= 0.94;
           final reckless = contactSeverity >= 0.74;
-          // A really heavy collision (impact >= 1.20) injures the player
-          // regardless of whether a foul is called. The number of recovery
-          // days depends on the victim's dayaniklilik (resistance) — the
-          // more resistant, the shorter the recovery — and is handled
-          // inside _checkInjury.
-          if (contactSeverity >= 1.20) {
+          // Only an extreme collision (impact >= 1.30 — a genuinely
+          // reckless late tackle) can injure the player even without a
+          // foul being called. Injuries are intentionally rare.
+          if (contactSeverity >= 1.30) {
             _checkInjury(owner, violent: true, reckless: true);
           }
           var foulChance =
@@ -2069,18 +2080,6 @@ class MatchEngine {
       ball.lastTouch!.profile.goals += 1;
       ball.lastTouch!.matchGoals += 1;
     }
-    // Freeze the exact state of the pitch right before the goal so VAR can
-    // resume the match from that spot when the goal gets canceled.
-    final goalSnapshot = _GoalSnapshot(
-      ballPos: ball.pos.copy(),
-      ballVel: ball.vel.copy(),
-      ballHeight: ball.heightMeters,
-      ballVerticalVel: ball.verticalVelocity,
-      ballOwnerId: ball.owner?.id,
-      players: {
-        for (final player in allMatchPlayers) player.id: player.pos.copy(),
-      },
-    );
     ball
       ..owner = null
       ..vel = Vec2.zero()
@@ -2105,7 +2104,6 @@ class MatchEngine {
           ? assister.id
           : null,
     );
-    _goalSnapshots[goalEvent] = goalSnapshot;
     scoringTeam.goals.add(goalEvent);
     final goalTimelineEvent = _recordTimelineEvent(
       kind: 'goal',
@@ -2149,7 +2147,7 @@ class MatchEngine {
             'GOL IPTAL',
             'VAR karari • $scorer',
             1.2,
-            () => _restoreGoalSnapshot(goalEvent),
+            () => _startGoalKickFor(conceding),
             kind: 'var',
           );
         } else {
@@ -2957,61 +2955,34 @@ class MatchEngine {
     }
   }
 
-  /// Restores the pitch (ball + every player) to the exact state captured
-  /// when [goal] was scored, so a canceled goal continues from that spot
-  /// instead of a midfield kickoff.
-  void _restoreGoalSnapshot(GoalEvent goal) {
-    final snapshot = _goalSnapshots[goal];
-    if (snapshot == null) {
-      final conceding = opponentOf(teamById(goal.teamId));
-      resetKickoff(conceding.id);
-      return;
-    }
-    // Cancel any pending "GOL -> kickoff" pause so the match resumes from
-    // the restored spot instead of the midfield restart.
-    _pauseTimer = 0;
-    _afterPause = null;
-    banner = null;
-    varReviewActive = false;
-    varReviewCategory = null;
-    varRecommendedDecision = null;
-    varDecisionOptions = const [];
-    _varDecisionResolver = null;
-    for (final player in allMatchPlayers) {
-      final saved = snapshot.players[player.id];
-      if (saved != null) {
-        player.pos = saved.copy();
-      }
-      player.restartTarget = null;
-    }
-    final hadOwner = snapshot.ballOwnerId != null;
-    ball
-      ..owner = null
-      ..pos = snapshot.ballPos.copy()
-      ..vel = hadOwner ? snapshot.ballVel.copy() : Vec2.zero()
-      ..heightMeters = hadOwner ? snapshot.ballHeight : 0
-      ..verticalVelocity = hadOwner ? snapshot.ballVerticalVel : 0;
-    if (hadOwner) {
-      final owner = allMatchPlayers.where(
-        (player) => player.id == snapshot.ballOwnerId,
-      );
-      if (owner.isNotEmpty) {
-        ball.owner = owner.first;
-      }
-    }
-    restartKind = null;
-    restartTeamId = null;
-    _restartSpot = null;
+  /// Starts a goal kick for [team]: the keeper takes the ball from the
+  /// six-yard spot while every other player keeps his current position
+  /// (they are only pushed out of the penalty area). No one is sent back
+  /// to the halfway line.
+  void _startGoalKickFor(TeamGame team) {
+    _offsideCandidate = null;
+    _offsideExemptNextKick = true;
     setPieceAttackTeamId = null;
     setPieceAttackTimer = 0;
-    _offsideCandidate = null;
-    _offsideExemptNextKick = false;
+    _cornerManualWaitTeamId = null;
+    _cornerManualWaitTimer = 0;
     _cornerReadyOverride = false;
-    _lockedWallPlayerIds.clear();
-    _lockedWallPositions.clear();
-    for (final player in allPlayers) {
-      player.restartTarget = null;
-    }
+    restartKind = RestartKind.goalKick;
+    restartTeamId = team.id;
+    _restartSpot = _goalKickSpot(team).copy();
+    final keeper = team.goalkeeper.isSentOff
+        ? team.closestTo(ball.pos, includeGoalkeeper: false)
+        : team.goalkeeper;
+    ball
+      ..owner = keeper
+      ..pos = _restartSpot!.copy()
+      ..vel = Vec2.zero()
+      ..heightMeters = 0
+      ..verticalVelocity = 0;
+    keeper
+      ..pos = _restartSpot! - Vec2(team.attackDirection * 16, 0)
+      ..lastDirection = Vec2(team.attackDirection.toDouble(), 0);
+    _shapeRestartPlayers(team, opponentOf(team), isCorner: false);
   }
 
   void toggleGoalReview(int index) {
@@ -3061,9 +3032,8 @@ class MatchEngine {
       ).toInt();
     }
     if (goal.canceled) {
-      // Resume the match from the exact spot of the attack instead of the
-      // midfield kickoff.
-      _restoreGoalSnapshot(goal);
+      // A disallowed goal restarts with a goal kick for the conceding side.
+      _startGoalKickFor(opponentOf(teamById(goal.teamId)));
     }
     banner = MatchBanner(
       goal.canceled ? 'GOL IPTAL' : 'GOL GERI ALINDI',
@@ -3489,17 +3459,13 @@ class MatchEngine {
     if (restartKind == RestartKind.goalKick && restartTeamId != null) {
       final defending = teamById(restartTeamId!);
       if (player.teamId != restartTeamId) {
-        final centerX = GameConstants.virtualWidth / 2;
-        if (defending.side == TeamSide.left && player.pos.x < centerX + 12) {
-          player.pos.x = centerX + 12;
-        } else if (defending.side == TeamSide.right &&
-            player.pos.x > centerX - 12) {
-          player.pos.x = centerX - 12;
-        }
+        // Opponents keep their general position for a goal kick — they
+        // are only pushed just outside the penalty area, never all the
+        // way back to the halfway line.
         if (isInPenaltyBox(player.pos, defending.id)) {
           player.pos.x = defending.side == TeamSide.left
-              ? GameConstants.leftBound + 150
-              : GameConstants.rightBound - 150;
+              ? GameConstants.leftBound + 152
+              : GameConstants.rightBound - 152;
         }
       }
     }
@@ -3883,36 +3849,11 @@ class MatchEngine {
     required bool isCorner,
   }) {
     if (!isCorner) {
-      final centerX = GameConstants.virtualWidth / 2;
-      final opponent = opponentOf(defending);
-      var opponentSlot = 0;
-      for (final player in opponent.players) {
-        if (player.isGoalkeeper) {
-          continue;
-        }
-        player.restartTarget = Vec2(
-          defending.side == TeamSide.left
-              ? centerX + 34 + (random.nextDouble() - 0.5) * 28
-              : centerX - 34 + (random.nextDouble() - 0.5) * 28,
-          GameConstants.topBound + 88 + (opponentSlot % 5) * 72 +
-              (random.nextDouble() - 0.5) * 22,
-        );
-        opponentSlot += 1;
-      }
-      var outletSlot = 0;
-      for (final player in restartTeam.players.where((p) => !p.isGoalkeeper)) {
-        final lane = outletSlot % 5;
-        final row = outletSlot ~/ 5;
-        player.restartTarget = Vec2(
-          defending.side == TeamSide.left
-              ? GameConstants.leftBound + 170 + row * 72 +
-                  (random.nextDouble() - 0.5) * 30
-              : GameConstants.rightBound - 170 - row * 72 +
-                  (random.nextDouble() - 0.5) * 30,
-          GameConstants.topBound + 96 + lane * 70 +
-              (random.nextDouble() - 0.5) * 24,
-        );
-        outletSlot += 1;
+      // Goal kick: every player keeps his current position — nobody is
+      // sent back to the halfway line. The restart position clamps only
+      // push opponents out of the penalty area.
+      for (final player in allPlayers) {
+        player.restartTarget = null;
       }
       return;
     }
@@ -4302,11 +4243,13 @@ class MatchEngine {
     }
     final fatigue = 1 - victim.stamina;
     final resistance = victim.profile.dayaniklilikSkill;
+    // Injuries are kept rare: even violent challenges injure less than
+    // half the time, and ordinary tackles almost never do.
     final rawChance = violent
-        ? 0.74 + fatigue * 0.18
+        ? 0.38 + fatigue * 0.10
         : reckless
-        ? 0.11 + fatigue * 0.26
-        : 0.016 + fatigue * 0.075;
+        ? 0.05 + fatigue * 0.12
+        : 0.006 + fatigue * 0.03;
     final resistanceFactor = (1.18 - resistance * 0.78).clamp(0.38, 1.12);
     final injuryChance = (rawChance * resistanceFactor).clamp(0.008, 0.88);
     if (random.nextDouble() < injuryChance) {

@@ -43,7 +43,7 @@ class PlayerAi {
     final ball = engine.ball;
     final restartTarget = player.restartTarget;
     if (restartTarget != null) {
-      engine.moveTowards(player, restartTarget, 0.62, dt);
+      engine.moveTowards(player, restartTarget, 0.92, dt);
       return;
     }
     // During a corner the defenders man-mark the nearest attacker so the
@@ -51,7 +51,7 @@ class PlayerAi {
     if (engine.isCornerAttackActiveFor(opponent) && player.role.isDefender) {
       final mark = _cornerMarkTarget(player, opponent, engine);
       if (mark != null) {
-        engine.moveTowards(player, mark, 0.74, dt);
+        engine.moveTowards(player, mark, 0.94, dt);
         _maybeJumpForHighBall(player, engine);
         return;
       }
@@ -78,6 +78,42 @@ class PlayerAi {
           ball.pos.y > GameConstants.virtualHeight / 2 + 90) {
         finalTarget.y = GameConstants.virtualHeight / 2 + 10;
       }
+      // A winger charging down the wing: the striker and the closest
+      // midfielder enter the box so the winger has a passing target.
+      final wideOnTheAttack =
+          ball.owner!.role.isWide &&
+          (team.attackDirection == 1
+              ? ball.owner!.pos.x > GameConstants.virtualWidth * 0.62
+              : ball.owner!.pos.x < GameConstants.virtualWidth * 0.38);
+      if (wideOnTheAttack) {
+        final goalMouthY = GameConstants.virtualHeight / 2;
+        if (player.role == PlayerRole.striker) {
+          // Enter the box but never beyond the offside line.
+          final boxX = team.attackDirection == 1
+              ? math.min(GameConstants.rightBound - 88, lineX - 8)
+              : math.max(GameConstants.leftBound + 88, lineX + 8);
+          finalTarget = Vec2(boxX, goalMouthY);
+        } else if (player.role == PlayerRole.midfieldLeft ||
+            player.role == PlayerRole.midfieldRight) {
+          final otherMid = team.players.firstWhere(
+            (mate) =>
+                mate != player &&
+                (mate.role == PlayerRole.midfieldLeft ||
+                    mate.role == PlayerRole.midfieldRight),
+            orElse: () => player,
+          );
+          final closer =
+              (player.pos.x - otherMid.pos.x) * team.attackDirection >= 0;
+          if (closer) {
+            finalTarget = Vec2(
+              team.attackDirection == 1
+                  ? GameConstants.rightBound - 120
+                  : GameConstants.leftBound + 120,
+              goalMouthY,
+            );
+          }
+        }
+      }
     } else if (ball.owner != null && ball.owner!.teamId != team.id) {
       if (engine.shouldWaitForKeeperRelease(team)) {
         finalTarget = _keeperReleaseWaitTarget(player, team, opponent, engine);
@@ -85,18 +121,38 @@ class PlayerAi {
         if (emergencyDrop) {
           finalTarget = _attackerDefensiveTarget(player, team, engine);
         }
+        final carrier = ball.owner!;
         final nearestDefenders = [...team.players.where((p) => !p.isGoalkeeper)]
           ..sort(
             (a, b) => a.pos
-                .distanceTo(ball.owner!.pos)
-                .compareTo(b.pos.distanceTo(ball.owner!.pos)),
+                .distanceTo(carrier.pos)
+                .compareTo(b.pos.distanceTo(carrier.pos)),
           );
         final canJoinPress =
             emergencyDrop &&
             player.role == PlayerRole.striker &&
-            player.pos.distanceTo(ball.owner!.pos) < 155;
+            player.pos.distanceTo(carrier.pos) < 155;
         if (nearestDefenders.take(2).contains(player) || canJoinPress) {
-          finalTarget = ball.owner!.pos - Vec2(team.attackDirection * 12, 0);
+          finalTarget = carrier.pos - Vec2(team.attackDirection * 12, 0);
+        }
+        // Defenders close down a shooter: when the opponent carrying the
+        // ball is in shooting range, the nearest defender steps between
+        // the shooter and the goal to block the shot.
+        if (player.role.isDefender) {
+          final goalCenter = engine.goalCenterFor(team);
+          final carrierToGoal = goalCenter - carrier.pos;
+          final inShootingRange =
+              (carrier.pos - goalCenter).length < 240 &&
+              (team.attackDirection == 1
+                  ? carrier.pos.x > GameConstants.virtualWidth * 0.55
+                  : carrier.pos.x < GameConstants.virtualWidth * 0.45);
+          if (inShootingRange &&
+              (nearestDefenders.first == player ||
+                  nearestDefenders.take(2).contains(player))) {
+            final blockSpot =
+                carrier.pos + carrierToGoal.normalized(Vec2(0, 1)) * 20;
+            finalTarget = blockSpot;
+          }
         }
       }
     } else if (ball.owner == null) {
@@ -104,24 +160,38 @@ class PlayerAi {
         finalTarget = _cornerAttackTarget(player, team, engine);
       }
       final nearest = team.closestTo(ball.pos);
-      if (nearest == player) {
+      // Only the closest player chases a loose ball, and only when it is
+      // reasonably near — everyone else holds his position.
+      if (nearest == player &&
+          player.pos.distanceTo(ball.pos) < 120) {
         finalTarget = ball.pos;
       }
     }
 
     _maybeJumpForHighBall(player, engine);
+    // AI players run at their natural speed (same as a controlled player):
+    // the force is close to 1.0 instead of the old slowed-down values.
     final moveForce = emergencyDrop
-        ? (engine.teamUnderDanger(team) ? 0.86 : 0.76)
+        ? (engine.teamUnderDanger(team) ? 1.0 : 0.94)
         : team == engine.teamInPossession
-        ? 0.57
-        : 0.7;
+        ? 0.94
+        : 0.97;
+    // Players hurry back to their assigned position when they drifted far
+    // from it — everyone keeps his role shape.
+    final farFromPost =
+        player.pos.distanceTo(finalTarget) > 110 ? 1.05 : 1.0;
     final cautionFactor =
         player.yellowCardsThisMatch > 0 &&
             ball.owner != null &&
             ball.owner!.teamId != team.id
-        ? 0.78
+        ? 0.8
         : 1.0;
-    engine.moveTowards(player, finalTarget, moveForce * cautionFactor, dt);
+    engine.moveTowards(
+      player,
+      finalTarget,
+      (moveForce * farFromPost * cautionFactor).clamp(0.4, 1.08).toDouble(),
+      dt,
+    );
   }
 
   double _secondLastDefenderLine(
@@ -213,7 +283,7 @@ class PlayerAi {
                       : 70),
             )
           : player.pos + Vec2(d * 55, 0);
-      engine.moveTowards(player, carryTarget, 0.68, dt);
+      engine.moveTowards(player, carryTarget, 0.94, dt);
       return;
     }
 
@@ -303,7 +373,7 @@ class PlayerAi {
       engine.moveTowards(
         player,
         Vec2(player.pos.x + team.attackDirection * 118, laneY),
-        0.94,
+        1.0,
         dt,
       );
       player.aiCooldown = 0.12;
@@ -350,7 +420,7 @@ class PlayerAi {
         player.pos.x + team.attackDirection * (nearEndLine ? 18 : 92),
         wingLaneY,
       );
-      engine.moveTowards(player, wingTarget, 0.92, dt);
+      engine.moveTowards(player, wingTarget, 0.98, dt);
       player.aiCooldown = 0.10;
       return;
     }
@@ -389,8 +459,13 @@ class PlayerAi {
         (safeTarget != null ? 28 : -40) +
         (pressure < 45 ? 28 : 4) +
         (player.role.isDefender && ownThird ? 22 : 0);
+    // A defender under pressure in his own third must clear the ball
+    // (long ball forward) instead of risking a short pass near his goal.
+    final inOwnBox = engine.isInPenaltyBox(player.pos, team.id);
     final clearScore = (player.role.isDefender && ownThird && pressure < 52)
-        ? 62
+        ? (inOwnBox ? 110 : 62)
+        : (inOwnBox && player.role.isDefender)
+        ? 85
         : -30;
     final dribbleScore =
         (player.role.isWide
@@ -499,7 +574,7 @@ class PlayerAi {
       dribbleTarget +=
           (player.pos - nearestOpponent.pos).normalized(Vec2(0, 1)) * 30;
     }
-    engine.moveTowards(player, dribbleTarget, 0.72, dt);
+    engine.moveTowards(player, dribbleTarget, 0.96, dt);
     player.aiCooldown = 0.18 + random.nextDouble() * 0.18;
   }
 

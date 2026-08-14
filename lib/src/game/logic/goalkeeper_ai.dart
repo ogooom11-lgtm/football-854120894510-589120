@@ -663,7 +663,24 @@ class GoalkeeperAi {
     final visibilityDelay = (1 - context.visibilityFactor) * 0.18;
     final fatigueDelay = (1 - keeper.stamina) * 0.08;
     final readyBonus = keeperReadyBonus(stats, context);
-    return (humanDelay + visibilityDelay + fatigueDelay - readyBonus)
+    // Point-blank shots (inside the penalty area) arrive so fast that the
+    // keeper simply cannot react in time — a realistic extra delay that
+    // makes close-range shots very dangerous.
+    final shotDistance = context.shooterPosition == null
+        ? 99.0
+        : _pitchDistanceMeters(context.shooterPosition!, context.goalCenter);
+    final pointBlankDelay = context.shotType == null
+        ? 0.0
+        : shotDistance < 14
+        ? 0.10 + (14 - shotDistance) * 0.012
+        : shotDistance < 20
+        ? 0.045
+        : 0.0;
+    return (humanDelay +
+            visibilityDelay +
+            fatigueDelay +
+            pointBlankDelay -
+            readyBonus)
         .clamp(0.07, 0.48)
         .toDouble();
   }
