@@ -67,34 +67,6 @@ class PlayerAi {
 
     var finalTarget = target;
     if (ball.owner != null && ball.owner!.teamId == team.id) {
-      // Our keeper caught the ball: only the two nearest defenders come
-      // close (one on each side) to offer a short, open pass — everyone
-      // else keeps his position.
-      if (ball.owner!.isGoalkeeper &&
-          engine.isInPenaltyBox(ball.owner!.pos, team.id) &&
-          player.role.isDefender) {
-        final defenders = team.players
-            .where((mate) => mate.role.isDefender && !mate.isSentOff)
-            .toList()
-          ..sort(
-            (a, b) => a.pos
-                .distanceTo(ball.owner!.pos)
-                .compareTo(b.pos.distanceTo(ball.owner!.pos)),
-          );
-        if (defenders.length >= 2 &&
-            (defenders[0] == player || defenders[1] == player)) {
-          final sideSign =
-              player.role == PlayerRole.leftWingBack ||
-                  player.role == PlayerRole.centerBackLeft
-              ? -1.0
-              : 1.0;
-          final target = ball.owner!.pos -
-              Vec2(team.attackDirection * 26, 0) +
-              Vec2(0, sideSign * 46);
-          engine.moveTowards(player, target, 1.0, dt);
-          return;
-        }
-      }
       final lineX = _secondLastDefenderLine(opponent, team.attackDirection);
       final beyondLine = team.attackDirection == 1
           ? player.pos.x > lineX - 6
