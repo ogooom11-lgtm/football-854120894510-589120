@@ -3159,13 +3159,13 @@ class MatchEngine {
     return swapped;
   }
 
-  bool substitute(TeamId id, int outIndex, int benchIndex) {
+  bool substitute(TeamId id, int outIndex, int benchIndex, {double minute = 0}) {
     final team = teamById(id);
     final ownerWasOut =
         outIndex >= 0 &&
         outIndex < team.players.length &&
         ball.owner == team.players[outIndex];
-    final ok = team.substitute(outIndex, benchIndex);
+    final ok = team.substitute(outIndex, benchIndex, minute: minute);
     if (!ok) {
       return false;
     }

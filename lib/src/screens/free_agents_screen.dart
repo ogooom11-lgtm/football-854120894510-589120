@@ -396,10 +396,9 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
                 ),
                 const SizedBox(width: 8),
                 FilledButton.icon(
-                  onPressed: selectedTeam == null || selectedTeam!.isEmpty
+                  onPressed: selectedTeam == null || selectedTeam.isEmpty
                       ? null
-                      : () =>
-                          _requestTransfer(data, player, selectedTeam!),
+                      : () => _requestTransfer(data, player, selectedTeam),
                   icon: const Icon(Icons.swap_horiz, size: 16),
                   label: const Text('Transfer iste'),
                   style: FilledButton.styleFrom(
