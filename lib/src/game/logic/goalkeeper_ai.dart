@@ -523,11 +523,11 @@ class GoalkeeperAi {
     GoalkeeperAction action,
   ) {
     if (keeper.keeperDiveCooldown > 0 || keeper.keeperGroundTimer > 0) return;
-    final recovery = (1.78 -
-            stats.diving * 0.30 -
-            stats.reaction * 0.08 +
-            (1 - keeper.stamina) * 0.16)
-        .clamp(1.36, 1.78)
+    final recovery = (0.80 -
+            stats.diving * 0.10 -
+            stats.reaction * 0.04 +
+            (1 - keeper.stamina) * 0.08)
+        .clamp(0.55, 0.80)
         .toDouble();
     keeper
       ..keeperState = 'atlayis'
@@ -542,10 +542,10 @@ class GoalkeeperAi {
 
   void _startJump(PlayerGame keeper, GoalkeeperStats stats) {
     if (keeper.keeperDiveCooldown > 0 || keeper.keeperGroundTimer > 0) return;
-    final recovery = (1.72 -
-            stats.jumping * 0.24 +
-            (1 - keeper.stamina) * 0.15)
-        .clamp(1.38, 1.76)
+    final recovery = (0.78 -
+            stats.jumping * 0.10 +
+            (1 - keeper.stamina) * 0.08)
+        .clamp(0.55, 0.78)
         .toDouble();
     keeper
       ..keeperState = 'atlayis'

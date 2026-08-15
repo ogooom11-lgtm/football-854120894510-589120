@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +56,8 @@ class _GameScreenState extends State<GameScreen>
   bool _goalkeeperDebugVisible = false;
   double _varBallZoom = 1.0;
   String? _varTargetPlayerId;
+  String? _switchModeHint;
+  Timer? _switchHintTimer;
 
   @override
   void initState() {
@@ -68,6 +72,7 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   void dispose() {
+    _switchHintTimer?.cancel();
     _ticker.dispose();
     _focusNode.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -289,6 +294,35 @@ class _GameScreenState extends State<GameScreen>
         setState(() {});
         return;
       }
+      // C: switch the controlled player to the next man (manual switch).
+      // Q: toggle automatic switching on/off.
+      if (key == LogicalKeyboardKey.keyC &&
+          !_engine.replayMode &&
+          !_engine.finished) {
+        if (!_engine.blueAiControlled) {
+          _engine.switchControlledPlayer(TeamId.blue);
+        }
+        if (!_engine.redAiControlled) {
+          _engine.switchControlledPlayer(TeamId.red);
+        }
+        _showSwitchHint(
+          _engine.autoSwitchEnabled
+              ? 'Oyuncu degistirildi (C)'
+              : 'Manuel: oyuncu degistirildi (C)',
+        );
+        setState(() {});
+        return;
+      }
+      if (key == LogicalKeyboardKey.keyQ &&
+          !_engine.replayMode &&
+          !_engine.finished) {
+        final enabled = _engine.toggleAutoSwitch();
+        _showSwitchHint(
+          enabled ? 'Oto oyuncu degisimi: ACIK' : 'Oto oyuncu degisimi: KAPALI',
+        );
+        setState(() {});
+        return;
+      }
       _pressed.add(key);
       _startActionKey(key);
       if (key == LogicalKeyboardKey.keyV) {
@@ -429,6 +463,50 @@ class _GameScreenState extends State<GameScreen>
   bool _isPressed(LogicalKeyboardKey key) {
     return _pressed.contains(key) ||
         HardwareKeyboard.instance.logicalKeysPressed.contains(key);
+  }
+
+  void _showSwitchHint(String text) {
+    _switchHintTimer?.cancel();
+    setState(() => _switchModeHint = text);
+    _switchHintTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) {
+        setState(() => _switchModeHint = null);
+      }
+    });
+  }
+
+  Widget _switchModeHintWidget() {
+    final hint = _switchModeHint;
+    if (hint == null) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      top: 74,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+            decoration: BoxDecoration(
+              color: const Color(0xff0d1a16).withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xffd4af37).withValues(alpha: 0.5),
+              ),
+            ),
+            child: Text(
+              hint,
+              style: const TextStyle(
+                color: Color(0xfff5d67b),
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   bool _usesPressPower(KickType type) {
@@ -700,6 +778,7 @@ class _GameScreenState extends State<GameScreen>
                   !_engine.finished)
                 _keeperDistributionControls(),
               if (_engine.banner != null) _banner(),
+              if (_switchModeHint != null) _switchModeHintWidget(),
               if (_engine.wallSelectionPending) _freeKickWallPanel(),
               if (_engine.restartKind != null &&
                   _engine.restartTeamId != null &&

@@ -691,6 +691,39 @@ void main() {
     });
   });
 
+  group('controlled player switching', () {
+    test('ball owner is always controlled when the team has the ball', () {
+      final engine = MatchEngine(_testMatchSetup());
+      final owner = engine.blueTeam.players[3];
+      engine.ball.attachTo(owner);
+      expect(engine.controlledPlayer(TeamId.blue), owner);
+    });
+
+    test('manual switch cycles to the next chaser when defending', () {
+      final engine = MatchEngine(_testMatchSetup());
+      // Give the ball to the opponent so blue defends.
+      final redCarrier = engine.redTeam.players[2];
+      engine.ball.attachTo(redCarrier);
+      final first = engine.controlledPlayer(TeamId.blue);
+      final second = engine.switchControlledPlayer(TeamId.blue);
+      expect(second.id, isNot(first.id));
+      final third = engine.switchControlledPlayer(TeamId.blue);
+      expect(third.id, isNot(second.id));
+      engine.autoSwitchEnabled = false;
+      final manual = engine.controlledPlayer(TeamId.blue);
+      expect(manual.id, third.id);
+    });
+
+    test('toggle auto switch flips the flag', () {
+      final engine = MatchEngine(_testMatchSetup());
+      expect(engine.autoSwitchEnabled, isTrue);
+      engine.toggleAutoSwitch();
+      expect(engine.autoSwitchEnabled, isFalse);
+      engine.toggleAutoSwitch();
+      expect(engine.autoSwitchEnabled, isTrue);
+    });
+  });
+
   group('substitution undo', () {
     test('undo restores the outgoing player and refunds the slot', () {
       final team = MatchEngine(_testMatchSetup()).blueTeam;

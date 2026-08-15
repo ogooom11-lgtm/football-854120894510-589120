@@ -187,29 +187,23 @@ class PlayerPainter {
 
   void _keeperCue(Canvas canvas, PlayerGame player, Offset center) {
     if (player.keeperGroundTimer > 0) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: player.radius + 8),
-        -0.7,
-        1.4,
-        false,
-        Paint()
-          ..color = const Color(0xff8bd3ff)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.2,
+      // On the ground: no text above the keeper — just two short lines on
+      // both sides of the body to show he is lying down.
+      final sidePaint = Paint()
+        ..color = const Color(0xff8bd3ff)
+        ..strokeWidth = 2.6
+        ..strokeCap = StrokeCap.round;
+      final bodyW = player.radius * 1.45;
+      final lineY = center.dy - 2;
+      canvas.drawLine(
+        Offset(center.dx - bodyW - 7, lineY),
+        Offset(center.dx - bodyW - 16, lineY),
+        sidePaint,
       );
-      final groundCue =
-          player.jumpAnimationTimer <= 0.10 || player.keeperState == 'yerde'
-          ? 'YERDE'
-          : player.keeperState == 'kurtaris'
-          ? 'KURTARIS'
-          : 'ATLAYIS';
-      _text(
-        canvas,
-        groundCue,
-        center.translate(0, -24),
-        8,
-        const Color(0xffbde8ff),
-        FontWeight.w900,
+      canvas.drawLine(
+        Offset(center.dx + bodyW + 7, lineY),
+        Offset(center.dx + bodyW + 16, lineY),
+        sidePaint,
       );
       return;
     }

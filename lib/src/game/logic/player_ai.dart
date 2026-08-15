@@ -67,6 +67,21 @@ class PlayerAi {
 
     var finalTarget = target;
     if (ball.owner != null && ball.owner!.teamId == team.id) {
+      // Our keeper caught the ball: defenders and midfielders come close
+      // to offer a short, open pass; attackers stay forward.
+      if (ball.owner!.isGoalkeeper &&
+          engine.isInPenaltyBox(ball.owner!.pos, team.id)) {
+        if (player.role.isDefender ||
+            player.role == PlayerRole.midfieldLeft ||
+            player.role == PlayerRole.midfieldRight) {
+          final lane = (player.number % 3) - 1;
+          final target = ball.owner!.pos -
+              Vec2(team.attackDirection * 30, 0) +
+              Vec2(0, lane * 52.0);
+          engine.moveTowards(player, target, 1.0, dt);
+          return;
+        }
+      }
       final lineX = _secondLastDefenderLine(opponent, team.attackDirection);
       final beyondLine = team.attackDirection == 1
           ? player.pos.x > lineX - 6
@@ -121,7 +136,33 @@ class PlayerAi {
       }
     } else if (ball.owner != null && ball.owner!.teamId != team.id) {
       if (engine.shouldWaitForKeeperRelease(team)) {
-        finalTarget = _keeperReleaseWaitTarget(player, team, opponent, engine);
+        // The opponent keeper has the ball: attackers only press him when
+        // one of his own defenders is standing close to him. Otherwise
+        // everyone holds the release-wait position.
+        final keeper = ball.owner!;
+        final keeperTeam = engine.teamById(keeper.teamId);
+        final defenderNear = keeperTeam.players.any(
+          (mate) =>
+              !mate.isGoalkeeper &&
+              !mate.isSentOff &&
+              mate.pos.distanceTo(keeper.pos) < 85,
+        );
+        final nearestChaser = team.closestTo(
+          keeper.pos,
+          includeGoalkeeper: false,
+        );
+        if (defenderNear &&
+            nearestChaser == player &&
+            player.role.isAttacker) {
+          finalTarget = keeper.pos - Vec2(team.attackDirection * 14, 0);
+        } else {
+          finalTarget = _keeperReleaseWaitTarget(
+            player,
+            team,
+            opponent,
+            engine,
+          );
+        }
       } else {
         if (emergencyDrop) {
           finalTarget = _attackerDefensiveTarget(player, team, engine);

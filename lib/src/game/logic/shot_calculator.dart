@@ -80,11 +80,13 @@ class ShotCalculator {
     final lateralError = _gaussian() * sigmaPixels;
 
     final baseHeight = _baseTargetHeight(context);
+    // Height error is kept smaller so shots do not constantly clip the
+    // crossbar band; missing high is possible but less frequent.
     final heightSigma = (baseSigma *
-            (1.15 + context.powerInput * 0.85) /
+            (1.05 + context.powerInput * 0.72) /
             math.sqrt(conditions) *
-            (1.12 - stats.balance * 0.28))
-        .clamp(0.025, 1.35)
+            (1.08 - stats.balance * 0.26))
+        .clamp(0.02, 1.15)
         .toDouble();
     final heightError = _gaussian() * heightSigma;
     final leanLift = context.bodyLean.clamp(-1.0, 1.0) * 0.52;

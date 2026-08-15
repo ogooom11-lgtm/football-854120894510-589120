@@ -580,13 +580,78 @@ class MatchEngine {
     }
   }
 
+  /// Auto-switch of the controlled player. When enabled (default) the
+  /// game always controls the best player (ball owner when attacking, the
+  /// closest chaser when defending). When disabled the player stays on
+  /// his chosen man and switches manually with C.
+  bool autoSwitchEnabled = true;
+  final Map<TeamId, String> _manualControlledPlayerIds = <TeamId, String>{};
+
+  bool toggleAutoSwitch() {
+    autoSwitchEnabled = !autoSwitchEnabled;
+    return autoSwitchEnabled;
+  }
+
   PlayerGame controlledPlayer(TeamId id) {
     final team = teamById(id);
+    // When the team owns the ball, control is always the ball owner.
+    if (ball.owner != null && ball.owner!.teamId == id) {
+      return ball.owner!;
+    }
+    // Manual mode: stick to the player the human selected (C key).
+    if (!autoSwitchEnabled) {
+      final manualId = _manualControlledPlayerIds[id];
+      if (manualId != null) {
+        final manual = team.players.where(
+          (player) =>
+              player.id == manualId &&
+              !player.isSentOff &&
+              player.manualOverride <= 0,
+        );
+        if (manual.isNotEmpty) {
+          return manual.first;
+        }
+      }
+    }
     final includeGoalkeeper =
         ball.owner == team.goalkeeper ||
         team.goalkeeper.pos.distanceTo(ball.pos) <
             GameConstants.goalkeeperRadius + GameConstants.ballRadius + 16;
     return team.closestTo(ball.pos, includeGoalkeeper: includeGoalkeeper);
+  }
+
+  /// Switches the controlled player of [id] to the NEXT best man: the next
+  /// player who can meet the opponent carrier / ball. When the team owns
+  /// the ball the ball owner is always returned.
+  PlayerGame switchControlledPlayer(TeamId id) {
+    final team = teamById(id);
+    if (ball.owner != null && ball.owner!.teamId == id) {
+      final owner = ball.owner!;
+      _manualControlledPlayerIds[id] = owner.id;
+      return owner;
+    }
+    final anchor = ball.owner != null ? ball.owner!.pos : ball.pos;
+    final candidates = team.players
+        .where(
+          (player) => !player.isSentOff && !player.isGoalkeeper,
+        )
+        .toList()
+      ..sort(
+        (a, b) => a.pos
+            .distanceTo(anchor)
+            .compareTo(b.pos.distanceTo(anchor)),
+      );
+    if (candidates.isEmpty) {
+      return controlledPlayer(id);
+    }
+    final current = controlledPlayer(id);
+    var currentIndex = candidates.indexWhere((p) => p.id == current.id);
+    if (currentIndex < 0) {
+      currentIndex = -1;
+    }
+    final next = candidates[(currentIndex + 1) % candidates.length];
+    _manualControlledPlayerIds[id] = next.id;
+    return next;
   }
 
   void manualKick(
@@ -999,6 +1064,7 @@ class MatchEngine {
     final candidates = team.players.where(
       (mate) => mate != keeper && !mate.isGoalkeeper && !mate.isSentOff,
     );
+    final opponent = opponentOf(team);
     final preferred = high
         ? candidates.where(
             (mate) => mate.role.isAttacker || mate.role.isWide,
@@ -1011,12 +1077,21 @@ class MatchEngine {
                 mate.role == PlayerRole.sweeper,
           );
     final target =
-        chooseBestPass(
-          keeper,
-          preferred.isEmpty ? candidates : preferred,
-          preferForward: true,
-        ) ??
-        team.closestTo(keeper.homePos, includeGoalkeeper: false);
+        // Short distribution: pass to the nearest OPEN teammate (the one
+        // with no opponent marking him). If everyone is marked, fall back
+        // to the nearest candidate.
+        high
+        ? (chooseBestPass(
+                keeper,
+                preferred.isEmpty ? candidates : preferred,
+                preferForward: true,
+              ) ??
+              team.closestTo(keeper.homePos, includeGoalkeeper: false))
+        : _nearestOpenTeammate(
+            keeper,
+            preferred.isEmpty ? candidates : preferred,
+            opponent,
+          );
     final forward = Vec2(team.attackDirection.toDouble(), 0);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
@@ -1039,6 +1114,37 @@ class MatchEngine {
       ..manualOverride = 0.42
       ..lastDirection = forward;
     return ball.owner == null && ball.vel.length > 0.1;
+  }
+
+  /// Nearest teammate who is open (no opponent within ~55 px). If all are
+  /// marked, returns the closest candidate regardless.
+  PlayerGame _nearestOpenTeammate(
+    PlayerGame passer,
+    Iterable<PlayerGame> candidates,
+    TeamGame opponent,
+  ) {
+    PlayerGame? openBest;
+    var openDistance = double.infinity;
+    PlayerGame? anyBest;
+    var anyDistance = double.infinity;
+    for (final mate in candidates) {
+      if (mate == passer || mate.isSentOff) {
+        continue;
+      }
+      final distance = passer.pos.distanceTo(mate.pos);
+      final nearestOpponent = opponent.players
+          .map((opp) => opp.pos.distanceTo(mate.pos))
+          .reduce(math.min);
+      if (nearestOpponent > 55 && distance < openDistance) {
+        openDistance = distance;
+        openBest = mate;
+      }
+      if (distance < anyDistance) {
+        anyDistance = distance;
+        anyBest = mate;
+      }
+    }
+    return openBest ?? anyBest ?? team.closestTo(passer.homePos, includeGoalkeeper: false);
   }
 
   void releaseFromPlayer(
@@ -1650,8 +1756,9 @@ class MatchEngine {
       ..spin *= 0.48
       ..trajectoryId += 1;
     final stats = keeper.profile.goalkeeperStats;
-    final recoverySeconds = (1.76 - stats.diving * 0.23 - stats.reaction * 0.08)
-        .clamp(1.42, 1.68)
+    // The keeper gets up fast — about three quarters of a second.
+    final recoverySeconds = (0.82 - stats.diving * 0.06 - stats.reaction * 0.03)
+        .clamp(0.60, 0.82)
         .toDouble();
     keeper
       ..keeperState = 'kurtaris'
@@ -1693,8 +1800,8 @@ class MatchEngine {
       ..curve *= 0.22
       ..spin *= 0.38
       ..trajectoryId += 1;
-    final recovery = (1.68 - keeper.profile.goalkeeperStats.jumping * 0.20)
-        .clamp(1.40, 1.62)
+    final recovery = (0.80 - keeper.profile.goalkeeperStats.jumping * 0.08)
+        .clamp(0.60, 0.80)
         .toDouble();
     keeper
       ..keeperState = 'kurtaris'
@@ -1957,19 +2064,44 @@ class MatchEngine {
         ball.pos.y + GameConstants.ballRadius < goalBottom;
     if (inGoalMouth && !ball.goalLineMissCommitted) {
       final hitsCrossbar =
-          ball.heightMeters >= GameConstants.crossbarMinMeters - 0.16 &&
-          ball.heightMeters <= GameConstants.crossbarMaxMeters + 0.16;
+          ball.heightMeters >= GameConstants.crossbarMinMeters - 0.08 &&
+          ball.heightMeters <= GameConstants.crossbarMaxMeters + 0.08;
       if (hitsCrossbar) {
         shotDiagnostics.crossbars += 1;
+        final scoringTeam = crossedLeft
+            ? teamBySide(TeamSide.right)
+            : teamBySide(TeamSide.left);
+        final overLineX = crossedLeft
+            ? GameConstants.leftBound - GameConstants.ballRadius - 0.5
+            : GameConstants.rightBound + GameConstants.ballRadius + 0.5;
+        final backInX = crossedLeft
+            ? GameConstants.leftBound + GameConstants.ballRadius + 0.5
+            : GameConstants.rightBound - GameConstants.ballRadius - 0.5;
+        final roll = random.nextDouble();
+        if (roll < 0.30) {
+          // The crossbar rebounds the ball INTO the goal.
+          ball
+            ..pos = Vec2(overLineX, ball.pos.y)
+            ..vel = Vec2(crossedLeft ? -0.8 : 0.8, 0)
+            ..verticalVelocity = 0
+            ..heightMeters = math.max(0.1, ball.heightMeters - 1.2);
+          _scoreGoal(scoringTeam);
+          return;
+        }
+        if (roll < 0.60) {
+          // The crossbar sends the ball OVER the bar — it goes out (miss).
+          ball
+            ..pos = Vec2(overLineX, ball.pos.y)
+            ..vel = Vec2(crossedLeft ? -1.4 : 1.4, (random.nextDouble() - 0.5))
+            ..verticalVelocity = 3.4
+            ..goalLineMissCommitted = true;
+          return;
+        }
+        // Otherwise it bounces back into play.
         ball
-          ..pos = Vec2(
-            crossedLeft
-                ? GameConstants.leftBound + GameConstants.ballRadius + 0.5
-                : GameConstants.rightBound - GameConstants.ballRadius - 0.5,
-            ball.pos.y,
-          )
-          ..vel = Vec2(-ball.vel.x * 0.58, ball.vel.y * 0.74)
-          ..verticalVelocity = -math.max(1.1, ball.verticalVelocity.abs() * 0.48);
+          ..pos = Vec2(backInX, ball.pos.y)
+          ..vel = Vec2(-ball.vel.x * 0.62, ball.vel.y * 0.8)
+          ..verticalVelocity = -math.max(1.2, ball.verticalVelocity.abs() * 0.5);
         return;
       }
       if (ball.heightMeters < GameConstants.crossbarMinMeters) {
@@ -2215,9 +2347,11 @@ class MatchEngine {
           : defending.goalkeeper.jumpAnimationTimer > 0.10
           ? 'atlayis'
           : 'yerde';
-      final penaltyRecovery = 1.70 -
-          defending.goalkeeper.profile.goalkeeperStats.diving * 0.18 -
-          defending.goalkeeper.profile.goalkeeperStats.reaction * 0.06;
+      final penaltyRecovery = (0.88 -
+              defending.goalkeeper.profile.goalkeeperStats.diving * 0.08 -
+              defending.goalkeeper.profile.goalkeeperStats.reaction * 0.04)
+          .clamp(0.55, 0.88)
+          .toDouble();
       defending.goalkeeper.keeperGroundTimer = math.max(
         defending.goalkeeper.keeperGroundTimer,
         penaltyRecovery,
