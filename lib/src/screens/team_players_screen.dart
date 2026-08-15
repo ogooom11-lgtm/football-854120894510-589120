@@ -349,6 +349,7 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
                 Text(
                   'OVR ${player.effectiveOverall.toStringAsFixed(0)} | '
                   '${role?.turkishName ?? 'Mevki yok'} | '
+                  'Deger ${player.marketValueText} | '
                   '${isStarter ? 'ILK 11' : 'YEDEK'}'
                   '${player.isSuspended ? ' | CEZALI ${player.suspendedMatchesRemaining} mac' : ''}'
                   '${player.isInjured ? ' | SAKAT ${player.injuredDaysRemaining} gun' : ''}',

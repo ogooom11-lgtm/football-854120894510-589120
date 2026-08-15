@@ -18,6 +18,7 @@ import '../game/models/team_profile.dart';
 import '../game/models/team_setup.dart';
 import '../storage/roster_storage.dart';
 import 'account_detail_screen.dart';
+import 'free_agents_screen.dart';
 import 'game_screen.dart';
 import 'team_players_screen.dart';
 
@@ -1515,6 +1516,15 @@ class _SetupScreenState extends State<SetupScreen> {
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
                 ),
+                OutlinedButton.icon(
+                  onPressed: _openFreeAgents,
+                  icon: const Icon(Icons.person_search, size: 18),
+                  label: const Text('Serbest oyuncular'),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 SizedBox(
                   width: 240,
                   child: TextField(
@@ -1660,7 +1670,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 Text(
-                  'Rey:${profile.effectiveOverall.toStringAsFixed(0)} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Sut:${profile.shotsOnTarget}/${profile.shots} Kacan:${profile.missedChances}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
+                  'Rey:${profile.effectiveOverall.toStringAsFixed(0)} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Sut:${profile.shotsOnTarget}/${profile.shots} Kacan:${profile.missedChances} Deger:${profile.marketValueText}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11, color: Colors.white54),
@@ -2090,6 +2100,59 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 ),
               const SizedBox(width: 10),
+              PopupMenuButton<String>(
+                tooltip: 'Piyasa degerlerini guncelle',
+                onSelected: (value) =>
+                    _updateMarketValues(strong: value == 'strong'),
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'light',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.trending_up),
+                      title: Text('Hafif guncelleme'),
+                      subtitle: Text('Son maclara gore kucuk degisimler'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'strong',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.trending_up),
+                      title: Text('Guclu guncelleme'),
+                      subtitle: Text('Kariyere gore buyuk degisimler'),
+                    ),
+                  ),
+                ],
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xff00d084).withValues(alpha: 0.6),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.attach_money, size: 18),
+                      SizedBox(width: 6),
+                      Text(
+                        'Piyasa Guncelle',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(Icons.arrow_drop_down, size: 18),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               TextButton.icon(
                 onPressed: _changeAdminPassword,
                 icon: const Icon(Icons.password),
@@ -2466,6 +2529,40 @@ class _SetupScreenState extends State<SetupScreen> {
     _load();
   }
 
+  Future<void> _openFreeAgents() async {
+    await _save();
+    if (!mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const FreeAgentsScreen()));
+    _load();
+  }
+
+  /// Applies the piyasa degeri update to every player. The light mode uses
+  /// only the last few matches with small swings; the strong mode uses the
+  /// whole career with bigger swings.
+  Future<void> _updateMarketValues({required bool strong}) async {
+    final data = _data;
+    if (data == null) return;
+    var up = 0;
+    var down = 0;
+    setState(() {
+      for (final player in data.players) {
+        final before = player.marketValue;
+        player.recalculateMarketValue(strong: strong);
+        if (player.marketValue > before + 0.5) {
+          up += 1;
+        } else if (player.marketValue < before - 0.5) {
+          down += 1;
+        }
+      }
+    });
+    await _save();
+    _showMessage(
+      'Piyasa guncellendi (${strong ? 'guclu' : 'hafif'}): $up artti, $down dustu',
+    );
+  }
+
   Widget _adminPlayerCard(PlayerProfile profile) {
     return ExpansionTile(
       leading: Icon(profile.isGoalkeeper ? Icons.back_hand : Icons.person),
@@ -2473,7 +2570,7 @@ class _SetupScreenState extends State<SetupScreen> {
         '${profile.name}  ${profile.effectiveOverall.toStringAsFixed(0)}',
       ),
       subtitle: Text(
-        '${profile.heightMeters.toStringAsFixed(2)} m | mac ${profile.matchesPlayed} | puan ${profile.points.toStringAsFixed(1)}',
+        '${profile.heightMeters.toStringAsFixed(2)} m | mac ${profile.matchesPlayed} | puan ${profile.points.toStringAsFixed(1)} | deger ${profile.marketValueText}',
       ),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [

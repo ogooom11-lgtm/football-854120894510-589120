@@ -4259,6 +4259,9 @@ class MatchEngine {
       final durationFactor = (1.34 - resistance * 0.72).clamp(0.62, 1.30);
       final days = (rawDays * durationFactor).round().clamp(4, 90).toInt();
       victim.profile.injuredDaysRemaining = days;
+      // The recovery clock starts now: every real day reduces the injury
+      // by one day.
+      victim.profile.injuryUpdatedAt = DateTime.now().millisecondsSinceEpoch;
       victim.isInjuredInMatch = true;
       injuryEvents.add(
         InjuryEvent(

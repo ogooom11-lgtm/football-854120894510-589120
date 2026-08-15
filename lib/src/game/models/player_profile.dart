@@ -171,6 +171,8 @@ class PlayerProfile {
     this.injuredDaysRemaining = 0,
     this.fitness = 1.0,
     this.fitnessUpdatedAt = 0,
+    this.marketValue = 1000000000,
+    this.injuryUpdatedAt = 0,
     List<PlayerMatchRecord>? matchHistory,
   }) : matchHistory = matchHistory ?? <PlayerMatchRecord>[];
 
@@ -261,6 +263,15 @@ class PlayerProfile {
   double fitness;
   int fitnessUpdatedAt;
 
+  /// Piyasa degeri (market value). Every player starts at 1 billion and the
+  /// value goes up/down based on his performances when the market update
+  /// is applied from the admin page.
+  double marketValue;
+
+  /// Timestamp (ms) of the last daily injury recovery, so injured players
+  /// lose one injury day per real day that passes.
+  int injuryUpdatedAt;
+
   final List<PlayerMatchRecord> matchHistory;
 
   bool get isInjured => injuredDaysRemaining > 0;
@@ -296,6 +307,102 @@ class PlayerProfile {
     final dailyRecovery = 0.14 + staminaSkill * 0.22;
     fitness = (fitness + days * dailyRecovery).clamp(0.18, 1.0).toDouble();
     fitnessUpdatedAt = now.millisecondsSinceEpoch;
+  }
+
+  /// Every real day that passes removes one injury day. Returns true when
+  /// the remaining injury days actually changed (so the caller can save).
+  bool recoverInjuryDays(DateTime now) {
+    final nowMs = now.millisecondsSinceEpoch;
+    if (injuredDaysRemaining <= 0) {
+      injuryUpdatedAt = nowMs;
+      return false;
+    }
+    if (injuryUpdatedAt <= 0) {
+      injuryUpdatedAt = nowMs;
+      return false;
+    }
+    final elapsedDays =
+        ((nowMs - injuryUpdatedAt) / Duration.millisecondsPerDay).floor();
+    if (elapsedDays <= 0) {
+      return false;
+    }
+    injuredDaysRemaining = math.max(
+      0,
+      injuredDaysRemaining - elapsedDays,
+    ).toInt();
+    injuryUpdatedAt = nowMs;
+    return true;
+  }
+
+  /// Base market value for every player: 1 billion.
+  static const double baseMarketValue = 1000000000;
+  static const double minMarketValue = 1000;
+  static const double maxMarketValue = 100000000000;
+
+  /// Recalculates the piyasa degeri based on the player's performances.
+  /// [strong] applies bigger swings using the full career; the light mode
+  /// only looks at the last few matches and makes small adjustments.
+  /// Players who have never played stay at exactly 1 billion.
+  void recalculateMarketValue({required bool strong}) {
+    if (matchesPlayed <= 0) {
+      marketValue = baseMarketValue;
+      return;
+    }
+    final ovr = effectiveOverall;
+    final skillFactor = (0.50 + (ovr - 50) * 0.032).clamp(0.35, 2.6);
+    final recent = matchHistory.take(strong ? 10 : 5).toList();
+    var formFactor = 1.0;
+    if (recent.isNotEmpty) {
+      final avgRating =
+          recent.map((r) => r.rating).reduce((a, b) => a + b) / recent.length;
+      final delta = avgRating - 6.0;
+      formFactor = strong ? 1 + delta * 0.22 : 1 + delta * 0.08;
+    }
+    final minutes = math.max(1, minutesPlayed);
+    final games = math.max(1, matchesPlayed);
+    final goalsPer90 = goals / (minutes / 90);
+    final assistsPer90 = assists / (minutes / 90);
+    final production = isGoalkeeper
+        ? saves / (minutes / 90) * 0.35 + (points / games) * 0.15
+        : goalsPer90 * 1.1 + assistsPer90 * 0.55 + (points / games) * 0.10;
+    final perfFactor = strong ? 1 + production * 0.30 : 1 + production * 0.10;
+    final careerFactor =
+        strong ? (1 + (points / games - 6.0) * 0.05) : 1.0;
+    final value =
+        baseMarketValue *
+        skillFactor *
+        formFactor *
+        perfFactor *
+        careerFactor;
+    marketValue = value.clamp(minMarketValue, maxMarketValue).toDouble();
+  }
+
+  /// Compact market value text: "1.00 Mr" (milyar), "850 Mn" (milyon),
+  /// "12 B" (bin).
+  String get marketValueText {
+    final v = marketValue;
+    if (v >= 1000000000) {
+      final b = v / 1000000000;
+      return '${b.toStringAsFixed(b >= 10 ? 0 : 2)} Mr';
+    }
+    if (v >= 1000000) {
+      final m = v / 1000000;
+      return '${m.toStringAsFixed(m >= 10 ? 0 : 1)} Mn';
+    }
+    return '${v.round()} B';
+  }
+
+  /// Full market value with thousand separators, e.g. 1.250.000.000.
+  String get marketValueFull {
+    final digits = marketValue.round().toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) {
+        buffer.write('.');
+      }
+      buffer.write(digits[i]);
+    }
+    return buffer.toString();
   }
 
   double get effectiveOverall {
@@ -569,6 +676,8 @@ class PlayerProfile {
       injuredDaysRemaining: (json['injuredDaysRemaining'] as num?)?.toInt() ?? 0,
       fitness: (json['fitness'] as num?)?.toDouble() ?? 1.0,
       fitnessUpdatedAt: (json['fitnessUpdatedAt'] as num?)?.toInt() ?? 0,
+      marketValue: (json['marketValue'] as num?)?.toDouble() ?? 1000000000,
+      injuryUpdatedAt: (json['injuryUpdatedAt'] as num?)?.toInt() ?? 0,
       matchHistory: (json['matchHistory'] as List<dynamic>? ?? const [])
           .map((item) =>
               PlayerMatchRecord.fromJson(item as Map<String, dynamic>))
@@ -660,6 +769,8 @@ class PlayerProfile {
         'injuredDaysRemaining': injuredDaysRemaining,
         'fitness': double.parse(fitness.toStringAsFixed(3)),
         'fitnessUpdatedAt': fitnessUpdatedAt,
+        'marketValue': marketValue.round(),
+        'injuryUpdatedAt': injuryUpdatedAt,
         'matchHistory': matchHistory.map((r) => r.toJson()).toList(),
       };
 }

@@ -629,6 +629,94 @@ void main() {
     });
   });
 
+  group('market value', () {
+    test('fresh players start at 1 billion and stay until they play', () {
+      final player = PlayerProfile.generated(name: 'New', isGoalkeeper: false);
+      expect(player.marketValue, 1000000000);
+      player.recalculateMarketValue(strong: false);
+      expect(player.marketValue, 1000000000);
+      player.recalculateMarketValue(strong: true);
+      expect(player.marketValue, 1000000000);
+    });
+
+    test('good performances raise the value, strong moves it more', () {
+      final player = PlayerProfile.generated(name: 'Star', isGoalkeeper: false);
+      player
+        ..matchesPlayed = 10
+        ..minutesPlayed = 900
+        ..goals = 12
+        ..assists = 4
+        ..points = 82
+        ..addMatchRecord(
+          PlayerMatchRecord(
+            matchId: 'm1',
+            teamName: 'T',
+            opponentName: 'O',
+            scoreText: '2-0',
+            minutes: 90,
+            goals: 2,
+            assists: 1,
+            passes: 30,
+            successfulPasses: 25,
+            dribbles: 4,
+            successfulDribbles: 3,
+            tackles: 1,
+            shots: 5,
+            shotsOnTarget: 3,
+            missedChances: 1,
+            clearances: 0,
+            saves: 0,
+            foulsCommitted: 1,
+            foulsReceived: 2,
+            yellowCards: 0,
+            redCards: 0,
+            rating: 8.5,
+            injured: false,
+          ),
+        );
+      player.recalculateMarketValue(strong: false);
+      final lightValue = player.marketValue;
+      expect(lightValue, greaterThan(1000000000));
+      player.recalculateMarketValue(strong: true);
+      expect(player.marketValue, greaterThan(lightValue));
+      expect(player.marketValueText, isNotEmpty);
+      expect(player.marketValueFull, isNotEmpty);
+    });
+
+    test('market value survives JSON round trip', () {
+      final player = PlayerProfile.generated(name: 'P', isGoalkeeper: true)
+        ..marketValue = 7500000000;
+      final restored = PlayerProfile.fromJson(player.toJson());
+      expect(restored.marketValue, 7500000000);
+    });
+  });
+
+  group('daily injury recovery', () {
+    test('injury days decrease one per real day', () {
+      final player = PlayerProfile.generated(name: 'Hasta', isGoalkeeper: false);
+      final now = DateTime.now();
+      player
+        ..injuredDaysRemaining = 10
+        ..injuryUpdatedAt = now
+            .subtract(const Duration(days: 3))
+            .millisecondsSinceEpoch;
+      expect(player.recoverInjuryDays(now), isTrue);
+      expect(player.injuredDaysRemaining, 7);
+      // Same day again: no double recovery.
+      expect(player.recoverInjuryDays(now), isFalse);
+      expect(player.injuredDaysRemaining, 7);
+    });
+
+    test('injury timestamp survives JSON round trip', () {
+      final player = PlayerProfile.generated(name: 'Hasta', isGoalkeeper: false)
+        ..injuredDaysRemaining = 5
+        ..injuryUpdatedAt = 123456789;
+      final restored = PlayerProfile.fromJson(player.toJson());
+      expect(restored.injuredDaysRemaining, 5);
+      expect(restored.injuryUpdatedAt, 123456789);
+    });
+  });
+
   group('ban fields for penalties page', () {
     test('banMatches/isBanned stay in sync with suspension', () {
       final player = PlayerProfile.generated(

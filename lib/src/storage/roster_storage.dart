@@ -453,6 +453,21 @@ class RosterStorage {
       if (data.players.isEmpty) {
         return SavedGameData.defaults();
       }
+      // Daily recovery: injured players lose one injury day per real day
+      // that passed since the last time the game was opened, and fitness
+      // keeps recovering. Persisted only when something actually changed.
+      final now = DateTime.now();
+      var needsSave = false;
+      for (final player in data.players) {
+        if (player.fitness < 1.0 || player.injuredDaysRemaining > 0) {
+          needsSave = true;
+        }
+        player.recoverFitness(now);
+        player.recoverInjuryDays(now);
+      }
+      if (needsSave) {
+        await save(data);
+      }
       return data;
     } catch (_) {
       return SavedGameData.defaults();
