@@ -3185,6 +3185,35 @@ class MatchEngine {
     substitutionPaused = value;
   }
 
+  /// Reverts the last substitution of [id]'s team (undo from the
+  /// substitution panel).
+  bool undoLastSubstitutionFor(TeamId id) {
+    final team = teamById(id);
+    final last = team.substitutionLog.isEmpty
+        ? null
+        : team.substitutionLog.last;
+    final ok = team.undoLastSubstitution();
+    if (!ok) {
+      return false;
+    }
+    // If the ball was with the player who just came on, give it back to
+    // the restored player so play does not continue with a bench player.
+    if (last != null && ball.owner == last.incoming) {
+      if (last.outIndex >= 0 && last.outIndex < team.players.length) {
+        ball.attachTo(team.players[last.outIndex]);
+      } else {
+        ball.owner = null;
+      }
+    }
+    _startPause(
+      '${team.name}: degisiklik geri alindi',
+      '${team.substitutionsUsed}/${team.substitutionLimit}',
+      0.6,
+      null,
+    );
+    return true;
+  }
+
   FinishedMatchSummary? createFinishedSummary() {
     if (!finished) {
       return null;

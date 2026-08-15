@@ -129,7 +129,13 @@ class FieldPainter {
     final left = GameConstants.leftBound;
     final right = GameConstants.rightBound;
     const spotDistance = 92.0;
-    const arcRadius = 42.0;
+    // Penalty arc radius (like the real 9.15 m D): the arc is the part of
+    // the circle that bulges OUT of the penalty box, centred on the spot.
+    const arcRadius = 73.0;
+    // Half-angle between the goal-line direction and the box edge.
+    final arcHalfAngle = math.acos(
+      ((boxWidth - spotDistance) / arcRadius).clamp(-1.0, 1.0),
+    );
 
     for (final side in [left, right]) {
       final isLeft = side == left;
@@ -154,14 +160,21 @@ class FieldPainter {
       // Penalty spot.
       final spotX = isLeft ? side + spotDistance : side - spotDistance;
       canvas.drawCircle(Offset(spotX, midY), 3.4, spotPaint);
-      // Penalty arc (bulging into the pitch).
+      // Penalty arc: only the bulge outside the penalty area is drawn.
+      // Left side bulges toward the pitch (angle 0 = right/positive x),
+      // right side bulges toward the pitch as well (angle pi = left).
       final arcRect = Rect.fromCircle(
         center: Offset(spotX, midY),
         radius: arcRadius,
       );
-      final start = isLeft ? -math.pi / 4 : math.pi * 0.75;
-      final sweep = math.pi / 2;
-      canvas.drawArc(arcRect, start, sweep, false, thinLine);
+      final startAngle = isLeft ? -arcHalfAngle : math.pi - arcHalfAngle;
+      canvas.drawArc(
+        arcRect,
+        startAngle,
+        arcHalfAngle * 2,
+        false,
+        thinLine,
+      );
     }
   }
 

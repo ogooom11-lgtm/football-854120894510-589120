@@ -495,7 +495,7 @@ class _GameScreenState extends State<GameScreen>
     }
     if (_engine.isTeamAiControlled(victim.teamId)) {
       _engine.popInjuryForcedSub();
-      _engine.substitute(victim.teamId, outIndex, benchIndex);
+      _engine.substitute(victim.teamId, outIndex, benchIndex, minute: _engine.minute);
       return;
     }
     _openSubstitution(victim.teamId);
@@ -586,7 +586,7 @@ class _GameScreenState extends State<GameScreen>
         return true;
       }
       if (team.bench.isNotEmpty &&
-          _engine.substitute(teamId, _subOutIndex, _subBenchIndex)) {
+          _engine.substitute(teamId, _subOutIndex, _subBenchIndex, minute: _engine.minute)) {
         if (_injurySubActive) _engine.popInjuryForcedSub();
         _engine.setSubstitutionPaused(false);
         _subTeam = null;
@@ -1560,6 +1560,104 @@ class _GameScreenState extends State<GameScreen>
                                         },
                                       ),
                               ),
+                              if (team.substitutionLog.isNotEmpty) ...[
+                                const Divider(height: 1),
+                                Container(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 118,
+                                  ),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    12,
+                                    8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(
+                                      alpha: 0.03,
+                                    ),
+                                    border: Border(
+                                      top: BorderSide(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.07,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Expanded(
+                                            child: Text(
+                                              'Cikanlar',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w900,
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          ),
+                                          if (!_injurySubActive &&
+                                              team.substitutionLog
+                                                  .isNotEmpty)
+                                            TextButton.icon(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _engine
+                                                      .undoLastSubstitutionFor(
+                                                        team.id,
+                                                      );
+                                                });
+                                              },
+                                              icon: const Icon(
+                                                Icons.undo,
+                                                size: 15,
+                                              ),
+                                              label: const Text(
+                                                'Geri al',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                              style: TextButton.styleFrom(
+                                                visualDensity: VisualDensity
+                                                    .compact,
+                                                padding: const EdgeInsets
+                                                    .symmetric(
+                                                  horizontal: 8,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          itemCount:
+                                              team.substitutionLog.length,
+                                          itemBuilder: (context, index) {
+                                            final record =
+                                                team.substitutionLog[index];
+                                            return Text(
+                                              '${record.outgoing.profile.name} → ${record.incoming.profile.name}'
+                                              ' (${record.minute.ceil()}\x27)',
+                                              maxLines: 1,
+                                              overflow:
+                                                  TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color: Colors.white60,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                               Padding(
                                 padding: const EdgeInsets.all(10),
                                 child: SizedBox(
@@ -1806,7 +1904,7 @@ class _GameScreenState extends State<GameScreen>
     }
     final benchIndex = team.bench.indexOf(dragged);
     if (benchIndex < 0) return;
-    final changed = _engine.substitute(team.id, targetSlot, benchIndex);
+    final changed = _engine.substitute(team.id, targetSlot, benchIndex, minute: _engine.minute);
     if (!changed) return;
     if (_injurySubActive) {
       _engine.popInjuryForcedSub();

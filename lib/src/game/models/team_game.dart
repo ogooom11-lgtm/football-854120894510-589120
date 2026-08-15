@@ -13,6 +13,24 @@ import 'player_game.dart';
 import 'player_profile.dart';
 import 'team_setup.dart';
 
+/// A completed substitution, kept so it can be undone and so the game can
+/// show who left the pitch.
+class SubstitutionRecord {
+  SubstitutionRecord({
+    required this.outIndex,
+    required this.outgoing,
+    required this.incoming,
+    required this.benchIndex,
+    required this.minute,
+  });
+
+  final int outIndex;
+  final PlayerGame outgoing;
+  final PlayerGame incoming;
+  final int benchIndex;
+  final double minute;
+}
+
 class TeamGame {
   TeamGame({
     required this.id,
@@ -38,6 +56,7 @@ class TeamGame {
   List<PlayerGame> players;
   final List<PlayerGame> bench;
   final List<PlayerGame> substitutedOut = [];
+  final List<SubstitutionRecord> substitutionLog = [];
   int score = 0;
   int substitutionsUsed = 0;
   int bonusSubstitutions = 0;
@@ -293,7 +312,11 @@ class TeamGame {
     return true;
   }
 
-  bool substitute(int outIndex, int benchIndex) {
+  bool substitute(
+    int outIndex,
+    int benchIndex, {
+    double minute = 0,
+  }) {
     if (substitutionsUsed >= substitutionLimit ||
         outIndex < 0 ||
         outIndex >= players.length ||
@@ -323,8 +346,37 @@ class TeamGame {
           ..stamina = incoming.stamina;
     players[outIndex] = replacement;
     substitutedOut.add(outgoing);
+    substitutionLog.add(
+      SubstitutionRecord(
+        outIndex: outIndex,
+        outgoing: outgoing,
+        incoming: replacement,
+        benchIndex: benchIndex,
+        minute: minute,
+      ),
+    );
     bench.removeAt(benchIndex);
     substitutionsUsed += 1;
+    resetDirections();
+    return true;
+  }
+
+  /// Reverts the most recent substitution: the outgoing player returns to
+  /// his slot and the substitute goes back to the bench.
+  bool undoLastSubstitution() {
+    if (substitutionLog.isEmpty) {
+      return false;
+    }
+    final record = substitutionLog.removeLast();
+    if (record.outIndex < 0 || record.outIndex >= players.length) {
+      substitutionLog.insert(0, record);
+      return false;
+    }
+    players[record.outIndex] = record.outgoing;
+    final benchIndex = record.benchIndex.clamp(0, bench.length).toInt();
+    bench.insert(benchIndex, record.incoming);
+    substitutionsUsed = math.max(0, substitutionsUsed - 1);
+    substitutedOut.remove(record.outgoing);
     resetDirections();
     return true;
   }

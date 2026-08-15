@@ -278,6 +278,11 @@ class PlayerProfile {
   bool get isSuspended => suspendedMatchesRemaining > 0;
   bool get isUnavailable => isInjured || isSuspended;
 
+  /// Isabetli sut yuzdesi: shots on target / total shots.
+  int get shootingAccuracyPercent => shots == 0
+      ? 0
+      : (shotsOnTarget * 100 / shots).round().clamp(0, 100).toInt();
+
   /// Advances injury recovery and disciplinary suspension by one team match.
   void advanceUnavailableStatusAfterTeamMatch() {
     if (injuredDaysRemaining > 0) {

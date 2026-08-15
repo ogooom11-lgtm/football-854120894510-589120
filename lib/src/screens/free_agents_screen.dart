@@ -267,6 +267,9 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
                       ),
                       Text(
                         'OVR ${player.effectiveOverall.toStringAsFixed(0)}'
+                        ' | Sut gucu ${player.shotPowerRating.toStringAsFixed(0)}'
+                        ' | Sut %${player.shootingAccuracyPercent}'
+                        ' | Hiz ${player.speedRating.toStringAsFixed(0)}'
                         '${player.isSuspended ? ' | CEZALI ${player.suspendedMatchesRemaining} mac' : ''}'
                         '${player.isInjured ? ' | SAKAT ${player.injuredDaysRemaining} gun' : ''}',
                         style: const TextStyle(

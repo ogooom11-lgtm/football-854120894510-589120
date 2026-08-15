@@ -1732,7 +1732,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 Text(
-                  'Rey:${profile.effectiveOverall.toStringAsFixed(0)} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Sut:${profile.shotsOnTarget}/${profile.shots} Kacan:${profile.missedChances} Deger:${profile.marketValueText}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
+                  'Rey:${profile.effectiveOverall.toStringAsFixed(0)} SutGuc:${profile.shotPowerRating.toStringAsFixed(0)} Sut%:${profile.shootingAccuracyPercent} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Deger:${profile.marketValueText}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11, color: Colors.white54),

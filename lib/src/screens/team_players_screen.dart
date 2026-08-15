@@ -348,6 +348,9 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
                 ),
                 Text(
                   'OVR ${player.effectiveOverall.toStringAsFixed(0)} | '
+                  'Sut gucu ${player.shotPowerRating.toStringAsFixed(0)} | '
+                  'Sut %${player.shootingAccuracyPercent} | '
+                  'Hiz ${player.speedRating.toStringAsFixed(0)} | '
                   '${role?.turkishName ?? 'Mevki yok'} | '
                   'Deger ${player.marketValueText} | '
                   '${isStarter ? 'ILK 11' : 'YEDEK'}'

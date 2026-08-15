@@ -43,7 +43,12 @@ class PlayerAi {
     final ball = engine.ball;
     final restartTarget = player.restartTarget;
     if (restartTarget != null) {
-      engine.moveTowards(player, restartTarget, 0.92, dt);
+      engine.moveTowards(player, restartTarget, 1.0, dt);
+      return;
+    }
+    // During the kickoff everyone holds his position in his own half —
+    // nobody advances past the halfway line until the ball is played.
+    if (engine.restartKind == RestartKind.kickoff) {
       return;
     }
     // During a corner the defenders man-mark the nearest attacker so the
@@ -51,7 +56,7 @@ class PlayerAi {
     if (engine.isCornerAttackActiveFor(opponent) && player.role.isDefender) {
       final mark = _cornerMarkTarget(player, opponent, engine);
       if (mark != null) {
-        engine.moveTowards(player, mark, 0.94, dt);
+        engine.moveTowards(player, mark, 1.0, dt);
         _maybeJumpForHighBall(player, engine);
         return;
       }
@@ -169,27 +174,19 @@ class PlayerAi {
     }
 
     _maybeJumpForHighBall(player, engine);
-    // AI players run at their natural speed (same as a controlled player):
-    // the force is close to 1.0 instead of the old slowed-down values.
-    final moveForce = emergencyDrop
-        ? (engine.teamUnderDanger(team) ? 1.0 : 0.94)
-        : team == engine.teamInPossession
-        ? 0.94
-        : 0.97;
-    // Players hurry back to their assigned position when they drifted far
-    // from it — everyone keeps his role shape.
-    final farFromPost =
-        player.pos.distanceTo(finalTarget) > 110 ? 1.05 : 1.0;
+    // AI players run at exactly the same natural speed as a controlled
+    // player (force 1.0 = player.speed), so there is no speed advantage
+    // or disadvantage for the team the human does not control.
     final cautionFactor =
         player.yellowCardsThisMatch > 0 &&
             ball.owner != null &&
             ball.owner!.teamId != team.id
-        ? 0.8
+        ? 0.92
         : 1.0;
     engine.moveTowards(
       player,
       finalTarget,
-      (moveForce * farFromPost * cautionFactor).clamp(0.4, 1.08).toDouble(),
+      (1.0 * cautionFactor).clamp(0.4, 1.0).toDouble(),
       dt,
     );
   }
@@ -283,7 +280,7 @@ class PlayerAi {
                       : 70),
             )
           : player.pos + Vec2(d * 55, 0);
-      engine.moveTowards(player, carryTarget, 0.94, dt);
+      engine.moveTowards(player, carryTarget, 1.0, dt);
       return;
     }
 
@@ -420,7 +417,7 @@ class PlayerAi {
         player.pos.x + team.attackDirection * (nearEndLine ? 18 : 92),
         wingLaneY,
       );
-      engine.moveTowards(player, wingTarget, 0.98, dt);
+      engine.moveTowards(player, wingTarget, 1.0, dt);
       player.aiCooldown = 0.10;
       return;
     }
@@ -574,7 +571,7 @@ class PlayerAi {
       dribbleTarget +=
           (player.pos - nearestOpponent.pos).normalized(Vec2(0, 1)) * 30;
     }
-    engine.moveTowards(player, dribbleTarget, 0.96, dt);
+    engine.moveTowards(player, dribbleTarget, 1.0, dt);
     player.aiCooldown = 0.18 + random.nextDouble() * 0.18;
   }
 

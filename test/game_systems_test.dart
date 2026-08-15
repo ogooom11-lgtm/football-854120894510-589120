@@ -691,6 +691,29 @@ void main() {
     });
   });
 
+  group('substitution undo', () {
+    test('undo restores the outgoing player and refunds the slot', () {
+      final team = MatchEngine(_testMatchSetup()).blueTeam;
+      expect(team.substitutionLog, isEmpty);
+      final outgoing = team.players[1];
+      final benchIndex = team.bench.indexWhere(
+        (player) => !player.profile.isGoalkeeper,
+      );
+      expect(benchIndex, greaterThanOrEqualTo(0));
+      expect(team.substitute(1, benchIndex, minute: 30), isTrue);
+      expect(team.substitutionsUsed, 1);
+      expect(team.substitutionLog.length, 1);
+      expect(team.substitutedOut.length, 1);
+      expect(team.players[1].profile, isNot(outgoing.profile));
+
+      expect(team.undoLastSubstitution(), isTrue);
+      expect(team.substitutionsUsed, 0);
+      expect(team.substitutionLog, isEmpty);
+      expect(team.players[1].profile, outgoing.profile);
+      expect(team.bench.length, greaterThanOrEqualTo(1));
+    });
+  });
+
   group('transfer requests', () {
     test('pending request marks a player as reserved', () {
       final data = SavedGameData.defaults();
