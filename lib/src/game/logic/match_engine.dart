@@ -1091,6 +1091,7 @@ class MatchEngine {
             keeper,
             preferred.isEmpty ? candidates : preferred,
             opponent,
+            team,
           );
     final forward = Vec2(team.attackDirection.toDouble(), 0);
     ball.pos = keeper.pos +
@@ -1122,6 +1123,7 @@ class MatchEngine {
     PlayerGame passer,
     Iterable<PlayerGame> candidates,
     TeamGame opponent,
+    TeamGame team,
   ) {
     PlayerGame? openBest;
     var openDistance = double.infinity;
