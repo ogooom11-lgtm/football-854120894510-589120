@@ -691,6 +691,40 @@ void main() {
     });
   });
 
+  group('transfer requests', () {
+    test('pending request marks a player as reserved', () {
+      final data = SavedGameData.defaults();
+      final player = data.players.first;
+      final team = data.teams.first;
+      data.transferRequests.add(
+        TransferRequest.create(
+          playerId: player.id,
+          targetTeamId: team.id,
+          requesterAccountId: data.activeAccountId,
+        ),
+      );
+      final request = data.transferRequestFor(player.id);
+      expect(request, isNotNull);
+      expect(request!.isPending, isTrue);
+      expect(data.pendingTransfers.length, 1);
+    });
+
+    test('transfer requests survive JSON round trip', () {
+      final data = SavedGameData.defaults();
+      data.transferRequests.add(
+        TransferRequest.create(
+          playerId: 'p1',
+          targetTeamId: 't1',
+          requesterAccountId: 'a1',
+        ),
+      );
+      final restored = SavedGameData.fromJson(data.toJson());
+      expect(restored.transferRequests.length, 1);
+      expect(restored.transferRequests.single.playerId, 'p1');
+      expect(restored.transferRequests.single.status, 'pending');
+    });
+  });
+
   group('daily injury recovery', () {
     test('injury days decrease one per real day', () {
       final player = PlayerProfile.generated(name: 'Hasta', isGoalkeeper: false);

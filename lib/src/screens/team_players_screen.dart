@@ -526,6 +526,9 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
     if (confirm != true || !mounted) return;
     setState(() {
       data.players.removeWhere((item) => item.id == player.id);
+      data.transferRequests.removeWhere(
+        (request) => request.playerId == player.id,
+      );
       for (final team in data.teams) {
         team.playerIds.remove(player.id);
         team.starterPlayerIds.remove(player.id);
@@ -568,6 +571,9 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
     if (confirm != true || !mounted) return;
     setState(() {
       team.isDeleted = true;
+      data.transferRequests.removeWhere(
+        (request) => request.targetTeamId == team.id,
+      );
       if (_selectedTeamId == team.id) {
         final remaining = data.activeTeams
             .where((item) => item.id != team.id)

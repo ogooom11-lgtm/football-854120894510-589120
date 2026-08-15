@@ -16,7 +16,6 @@ class SavedAccountProfile {
     required this.username,
     required this.passwordHash,
   });
-
   final String id;
   String username;
   String passwordHash;
@@ -57,6 +56,62 @@ class SavedAccountProfile {
   };
 }
 
+/// A transfer request: an account asks to move a free player into one of
+/// its teams. The admin must approve or reject it from the admin page.
+class TransferRequest {
+  TransferRequest({
+    required this.id,
+    required this.playerId,
+    required this.targetTeamId,
+    required this.requesterAccountId,
+    required this.createdAt,
+    this.status = 'pending',
+  });
+
+  final String id;
+  final String playerId;
+  final String targetTeamId;
+  final String requesterAccountId;
+  final int createdAt;
+  String status; // pending | accepted | rejected
+
+  bool get isPending => status == 'pending';
+
+  factory TransferRequest.create({
+    required String playerId,
+    required String targetTeamId,
+    required String requesterAccountId,
+  }) {
+    return TransferRequest(
+      id: 'tr-${DateTime.now().microsecondsSinceEpoch}',
+      playerId: playerId,
+      targetTeamId: targetTeamId,
+      requesterAccountId: requesterAccountId,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  factory TransferRequest.fromJson(Map<String, dynamic> json) {
+    return TransferRequest(
+      id: json['id'] as String? ?? 'tr-${json.hashCode}',
+      playerId: json['playerId'] as String? ?? '',
+      targetTeamId: json['targetTeamId'] as String? ?? '',
+      requesterAccountId: json['requesterAccountId'] as String? ?? '',
+      createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+      status: json['status'] as String? ?? 'pending',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'playerId': playerId,
+    'targetTeamId': targetTeamId,
+    'requesterAccountId': requesterAccountId,
+    'createdAt': createdAt,
+    'status': status,
+  };
+}
+
 class SavedGameData {
   SavedGameData({
     required this.accounts,
@@ -82,7 +137,9 @@ class SavedGameData {
     this.bluePlayStyle = AiPlayStyle.balanced,
     this.redPlayStyle = AiPlayStyle.balanced,
     List<FinishedMatchSummary>? matchArchive,
-  }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[];
+    List<TransferRequest>? transferRequests,
+  }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[],
+       transferRequests = transferRequests ?? <TransferRequest>[];
 
   final List<SavedAccountProfile> accounts;
   String activeAccountId;
@@ -107,6 +164,20 @@ class SavedGameData {
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
   final List<FinishedMatchSummary> matchArchive;
+  final List<TransferRequest> transferRequests;
+
+  List<TransferRequest> get pendingTransfers =>
+      transferRequests.where((request) => request.isPending).toList();
+
+  /// The pending transfer request touching [playerId], if any.
+  TransferRequest? transferRequestFor(String playerId) {
+    for (final request in transferRequests) {
+      if (request.isPending && request.playerId == playerId) {
+        return request;
+      }
+    }
+    return null;
+  }
 
   void archiveMatch(FinishedMatchSummary summary) {
     matchArchive.removeWhere((match) => match.matchId == summary.matchId);
@@ -362,6 +433,14 @@ class SavedGameData {
             )
             .take(200)
             .toList(),
+        transferRequests:
+            (json['transferRequests'] as List<dynamic>? ?? const [])
+                .map(
+                  (item) => TransferRequest.fromJson(
+                    item as Map<String, dynamic>,
+                  ),
+                )
+                .toList(),
       );
   }
 
@@ -424,6 +503,9 @@ class SavedGameData {
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
       'matchArchive': matchArchive.map((match) => match.toJson()).toList(),
+      'transferRequests': transferRequests
+          .map((request) => request.toJson())
+          .toList(),
     };
   }
 }

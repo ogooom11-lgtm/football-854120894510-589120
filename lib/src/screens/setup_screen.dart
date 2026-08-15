@@ -462,6 +462,9 @@ class _SetupScreenState extends State<SetupScreen> {
       data.players.removeWhere((player) => player.id == profile.id);
       data.bluePlayerIds.remove(profile.id);
       data.redPlayerIds.remove(profile.id);
+      data.transferRequests.removeWhere(
+        (request) => request.playerId == profile.id,
+      );
       for (final team in data.teams) {
         team.playerIds.remove(profile.id);
         team.starterPlayerIds.remove(profile.id);
@@ -771,18 +774,27 @@ class _SetupScreenState extends State<SetupScreen> {
       autofocus: true,
       onKeyEvent: _handleSetupKey,
       child: Scaffold(
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _topBar(),
-                const SizedBox(height: 14),
-                _setupTabs(),
-                const SizedBox(height: 14),
-                Expanded(child: _setupPage(data)),
-              ],
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xff08130e), Color(0xff040906), Color(0xff0a1812)],
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _topBar(),
+                  const SizedBox(height: 14),
+                  _setupTabs(),
+                  const SizedBox(height: 14),
+                  Expanded(child: _setupPage(data)),
+                ],
+              ),
             ),
           ),
         ),
@@ -868,31 +880,66 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _topBar() {
-    return Row(
-      children: [
-        Container(
-          width: 54,
-          height: 54,
-          decoration: BoxDecoration(
-            color: const Color(0xff0f8f4f),
-            borderRadius: BorderRadius.circular(8),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xff0e231b), Color(0xff0a1511), Color(0xff0d1a12)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xffd4af37).withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
           ),
-          child: const Icon(Icons.sports_soccer, size: 34, color: Colors.white),
-        ),
-        const SizedBox(width: 14),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'BOMBAN FUTBOL',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xff00c896), Color(0xff0a7d5a)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xff00c896).withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            Text(
-              'Flutter masaustu surumu',
-              style: TextStyle(color: Colors.white70),
-            ),
-          ],
-        ),
+            child: const Icon(Icons.sports_soccer, size: 34, color: Colors.white),
+          ),
+          const SizedBox(width: 16),
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'BOMBAN FUTBOL',
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2.2,
+                  color: Color(0xfff5d67b),
+                ),
+              ),
+              Text(
+                'Profesyonel Futbol Yonetimi',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
+          const Spacer(),
         const Spacer(),
         if (_showAdminPasswordField)
           Row(
@@ -968,10 +1015,25 @@ class _SetupScreenState extends State<SetupScreen> {
                 onPressed: _startMatch,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Maca basla'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xff00c896),
+                  foregroundColor: const Color(0xff00130c),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 12,
+                  ),
+                  textStyle: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                  shadowColor: const Color(0xff00c896).withValues(alpha: 0.5),
+                  elevation: 4,
+                ),
               ),
             ],
           ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2179,6 +2241,13 @@ class _SetupScreenState extends State<SetupScreen> {
               icon: Icon(Icons.groups),
               label: Text('Takimlar'),
             ),
+            ButtonSegment(
+              value: 3,
+              icon: const Icon(Icons.swap_horiz),
+              label: Text(
+                'Transferler${data.pendingTransfers.isEmpty ? '' : ' (${data.pendingTransfers.length})'}',
+              ),
+            ),
             if (data.adminFullAccess)
               const ButtonSegment(
                 value: 2,
@@ -2195,6 +2264,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: switch (subTab) {
             1 => _adminTeamsTab(data),
             2 when data.adminFullAccess => _adminPlayersTab(data),
+            3 => _adminTransfersTab(data),
             _ => _adminAccountsTab(data),
           },
         ),
@@ -2342,6 +2412,267 @@ class _SetupScreenState extends State<SetupScreen> {
 
   /// Hidden player values/settings editor. This tab only appears when the
   /// admin logged in with the secret prefix "kimo@" (adminFullAccess).
+  /// Admin page: pending transfer requests. The admin sees the player,
+  /// his market value (copyable) and the target team, then accepts
+  /// (player is added to the team) or rejects the request.
+  Widget _adminTransfersTab(SavedGameData data) {
+    final pending = data.pendingTransfers;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _adminPanelDecoration(const Color(0xffffd34d)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Transfer Talepleri',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Serbest oyuncular icin gelen transfer isteklerini onayla veya reddet.',
+            style: TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1),
+          Expanded(
+            child: pending.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Bekleyen transfer talebi yok.',
+                      style: TextStyle(color: Colors.white60),
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: pending.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final request = pending[index];
+                      final player = data.players
+                          .where((item) => item.id == request.playerId)
+                          .toList();
+                      final profile =
+                          player.isEmpty ? null : player.first;
+                      final team = data.teams
+                          .where((item) => item.id == request.targetTeamId)
+                          .toList();
+                      final targetTeam = team.isEmpty ? null : team.first;
+                      final account = data.accounts
+                          .where(
+                            (item) =>
+                                item.id == request.requesterAccountId,
+                          )
+                          .toList();
+                      final requester =
+                          account.isEmpty ? null : account.first;
+                      final date = request.createdAt == 0
+                          ? ''
+                          : DateTime.fromMillisecondsSinceEpoch(
+                              request.createdAt,
+                            ).toString().split('.').first;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              profile?.isGoalkeeper == true
+                                  ? Icons.back_hand
+                                  : Icons.person,
+                              color: profile == null
+                                  ? Colors.white38
+                                  : const Color(0xffffd34d),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    profile?.name ?? 'Silinmis oyuncu',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${targetTeam?.name ?? 'Silinmis takim'} ← ${requester?.username ?? 'Silinmis hesap'}'
+                                    '${date.isEmpty ? '' : ' • $date'}',
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (profile != null)
+                              Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xff00a86b,
+                                  ).withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xff00a86b,
+                                    ).withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      profile.marketValueText,
+                                      style: const TextStyle(
+                                        color: Color(0xff00e08b),
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    InkWell(
+                                      onTap: () => _copyMarketValue(profile),
+                                      child: const Icon(
+                                        Icons.copy,
+                                        size: 14,
+                                        color: Colors.white60,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            OutlinedButton.icon(
+                              onPressed: profile == null ||
+                                      targetTeam == null
+                                  ? null
+                                  : () => _acceptTransfer(
+                                      data,
+                                      request,
+                                      profile,
+                                      targetTeam,
+                                    ),
+                              icon: const Icon(
+                                Icons.check,
+                                size: 16,
+                                color: Color(0xff00e08b),
+                              ),
+                              label: const Text(
+                                'Kabul',
+                                style: TextStyle(
+                                  color: Color(0xff00e08b),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: const Color(
+                                    0xff00a86b,
+                                  ).withValues(alpha: 0.6),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            TextButton.icon(
+                              onPressed: () => _rejectTransfer(
+                                data,
+                                request,
+                              ),
+                              icon: const Icon(
+                                Icons.close,
+                                size: 16,
+                                color: Colors.redAccent,
+                              ),
+                              label: Text(
+                                'Reddet',
+                                style: TextStyle(
+                                  color: Colors.redAccent.shade200,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copyMarketValue(PlayerProfile profile) async {
+    await Clipboard.setData(
+      ClipboardData(
+        text:
+            '${profile.name}: ${profile.marketValueFull} TL (${profile.marketValueText})',
+      ),
+    );
+    if (!mounted) return;
+    _showMessage('${profile.marketValueFull} kopyalandi');
+  }
+
+  Future<void> _acceptTransfer(
+    SavedGameData data,
+    TransferRequest request,
+    PlayerProfile profile,
+    SavedTeamProfile targetTeam,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Transferi Onayla'),
+        content: Text(
+          '${profile.name} (${profile.marketValueText}) oyuncusu '
+          '${targetTeam.name} takimina eklenecek. Onayliyor musunuz?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgec'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Kabul Et'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() {
+      // Add the player to the target team (free agents have no team yet).
+      targetTeam.playerIds.add(profile.id);
+      targetTeam.roleByPlayerId[profile.id] = profile.isGoalkeeper
+          ? PlayerRole.goalkeeper
+          : PlayerRole.midfieldLeft;
+      if (targetTeam.starterPlayerIds.length < 11) {
+        targetTeam.starterPlayerIds.add(profile.id);
+      }
+      request.status = 'accepted';
+      data.transferRequests.removeWhere((item) => item.id == request.id);
+    });
+    await _save();
+    _showMessage('${profile.name} → ${targetTeam.name} transferi onaylandi');
+  }
+
+  Future<void> _rejectTransfer(
+    SavedGameData data,
+    TransferRequest request,
+  ) async {
+    setState(() {
+      request.status = 'rejected';
+      data.transferRequests.removeWhere((item) => item.id == request.id);
+    });
+    await _save();
+    _showMessage('Transfer talebi reddedildi');
+  }
+
   Widget _adminPlayersTab(SavedGameData data) {
     final playerQuery = _adminPlayerSearch.trim().toLowerCase();
     final players = data.players
@@ -3003,7 +3334,12 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     );
     if (confirm != true) return;
-    setState(() => team.isDeleted = true);
+    setState(() {
+      team.isDeleted = true;
+      data.transferRequests.removeWhere(
+        (request) => request.targetTeamId == team.id,
+      );
+    });
     await _save();
   }
 
@@ -4210,18 +4546,22 @@ class _SetupScreenState extends State<SetupScreen> {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          accent.withValues(alpha: 0.13),
-          const Color(0xff0d1a16),
-          const Color(0xff08140f),
+          accent.withValues(alpha: 0.14),
+          const Color(0xff0e1c17),
+          const Color(0xff08110d),
         ],
       ),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: accent.withValues(alpha: 0.38), width: 1.2),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: accent.withValues(alpha: 0.4), width: 1.2),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withValues(alpha: 0.25),
-          blurRadius: 18,
+          color: Colors.black.withValues(alpha: 0.3),
+          blurRadius: 20,
           offset: const Offset(0, 8),
+        ),
+        BoxShadow(
+          color: accent.withValues(alpha: 0.06),
+          blurRadius: 30,
         ),
       ],
     );
@@ -4229,9 +4569,27 @@ class _SetupScreenState extends State<SetupScreen> {
 
   BoxDecoration _panelDecoration() {
     return BoxDecoration(
-      color: const Color(0xff0d1a16),
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: const [
+          Color(0xff11201a),
+          Color(0xff0b1512),
+          Color(0xff0a1310),
+        ],
+      ),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: const Color(0xffd4af37).withValues(alpha: 0.18),
+        width: 1,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.28),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
+      ],
     );
   }
 }
