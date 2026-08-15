@@ -189,31 +189,33 @@ class PenaltyLogic {
     final highRisk = height > 1.65;
     final tooHigh = height > 2.44;
     final tooWeak = clampedPower < 0.72;
+    // A good finisher very rarely misses the frame — the miss chance is
+    // small and scales strongly with skill.
     final missChance =
-        (tooHigh ? 0.62 : 0.03) +
-        (highRisk ? 0.08 : 0) +
-        (tooWeak ? 0.05 : 0) +
-        (1 - shooter.profile.finishingSkill) * 0.10 +
-        (1 - shooter.profile.composureSkill) * 0.12;
+        (tooHigh ? 0.30 : 0.02) +
+        (highRisk ? 0.05 : 0) +
+        (tooWeak ? 0.03 : 0) +
+        (1 - shooter.profile.finishingSkill) * 0.07 +
+        (1 - shooter.profile.composureSkill) * 0.08;
     final saveChance = guessed
-        ? (height > 1.55 ? 0.30 : 0.25) + saveSkill * 0.20
+        ? (height > 1.55 ? 0.24 : 0.20) + saveSkill * 0.14
         : (keeperDirection == PenaltyLane.center &&
                   shotLane == PenaltyLane.center
-              ? 0.20 + saveSkill * 0.14
-              : 0.04 + saveSkill * 0.07);
+              ? 0.16 + saveSkill * 0.10
+              : 0.03 + saveSkill * 0.05);
     final shooterBonus =
-        (shooter.profile.heightMeters - 1.70) * 0.30 +
-        shooter.profile.finishingSkill * 0.12 +
-        shooter.profile.composureSkill * 0.12 +
-        shooter.profile.shotSkill * 0.05 +
-        (shooter.role.isAttacker ? 0.04 : 0);
+        (shooter.profile.heightMeters - 1.70) * 0.32 +
+        shooter.profile.finishingSkill * 0.16 +
+        shooter.profile.composureSkill * 0.14 +
+        shooter.profile.shotSkill * 0.07 +
+        (shooter.role.isAttacker ? 0.05 : 0);
     final keeperBonus =
-        (keeper.profile.heightMeters - 1.70) * 0.22 + saveSkill * 0.10;
+        (keeper.profile.heightMeters - 1.70) * 0.16 + saveSkill * 0.08;
     final scored =
         random.nextDouble() >
         (missChance + saveChance + keeperBonus - shooterBonus).clamp(
-          0.04,
-          0.86,
+          0.03,
+          0.72,
         );
 
     return PenaltyKickResult(

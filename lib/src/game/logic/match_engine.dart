@@ -580,16 +580,21 @@ class MatchEngine {
     }
   }
 
-  /// Auto-switch of the controlled player. When enabled (default) the
-  /// game always controls the best player (ball owner when attacking, the
-  /// closest chaser when defending). When disabled the player stays on
-  /// his chosen man and switches manually with C.
-  bool autoSwitchEnabled = true;
+  /// Auto-switch of the controlled player, per team. When enabled (default)
+  /// the game always controls the best player (ball owner when attacking,
+  /// the closest chaser when defending). When disabled the player stays on
+  /// his chosen man and switches manually (C for blue, Q for red).
+  final Map<TeamId, bool> _autoSwitchEnabled = <TeamId, bool>{
+    TeamId.blue: true,
+    TeamId.red: true,
+  };
   final Map<TeamId, String> _manualControlledPlayerIds = <TeamId, String>{};
 
-  bool toggleAutoSwitch() {
-    autoSwitchEnabled = !autoSwitchEnabled;
-    return autoSwitchEnabled;
+  bool isAutoSwitchEnabled(TeamId id) => _autoSwitchEnabled[id] ?? true;
+
+  bool toggleAutoSwitch(TeamId id) {
+    _autoSwitchEnabled[id] = !isAutoSwitchEnabled(id);
+    return isAutoSwitchEnabled(id);
   }
 
   PlayerGame controlledPlayer(TeamId id) {
@@ -598,8 +603,8 @@ class MatchEngine {
     if (ball.owner != null && ball.owner!.teamId == id) {
       return ball.owner!;
     }
-    // Manual mode: stick to the player the human selected (C key).
-    if (!autoSwitchEnabled) {
+    // Manual mode: stick to the player the human selected (C/Q keys).
+    if (!isAutoSwitchEnabled(id)) {
       final manualId = _manualControlledPlayerIds[id];
       if (manualId != null) {
         final manual = team.players.where(
@@ -1076,6 +1081,24 @@ class MatchEngine {
                 mate.role == PlayerRole.midfieldRight ||
                 mate.role == PlayerRole.sweeper,
           );
+    // A normal keeper throw/clearance must never fly to the opposite goal:
+    // high throws are capped to a short-to-mid distance (~430 px).
+    final capped = high && !goalKick
+        ? candidates.where(
+            (mate) => keeper.pos.distanceTo(mate.pos) <= 430,
+          )
+        : candidates;
+    // Fallback for a high throw: the nearest teammate still inside the
+    // capped distance — never someone at the other end of the pitch.
+    PlayerGame? nearestCapped;
+    var nearestCappedDistance = double.infinity;
+    for (final mate in capped) {
+      final distance = keeper.pos.distanceTo(mate.pos);
+      if (distance < nearestCappedDistance) {
+        nearestCappedDistance = distance;
+        nearestCapped = mate;
+      }
+    }
     final target =
         // Short distribution: pass to the nearest OPEN teammate (the one
         // with no opponent marking him). If everyone is marked, fall back
@@ -1083,22 +1106,26 @@ class MatchEngine {
         high
         ? (chooseBestPass(
                 keeper,
-                preferred.isEmpty ? candidates : preferred,
+                preferred.isEmpty ? capped : preferred.where(capped.contains),
                 preferForward: true,
               ) ??
+              nearestCapped ??
               team.closestTo(keeper.homePos, includeGoalkeeper: false))
         : _nearestOpenTeammate(
             keeper,
-            preferred.isEmpty ? candidates : preferred,
+            preferred.isEmpty ? capped : preferred,
             opponent,
             team,
           );
     final forward = Vec2(team.attackDirection.toDouble(), 0);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
-    final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.75).toDouble();
+    final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
     final kickPower = (high
-            ? math.max(clampedPower, goalKick ? 1.55 : 1.08)
+            ? math.max(
+                clampedPower,
+                goalKick ? 1.55 : (1.15 - keeper.profile.goalkeeperStats.distribution * 0.25),
+              )
             : math.max(clampedPower, 0.82))
         .toDouble();
     releaseFromPlayer(
@@ -1107,7 +1134,9 @@ class MatchEngine {
       kickPower,
       type: high ? KickType.highPass : KickType.pass,
       target: target,
-      loft: high ? (goalKick ? 14.5 : 5.9) : 0,
+      loft: high
+          ? (goalKick ? 14.5 : 3.2 + keeper.profile.goalkeeperStats.distribution * 0.9)
+          : 0,
     );
     keeper
       ..catchTimer = 0
@@ -2468,6 +2497,7 @@ class MatchEngine {
         ? GameConstants.rightBound + 28
         : GameConstants.leftBound - 28;
     final goalCenterY = GameConstants.virtualHeight / 2;
+    final halfGoal = GameConstants.goalPixelHeight / 2;
     final sideOffset = GameConstants.goalPixelHeight * 0.32;
     var targetY = switch (result.shotLane) {
       PenaltyLane.leftLow || PenaltyLane.leftHigh => goalCenterY - sideOffset,
@@ -2475,12 +2505,26 @@ class MatchEngine {
       PenaltyLane.rightLow || PenaltyLane.rightHigh => goalCenterY + sideOffset,
     };
     final savedSide = _samePenaltySide(result.shotLane, result.keeperLane);
-    if (!result.scored && !savedSide) {
-      targetY +=
-          result.shotLane == PenaltyLane.leftLow ||
-              result.shotLane == PenaltyLane.leftHigh
-          ? -46
-          : 46;
+    var loft = _penaltyLoft(result.heightMeters);
+    if (!result.scored) {
+      if (savedSide) {
+        // Keeper guessed right: aim stays in the corner — the keeper dives
+        // and saves/parries it there.
+      } else if (result.heightMeters > 2.44) {
+        // Over the bar: keep the aim central, the height sends it over.
+        targetY = goalCenterY;
+        loft = math.max(loft, _penaltyLoft(2.55));
+      } else {
+        // Missed wide: just off the post — a small, realistic miss, scaled
+        // by the shooter's finishing (good finishers miss by less).
+        final missAmount =
+            (10 + (1 - shooter.profile.finishingSkill) * 22).toDouble();
+        final laneSign = result.shotLane == PenaltyLane.leftLow ||
+                result.shotLane == PenaltyLane.leftHigh
+            ? -1.0
+            : 1.0;
+        targetY = goalCenterY + laneSign * (halfGoal + missAmount);
+      }
     }
     final target = Vec2(goalX, targetY);
     ball.release(
@@ -2489,7 +2533,7 @@ class MatchEngine {
       toucher: shooter,
       receiver: null,
       kickType: KickType.shoot,
-      loft: _penaltyLoft(result.heightMeters),
+      loft: loft,
     );
 
     final keeperGoalX = defending.side == TeamSide.left

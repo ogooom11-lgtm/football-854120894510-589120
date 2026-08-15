@@ -294,34 +294,64 @@ class _GameScreenState extends State<GameScreen>
         setState(() {});
         return;
       }
-      // C: switch the controlled player to the next man (manual switch).
-      // Q: toggle automatic switching on/off.
+      // C: switch the BLUE controlled player to the next man.
+      // Q: switch the RED controlled player to the next man.
+      // B: toggle BLUE automatic switching.  E: toggle RED automatic.
       if (key == LogicalKeyboardKey.keyC &&
           !_engine.replayMode &&
           !_engine.finished) {
         if (!_engine.blueAiControlled) {
           _engine.switchControlledPlayer(TeamId.blue);
+          _showSwitchHint(
+            _engine.isAutoSwitchEnabled(TeamId.blue)
+                ? 'Mavi oyuncu degistirildi (C)'
+                : 'Manuel: mavi oyuncu degistirildi (C)',
+          );
+          setState(() {});
+          return;
         }
-        if (!_engine.redAiControlled) {
-          _engine.switchControlledPlayer(TeamId.red);
-        }
-        _showSwitchHint(
-          _engine.autoSwitchEnabled
-              ? 'Oyuncu degistirildi (C)'
-              : 'Manuel: oyuncu degistirildi (C)',
-        );
-        setState(() {});
-        return;
       }
       if (key == LogicalKeyboardKey.keyQ &&
           !_engine.replayMode &&
           !_engine.finished) {
-        final enabled = _engine.toggleAutoSwitch();
-        _showSwitchHint(
-          enabled ? 'Oto oyuncu degisimi: ACIK' : 'Oto oyuncu degisimi: KAPALI',
-        );
-        setState(() {});
-        return;
+        if (!_engine.redAiControlled) {
+          _engine.switchControlledPlayer(TeamId.red);
+          _showSwitchHint(
+            _engine.isAutoSwitchEnabled(TeamId.red)
+                ? 'Kirmizi oyuncu degistirildi (Q)'
+                : 'Manuel: kirmizi oyuncu degistirildi (Q)',
+          );
+          setState(() {});
+          return;
+        }
+      }
+      if (key == LogicalKeyboardKey.keyB &&
+          !_engine.replayMode &&
+          !_engine.finished) {
+        if (!_engine.blueAiControlled) {
+          final enabled = _engine.toggleAutoSwitch(TeamId.blue);
+          _showSwitchHint(
+            enabled
+                ? 'Mavi oto degisim: ACIK (B)'
+                : 'Mavi oto degisim: KAPALI (B)',
+          );
+          setState(() {});
+          return;
+        }
+      }
+      if (key == LogicalKeyboardKey.keyE &&
+          !_engine.replayMode &&
+          !_engine.finished) {
+        if (!_engine.redAiControlled) {
+          final enabled = _engine.toggleAutoSwitch(TeamId.red);
+          _showSwitchHint(
+            enabled
+                ? 'Kirmizi oto degisim: ACIK (E)'
+                : 'Kirmizi oto degisim: KAPALI (E)',
+          );
+          setState(() {});
+          return;
+        }
       }
       _pressed.add(key);
       _startActionKey(key);

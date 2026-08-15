@@ -709,18 +709,22 @@ void main() {
       expect(second.id, isNot(first.id));
       final third = engine.switchControlledPlayer(TeamId.blue);
       expect(third.id, isNot(second.id));
-      engine.autoSwitchEnabled = false;
+      engine.toggleAutoSwitch(TeamId.blue);
       final manual = engine.controlledPlayer(TeamId.blue);
       expect(manual.id, third.id);
     });
 
-    test('toggle auto switch flips the flag', () {
+    test('toggle auto switch flips the flag per team', () {
       final engine = MatchEngine(_testMatchSetup());
-      expect(engine.autoSwitchEnabled, isTrue);
-      engine.toggleAutoSwitch();
-      expect(engine.autoSwitchEnabled, isFalse);
-      engine.toggleAutoSwitch();
-      expect(engine.autoSwitchEnabled, isTrue);
+      expect(engine.isAutoSwitchEnabled(TeamId.blue), isTrue);
+      expect(engine.isAutoSwitchEnabled(TeamId.red), isTrue);
+      engine.toggleAutoSwitch(TeamId.blue);
+      expect(engine.isAutoSwitchEnabled(TeamId.blue), isFalse);
+      expect(engine.isAutoSwitchEnabled(TeamId.red), isTrue);
+      engine.toggleAutoSwitch(TeamId.blue);
+      expect(engine.isAutoSwitchEnabled(TeamId.blue), isTrue);
+      engine.toggleAutoSwitch(TeamId.red);
+      expect(engine.isAutoSwitchEnabled(TeamId.red), isFalse);
     });
   });
 
