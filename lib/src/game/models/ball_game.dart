@@ -20,6 +20,11 @@ class BallGame {
   bool lastPassWasHigh = false;
   bool hasBouncedSinceKick = false;
   bool goalLineMissCommitted = false;
+
+  /// Set to true the moment a teammate touches a pass. A pass is
+  /// successful as soon as one of the passer's teammates touches the
+  /// ball (even a deflection), and it is counted at most once.
+  bool passSuccessCounted = false;
   bool dippingFreeKick = false;
   double curve = 0;
   double spin = 0;
@@ -47,6 +52,7 @@ class BallGame {
     lastPassWasHigh = false;
     hasBouncedSinceKick = false;
     goalLineMissCommitted = false;
+    passSuccessCounted = false;
     dippingFreeKick = false;
     curve = 0;
     spin = 0;
@@ -83,6 +89,7 @@ class BallGame {
     lastPassWasHigh = highPass;
     hasBouncedSinceKick = false;
     goalLineMissCommitted = false;
+    passSuccessCounted = false;
     this.dippingFreeKick = dippingFreeKick;
     this.curve = curve;
     this.spin = spin;

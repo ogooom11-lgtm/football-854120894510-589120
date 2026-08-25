@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../game/models/player_profile.dart';
-import '../game/models/shooting.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
+import 'player_detail_screen.dart';
 
 /// Standalone page showing all players and goalkeepers who do not belong
 /// to any team (free agents). Tapping a player opens his full details,
@@ -247,7 +248,7 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => _showPlayerDetail(player),
+            onTap: () => _openPlayerDetail(player),
             child: Row(
               children: [
                 Icon(
@@ -261,15 +262,44 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        player.name,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              player.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Adi kopyala',
+                            onPressed: () {
+                              Clipboard.setData(
+                                ClipboardData(text: player.name),
+                              );
+                              _showMessage(
+                                '${player.name} adi kopyalandi',
+                              );
+                            },
+                            icon: const Icon(
+                              Icons.copy,
+                              size: 14,
+                              color: Colors.white54,
+                            ),
+                            constraints: const BoxConstraints(),
+                            padding: const EdgeInsets.all(2),
+                          ),
+                        ],
                       ),
                       Text(
                         'OVR ${player.effectiveOverall.toStringAsFixed(0)}'
                         ' | Sut gucu ${player.shotPowerRating.toStringAsFixed(0)}'
                         ' | Sut %${player.shootingAccuracyPercent}'
                         ' | Hiz ${player.speedRating.toStringAsFixed(0)}'
+                        '${player.country.isNotEmpty ? ' | Ulke: ${player.country}' : ''}'
                         '${player.isSuspended ? ' | CEZALI ${player.suspendedMatchesRemaining} mac' : ''}'
                         '${player.isInjured ? ' | SAKAT ${player.injuredDaysRemaining} gun' : ''}',
                         style: const TextStyle(
@@ -424,167 +454,14 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
     );
   }
 
-  void _showPlayerDetail(PlayerProfile player) {
-    final passPercent = player.passes == 0
-        ? 0
-        : (player.successfulPasses * 100 / player.passes).round();
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xff102019),
-        title: Text(player.name),
-        content: SizedBox(
-          width: 620,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xff00a86b).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: const Color(0xff00a86b).withValues(alpha: 0.45),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'PIYASA DEGERI',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white54,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${player.marketValueText}  (${player.marketValueFull})',
-                        style: const TextStyle(
-                          fontSize: 22,
-                          color: Color(0xff00e08b),
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 7,
-                  children: [
-                    _stat('Mevki', player.isGoalkeeper ? 'Kaleci' : 'Saha'),
-                    _stat('OVR', player.effectiveOverall.round()),
-                    _stat('Boy', (player.heightMeters * 100).round()),
-                    _stat(
-                      'Ayak',
-                      player.preferredFoot == PreferredFoot.left
-                          ? 'Sol'
-                          : 'Sag',
-                    ),
-                    _stat('Zayif ayak', '${player.weakFootRating}/5'),
-                    _stat('Genel', player.overallRating.round()),
-                    _stat('Sut', player.shootingRating.round()),
-                    _stat('Bitiricilik', player.finishingRating.round()),
-                    _stat('Sut gucu', player.shotPowerRating.round()),
-                    _stat('Uzaktan sut', player.longShotsRating.round()),
-                    _stat('Falso', player.curveRating.round()),
-                    _stat('Sogukkanlilik', player.composureRating.round()),
-                    _stat('Denge', player.balanceRating.round()),
-                    _stat('Pas', player.passingRating.round()),
-                    _stat('Hiz', player.speedRating.round()),
-                    _stat('Enerji', player.staminaRating.round()),
-                    _stat('Dayaniklilik', player.dayaniklilikGucu.round()),
-                    _stat('Zeka', player.zekaGucu.round()),
-                    _stat('Kalecilik', player.goalkeepingRating.round()),
-                    if (player.isGoalkeeper) ...[
-                      _stat('GK Reaksiyon', player.goalkeeperReactionRating.round()),
-                      _stat('GK Pozisyon', player.goalkeeperPositioningRating.round()),
-                      _stat('GK Atlayis', player.goalkeeperDivingRating.round()),
-                      _stat('GK Handling', player.goalkeeperHandlingRating.round()),
-                      _stat('GK Yakalayis', player.goalkeeperCatchingRating.round()),
-                      _stat('GK Sicrama', player.goalkeeperJumpingRating.round()),
-                      _stat('GK Karar', player.goalkeeperDecisionRating.round()),
-                      _stat('GK Bire Bir', player.goalkeeperOneVsOneRating.round()),
-                      _stat('GK Yuksek Top', player.goalkeeperHighBallsRating.round()),
-                      _stat('GK Erisim', player.goalkeeperReachRating.round()),
-                      _stat('GK Ongoru', player.goalkeeperAnticipationRating.round()),
-                      _stat('GK Sektirme', player.goalkeeperParryingRating.round()),
-                      _stat('GK Dagitim', player.goalkeeperDistributionRating.round()),
-                    ],
-                    _stat('Mac', player.matchesPlayed),
-                    _stat('Dakika', player.minutesPlayed),
-                    _stat('Gol', player.goals),
-                    _stat('Asist', player.assists),
-                    _stat('Pas', player.passes),
-                    _stat('Basarili pas', player.successfulPasses),
-                    _stat('Pas %', passPercent),
-                    _stat('Dripling', player.dribbles),
-                    _stat('Basarili dripling', player.successfulDribbles),
-                    _stat('Mudahale', player.tackles),
-                    _stat('Sut', player.shots),
-                    _stat('Isabetli sut', player.shotsOnTarget),
-                    _stat('Kacan firsat', player.missedChances),
-                    _stat('Uzaklastirma', player.clearances),
-                    _stat('Kurtaris', player.saves),
-                    _stat('Yaptigi faul', player.foulsCommitted),
-                    _stat('Aldigi faul', player.foulsReceived),
-                    _stat('Sari', player.yellowCards),
-                    _stat('Kirmizi', player.redCards),
-                    _stat('Puan', player.points.toStringAsFixed(1)),
-                    _stat('Fitness', '%${(player.fitness * 100).round()}'),
-                    _stat('Sakatlik gunu', player.injuredDaysRemaining),
-                    _stat('Ceza maci', player.suspendedMatchesRemaining),
-                  ],
-                ),
-                if (player.isUnavailable) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    player.isInjured
-                        ? 'SAKAT: ${player.injuredDaysRemaining} gun'
-                        : 'CEZALI: ${player.suspendedMatchesRemaining} mac',
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-                if (player.matchHistory.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    'Son maclar: ${player.matchHistory.take(4).map((record) => '${record.scoreText} ${record.rating.toStringAsFixed(1)}').join(' | ')}',
-                    style: const TextStyle(color: Colors.white60),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Kapat'),
-          ),
-        ],
+  Future<void> _openPlayerDetail(PlayerProfile player) async {
+    await _save();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerDetailScreen(playerId: player.id),
       ),
     );
-  }
-
-  Widget _stat(String label, Object value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.055),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        '$label: $value',
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
-      ),
-    );
+    _load();
   }
 }

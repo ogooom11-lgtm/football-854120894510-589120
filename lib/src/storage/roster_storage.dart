@@ -138,8 +138,15 @@ class SavedGameData {
     this.redPlayStyle = AiPlayStyle.balanced,
     List<FinishedMatchSummary>? matchArchive,
     List<TransferRequest>? transferRequests,
+    List<String>? countries,
   }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[],
-       transferRequests = transferRequests ?? <TransferRequest>[];
+       transferRequests = transferRequests ?? <TransferRequest>[],
+       countries = countries ??
+           <String>['Turkiye', 'Almanya', 'Ingiltere', 'Ispanya', 'Italia',
+               'Fransa', 'Hollanda', 'Brezilya', 'Arjantin', 'Portekiz',
+               'Suriye', 'Irak', 'Livan', 'Urdun', 'Misir', 'KSA',
+               'Abudabi', 'Katar', 'Yunanistan', 'Avusturya', 'Belcika',
+               'Cekya', 'Danimarka', 'Hirvatistan', 'Bosna', 'Serdanya'];
 
   final List<SavedAccountProfile> accounts;
   String activeAccountId;
@@ -165,6 +172,21 @@ class SavedGameData {
   AiPlayStyle redPlayStyle;
   final List<FinishedMatchSummary> matchArchive;
   final List<TransferRequest> transferRequests;
+
+  /// Countries available for players and teams. Managed from the admin
+  /// page (Yonetim > Ulkeler).
+  final List<String> countries;
+
+  /// Countries that are not used by any player or team anymore.
+  List<String> get unusedCountries {
+    final used = <String>{
+      for (final player in players)
+        if (player.country.isNotEmpty) player.country,
+      for (final team in teams)
+        if (team.country.isNotEmpty) team.country,
+    };
+    return countries.where((name) => !used.contains(name)).toList();
+  }
 
   List<TransferRequest> get pendingTransfers =>
       transferRequests.where((request) => request.isPending).toList();
@@ -206,6 +228,17 @@ class SavedGameData {
   bool isTeamOwnerLoggedIn(SavedTeamProfile team) =>
       team.ownerAccountId.isNotEmpty &&
       loggedInAccountIds.contains(team.ownerAccountId);
+
+  /// Sum of the market values of all registered players of [team].
+  double teamTotalValue(SavedTeamProfile team) {
+    var total = 0.0;
+    for (final player in players) {
+      if (team.playerIds.contains(player.id)) {
+        total += player.marketValue;
+      }
+    }
+    return total;
+  }
 
   bool get adminPasswordSet => adminPasswordHash.isNotEmpty;
 
@@ -441,7 +474,21 @@ class SavedGameData {
                   ),
                 )
                 .toList(),
+        countries: _countriesFromJson(json['countries']),
       );
+  }
+
+  /// Old save files have no country list — fall back to the default set so
+  /// the admin page always has countries to pick from.
+  static List<String> _countriesFromJson(Object? raw) {
+    final parsed = (raw as List<dynamic>? ?? const <dynamic>[])
+        .map((item) => item.toString().trim())
+        .where((name) => name.isNotEmpty)
+        .toList();
+    if (parsed.isEmpty) {
+      return SavedGameData.defaults().countries;
+    }
+    return parsed;
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
@@ -506,6 +553,7 @@ class SavedGameData {
       'transferRequests': transferRequests
           .map((request) => request.toJson())
           .toList(),
+      'countries': countries,
     };
   }
 }

@@ -89,6 +89,7 @@ class SavedTeamProfile {
     this.playStyle = AiPlayStyle.balanced,
     this.aiDifficulty = AiDifficulty.medium,
     this.isDeleted = false,
+    this.country = '',
     List<JerseyKit>? jerseyKits,
     this.activeKitIndex = 0,
   }) : starterPlayerIds = starterPlayerIds ?? <String>{},
@@ -116,10 +117,52 @@ class SavedTeamProfile {
   AiPlayStyle playStyle;
   AiDifficulty aiDifficulty;
   bool isDeleted; // soft delete
+
+  /// Country the team represents (assigned from the admin page).
+  String country;
   List<JerseyKit> jerseyKits;
   int activeKitIndex;
 
   int get played => wins + losses + draws;
+
+  /// The last results as single letters, newest first: G / B / M.
+  List<String> get formLetters {
+    return matchHistory
+        .take(10)
+        .map(
+          (record) => switch (record.result) {
+                'Galibiyet' => 'G',
+                'Beraberlik' => 'B',
+                _ => 'M',
+          },
+        )
+        .toList();
+  }
+
+  /// Current form in human readable text, e.g. "4 galibiyet art arda" or
+  /// "Son mac: maglubiyet".
+  String get formText {
+    if (matchHistory.isEmpty) return 'Henüz mac oynanmadi';
+    final first = matchHistory.first.result;
+    var count = 0;
+    for (final record in matchHistory) {
+      if (record.result != first) break;
+      count += 1;
+    }
+    if (count >= 2) {
+      final word = switch (first) {
+        'Galibiyet' => 'galibiyet',
+        'Beraberlik' => 'beraberlik',
+        _ => 'maglubiyet',
+      };
+      return '$count $word art arda';
+    }
+    return switch (first) {
+      'Galibiyet' => 'Son mac: galibiyet',
+      'Beraberlik' => 'Son mac: beraberlik',
+      _ => 'Son mac: maglubiyet',
+    };
+  }
 
   JerseyKit get activeKit => activeKitIndex < jerseyKits.length
       ? jerseyKits[activeKitIndex]
@@ -214,6 +257,7 @@ class SavedTeamProfile {
         orElse: () => AiDifficulty.medium,
       ),
       isDeleted: json['isDeleted'] as bool? ?? false,
+      country: json['country'] as String? ?? '',
       jerseyKits: JerseyFactory.completeKits(
         (json['jerseyKits'] as List<dynamic>?)
             ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>)),
@@ -352,6 +396,7 @@ class SavedTeamProfile {
       'playStyle': playStyle.name,
       'aiDifficulty': aiDifficulty.name,
       'isDeleted': isDeleted,
+      'country': country,
       'jerseyKits': jerseyKits.map((k) => k.toJson()).toList(),
       'activeKitIndex': activeKitIndex,
     };

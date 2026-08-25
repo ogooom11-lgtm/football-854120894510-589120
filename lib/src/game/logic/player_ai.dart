@@ -455,7 +455,7 @@ class PlayerAi {
       PlayerRole.sweeper => 8.0,
       _ => -12.0,
     };
-    final shotScore =
+    var shotScore =
         roleShotBias +
         (finalThird ? 34 : -26) +
         (goodAngle ? 18 : -20) +
@@ -470,7 +470,7 @@ class PlayerAi {
         (finalThird ? 22 : -8) +
         (nearEndLine ? 26 : 0) +
         (crossTarget != null ? 18 : -30);
-    final throughPassScore =
+    var throughPassScore =
         ((player.role == PlayerRole.midfieldLeft ||
                 player.role == PlayerRole.midfieldRight ||
                 player.role == PlayerRole.sweeper)
@@ -485,7 +485,7 @@ class PlayerAi {
     // A defender under pressure in his own third must clear the ball
     // (long ball forward) instead of risking a short pass near his goal.
     final inOwnBox = engine.isInPenaltyBox(player.pos, team.id);
-    final clearScore = (player.role.isDefender && ownThird && pressure < 52)
+    var clearScore = (player.role.isDefender && ownThird && pressure < 52)
         ? (inOwnBox ? 110 : 62)
         : (inOwnBox && player.role.isDefender)
         ? 85
@@ -503,6 +503,47 @@ class PlayerAi {
             : -18) +
         (player.role.isDefender && ownThird ? -35 : 0) +
         (nearEndLine && player.role.isWide ? 18 : 0);
+
+    // A team under strain — tired players, a red card or a numerical
+    // disadvantage — concentrates on defence: it takes no risks, clears
+    // every dangerous ball and never chases the game with wild shots.
+    final underStress = engine.teamUnderStress(team);
+    if (underStress) {
+      shotScore -= 45;
+      throughPassScore -= 25;
+      if (ownThird || inOwnBox) {
+        clearScore = clearScore < 120 ? 120 : clearScore;
+      }
+    }
+    if (engine.teamEndgameProtecting(team)) {
+      // Protecting the lead in the last minutes: stay deep, shoot rarely.
+      shotScore -= 50;
+    }
+    if (engine.teamEndgameChasing(team)) {
+      // Losing in the last minutes: take the shot, play for the goal.
+      shotScore += 25;
+      clearScore -= 20;
+    }
+    if (underStress &&
+        player.role.isDefender &&
+        (team.attackDirection == 1
+            ? player.pos.x < GameConstants.virtualWidth * 0.52
+            : player.pos.x > GameConstants.virtualWidth * 0.48)) {
+      // A stressed defender who wins the ball in his own half clears it
+      // away immediately instead of playing a risky pass.
+      engine.releaseFromPlayer(
+        player,
+        Vec2(
+          team.attackDirection.toDouble(),
+          (random.nextDouble() - 0.5) * 0.9,
+        ),
+        1.15,
+        type: KickType.highPass,
+        loft: 4.6,
+      );
+      player.aiCooldown = 0.7;
+      return;
+    }
 
     final decisions = <({String action, double score})>[
       (action: 'shot', score: shotScore.toDouble()),
@@ -654,6 +695,37 @@ class PlayerAi {
 
     base.x += d * push;
     base.y += (ballY - base.y) * compact;
+
+    // Defensive line integrity: in defence the defenders stay glued to a
+    // shared horizontal line so no gaps open between them.
+    if (mode == TeamMode.defense && player.role.isDefender && !player.isGoalkeeper) {
+      final lineMates = team.players.where(
+        (m) => m.role.isDefender && !m.isGoalkeeper && m != player && !m.isSentOff,
+      );
+      if (lineMates.isNotEmpty) {
+        var avgY = 0.0;
+        for (final m in lineMates) {
+          avgY += m.homePos.y;
+        }
+        avgY /= lineMates.length;
+        base.y = base.y * 0.5 + (avgY * 0.30 + ballY * 0.20);
+      }
+      // A team under strain (tired, red card or a man down) drops its line
+      // back in front of the box and clears everything dangerous.
+      if (engine.teamUnderStress(team)) {
+        base.x -= d * 34;
+      }
+    }
+    // Losing in the last minutes: everyone except the back line pushes up
+    // to hunt the equalizer.
+    if (engine.teamEndgameChasing(team) && !player.role.isDefender) {
+      base.x += d * 26;
+    }
+    // Leading in the last minutes: the whole team drops back to protect
+    // the lead.
+    if (engine.teamEndgameProtecting(team)) {
+      base.x -= d * (player.role.isDefender ? 30 : 18);
+    }
 
     // Defenders support possession close to the halfway line, keeping a
     // compact rest-defence instead of being stranded near their own goal.
@@ -872,19 +944,20 @@ class PlayerAi {
     MatchEngine engine,
   ) {
     if (engine.isGoalKickLockedAgainst(team.id)) {
-      final centerX = GameConstants.virtualWidth / 2;
-      final lane = switch (player.role) {
-        PlayerRole.leftWing || PlayerRole.leftWingBack => 0.28,
-        PlayerRole.rightWing || PlayerRole.rightWingBack => 0.72,
-        PlayerRole.striker => 0.50,
-        PlayerRole.midfieldLeft => 0.40,
-        PlayerRole.midfieldRight => 0.60,
-        _ => 0.50,
-      };
-      return Vec2(
-        opponent.side == TeamSide.left ? centerX + 36 : centerX - 36,
-        GameConstants.topBound + GameConstants.pitchHeight * lane,
-      );
+      // Goal kick: nobody lines up at the halfway line. Everyone keeps his
+      // normal shape, and the attacking team simply holds a comfortable
+      // distance — nobody stands closer to the goal than a third of the
+      // pitch.
+      final goalX = opponent.side == TeamSide.left
+          ? GameConstants.leftBound.toDouble()
+          : GameConstants.rightBound.toDouble();
+      final away = opponent.side == TeamSide.left ? 1.0 : -1.0;
+      final limitX =
+          goalX + away * (GameConstants.pitchWidth / 3.0 + 24.0);
+      final x = player.homePos.x;
+      final clampedX =
+          away > 0 ? math.max(x, limitX) : math.min(x, limitX);
+      return Vec2(clampedX, player.homePos.y);
     }
     final boxGuardX = opponent.side == TeamSide.left
         ? GameConstants.leftBound + 178

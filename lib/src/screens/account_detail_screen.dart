@@ -8,6 +8,7 @@ import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
+import 'player_detail_screen.dart';
 
 /// Detailed account page showing all teams and player stats.
 class AccountDetailScreen extends StatefulWidget {
@@ -51,6 +52,20 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       _data = data;
       _loading = false;
     });
+  }
+
+  Future<void> _openPlayerDetail(String playerId) async {
+    final data = _data;
+    if (data != null) {
+      await _storage.save(data);
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerDetailScreen(playerId: playerId),
+      ),
+    );
+    _load();
   }
 
   @override
@@ -525,6 +540,15 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                 team.playStyle.title,
                 style: const TextStyle(color: Color(0xffffd34d), fontSize: 12),
               ),
+              if (team.country.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                const Icon(Icons.public, size: 13, color: Colors.white54),
+                const SizedBox(width: 3),
+                Text(
+                  team.country,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
             ],
           ),
           if (team.isDeleted)
@@ -682,7 +706,9 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       itemCount: myPlayers.length,
       itemBuilder: (ctx, index) {
         final p = myPlayers[index];
-        return Container(
+        return InkWell(
+          onTap: () => _openPlayerDetail(p.id),
+          child: Container(
           margin: const EdgeInsets.only(bottom: 6),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -793,6 +819,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   ),
                 ),
             ],
+          ),
           ),
         );
       },

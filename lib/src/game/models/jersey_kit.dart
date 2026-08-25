@@ -64,6 +64,34 @@ class JerseyKit {
 
 /// Predefined team kits for quick selection.
 class JerseyFactory {
+  /// Named preset colors offered in the kit editor (name, ARGB int).
+  static const List<(String, int)> presetColors = [
+    ('Beyaz', 0xffffffff),
+    ('Siyah', 0xff101418),
+    ('Kirmizi', 0xffd32f2f),
+    ('Bordo', 0xff7f1734),
+    ('Mavi', 0xff1e56c8),
+    ('Lacivert', 0xff16213e),
+    ('Koyu Mavi', 0xff122a5c),
+    ('Gok Mavisi', 0xff42a5f5),
+    ('Turkuaz', 0xff00acc1),
+    ('Yesil', 0xff1f9d55),
+    ('Koyu Yesil', 0xff0b5d3a),
+    ('Neon Yesil', 0xff76ff03),
+    ('Zeytin', 0xff708238),
+    ('Sari', 0xffffd600),
+    ('Altin', 0xffd4af37),
+    ('Turuncu', 0xffff8f00),
+    ('Kiremit', 0xffc05621),
+    ('Mor', 0xff7e57c2),
+    ('Bordo Mor', 0xff4a148c),
+    ('Pembe', 0xffec407a),
+    ('Kum', 0xffd7c49e),
+    ('Gumus', 0xffb0bec5),
+    ('Koyu Gri', 0xff455a64),
+    ('Antrasit', 0xff263238),
+  ];
+
   static List<JerseyKit> defaultKits() => [
         // Home kit
         const JerseyKit(

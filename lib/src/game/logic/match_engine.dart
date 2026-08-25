@@ -142,7 +142,16 @@ class MatchEngine {
   bool replayPlaying = false;
   int replayIndex = 0;
   double _replayPlaybackAccumulator = 0;
+
+  /// VAR replay playback speed. 1.0 = real time, 0.25 = slow motion,
+  /// 4.0 = fast forward.
+  double replaySpeed = 1.0;
+
   bool substitutionPaused = false;
+
+  void setReplaySpeed(double value) {
+    replaySpeed = value.clamp(0.25, 4.0).toDouble();
+  }
   double blueControlSeconds = 0;
   double redControlSeconds = 0;
   int bluePasses = 0;
@@ -172,12 +181,23 @@ class MatchEngine {
     ...redTeam.players.where((player) => !player.isSentOff),
   ];
 
-  List<PlayerGame> get allMatchPlayers => [
-    ...blueTeam.players,
-    ...redTeam.players,
-    ...blueTeam.substitutedOut,
-    ...redTeam.substitutedOut,
-  ];
+  List<PlayerGame> get allMatchPlayers {
+    final list = <PlayerGame>[
+      ...blueTeam.players,
+      ...redTeam.players,
+      ...blueTeam.substitutedOut,
+      ...redTeam.substitutedOut,
+    ];
+    // Players who left for good but are not part of the lists above.
+    for (final team in [blueTeam, redTeam]) {
+      for (final player in team.removedFromMatch) {
+        if (!list.any((existing) => existing.id == player.id)) {
+          list.add(player);
+        }
+      }
+    }
+    return list;
+  }
 
   bool isTeamAiControlled(TeamId id) =>
       id == TeamId.blue ? blueAiControlled : redAiControlled;
@@ -328,7 +348,20 @@ class MatchEngine {
       return TeamMode.defense;
     }
     if (ball.owner != null) {
-      return ball.owner!.teamId == team.id ? TeamMode.attack : TeamMode.defense;
+      if (ball.owner!.teamId == team.id) {
+        // Protecting a one-goal lead in the last minutes: even in
+        // possession the team stays compact and plays it safe. A team
+        // under strain does the same.
+        if (teamEndgameProtecting(team) || teamUnderStress(team)) {
+          return TeamMode.defense;
+        }
+        return TeamMode.attack;
+      }
+      // Losing in the last minutes: press hard and look for the goal.
+      if (teamEndgameChasing(team)) {
+        return TeamMode.press;
+      }
+      return TeamMode.defense;
     }
     if (team.attackDirection == 1) {
       return ball.pos.x > GameConstants.virtualWidth / 2
@@ -351,6 +384,56 @@ class MatchEngine {
         minute >= 112;
     return closeScore && (lateRegulation || lateExtra);
   }
+
+  /// The last stretch of the match, when late tactics kick in.
+  bool get endgameActive {
+    final regulation = period == MatchPeriod.secondHalf && minute >= 85;
+    final firstExtra = period == MatchPeriod.extraFirst && minute >= 106;
+    final secondExtra = period == MatchPeriod.extraSecond && minute >= 116;
+    return regulation || firstExtra || secondExtra;
+  }
+
+  /// A team that leads in the last minutes drops deep and defends hard to
+  /// protect the lead.
+  bool teamEndgameProtecting(TeamGame team) =>
+      endgameActive && team.score > opponentOf(team).score;
+
+  /// A team that trails in the last minutes pushes up and presses hard to
+  /// find the equalizer.
+  bool teamEndgameChasing(TeamGame team) =>
+      endgameActive && team.score < opponentOf(team).score;
+
+  /// Average stamina of the players currently on the pitch.
+  double teamAverageStamina(TeamGame team) {
+    var sum = 0.0;
+    var count = 0;
+    for (final player in team.players) {
+      if (player.isSentOff) continue;
+      sum += player.stamina;
+      count += 1;
+    }
+    return count == 0 ? 1.0 : sum / count;
+  }
+
+  bool teamIsTired(TeamGame team) => teamAverageStamina(team) < 0.45;
+
+  int sentOffCount(TeamGame team) =>
+      team.players.where((player) => player.isSentOff).length;
+
+  bool teamShortOnPlayers(TeamGame team) {
+    final mine = team.players.where((player) => !player.isSentOff).length;
+    final theirs =
+        opponentOf(team).players.where((player) => !player.isSentOff).length;
+    return mine < theirs;
+  }
+
+  /// A team under strain — tired players, a red card or a numerical
+  /// disadvantage — concentrates on defence and clears every dangerous
+  /// ball instead of taking risks.
+  bool teamUnderStress(TeamGame team) =>
+      teamIsTired(team) ||
+      sentOffCount(team) > 0 ||
+      teamShortOnPlayers(team);
 
   bool teamUnderDanger(TeamGame team) {
     final opponentHasBall = ball.owner != null && ball.owner!.teamId != team.id;
@@ -400,6 +483,9 @@ class MatchEngine {
 
   void tick(double dt) {
     if (replayMode) {
+      // While the VAR screen is open everyone on the pitch rests and
+      // regains stamina.
+      _recoverStaminaWhileFrozen(dt);
       _tickReplay(dt);
       return;
     }
@@ -407,12 +493,15 @@ class MatchEngine {
       return;
     }
     if (substitutionPaused) {
+      // The substitution panel is open: players catch their breath.
+      _recoverStaminaWhileFrozen(dt);
       return;
     }
     _tickCooldowns(dt);
 
     if (_pauseTimer > 0) {
       _pauseTimer -= dt;
+      _recoverStaminaWhileFrozen(dt);
       _recordReplay(dt);
       if (_pauseTimer <= 0) {
         final callback = _afterPause;
@@ -797,8 +886,14 @@ class MatchEngine {
           (target?.pos ?? _cornerDeliverySpot(team, high: highDelivery)) -
           ball.pos;
       if (highDelivery) {
-        loft = 5.75 + clampedPower * 1.50;
-        finalPower = 0.86 + clampedPower * 0.27;
+        // The long-pass button sends the cross arcing into the penalty
+        // area; the ball arrives over the box at a head-ball height of
+        // 1.80-2.20 m (computed by simulating the flight).
+        final landingPos =
+            target?.pos ?? _cornerDeliverySpot(team, high: true);
+        final computed = _cornerHighBallParams(player, landingPos, clampedPower);
+        loft = computed.$1;
+        finalPower = computed.$2;
       } else {
         finalPower = 0.74 + clampedPower * 0.22;
       }
@@ -1120,23 +1215,35 @@ class MatchEngine {
     final forward = Vec2(team.attackDirection.toDouble(), 0);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
-    final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
-    final kickPower = (high
-            ? math.max(
-                clampedPower,
-                goalKick ? 1.55 : (1.15 - keeper.profile.goalkeeperStats.distribution * 0.25),
-              )
-            : math.max(clampedPower, 0.82))
-        .toDouble();
+    double releaseLoft;
+    double releasePower;
+    if (high && goalKick) {
+      // A goal-kick long ball must come to rest past a quarter of the pitch
+      // and before its last third — never rocket to the far end of the
+      // field. The exact launch power is computed by simulating the flight.
+      final computed = _goalKickLongPassParams(keeper, target);
+      releaseLoft = computed.$1;
+      releasePower = computed.$2;
+    } else {
+      final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
+      releasePower = (high
+              ? math.max(
+                  clampedPower,
+                  1.15 - keeper.profile.goalkeeperStats.distribution * 0.25,
+                )
+              : math.max(clampedPower, 0.82))
+          .toDouble();
+      releaseLoft = high
+          ? (3.2 + keeper.profile.goalkeeperStats.distribution * 0.9)
+          : 0;
+    }
     releaseFromPlayer(
       keeper,
       target.pos - ball.pos,
-      kickPower,
+      releasePower,
       type: high ? KickType.highPass : KickType.pass,
       target: target,
-      loft: high
-          ? (goalKick ? 14.5 : 3.2 + keeper.profile.goalkeeperStats.distribution * 0.9)
-          : 0,
+      loft: releaseLoft,
     );
     keeper
       ..catchTimer = 0
@@ -1144,6 +1251,166 @@ class MatchEngine {
       ..manualOverride = 0.42
       ..lastDirection = forward;
     return ball.owner == null && ball.vel.length > 0.1;
+  }
+
+  /// Picks the loft and release power for a goal-kick long ball so the ball
+  /// comes to rest between just past a quarter of the pitch and its middle,
+  /// measured from the keeper's own goal line — and never beyond the
+  /// intended receiver. Mirrors [BallPhysics] frame by frame so the result
+  /// is predictable.
+  (double, double) _goalKickLongPassParams(PlayerGame keeper, PlayerGame target) {
+    final team = teamById(keeper.teamId);
+    final dir = team.attackDirection;
+    final ownGoalX = team.side == TeamSide.left
+        ? GameConstants.leftBound.toDouble()
+        : GameConstants.rightBound.toDouble();
+    final fraction = 0.40 + random.nextDouble() * 0.12;
+    var restX = ownGoalX + dir * GameConstants.pitchWidth * fraction;
+    // Never send the ball past the intended receiver.
+    if (dir == 1 && restX > target.pos.x - 20) restX = target.pos.x;
+    if (dir == -1 && restX < target.pos.x + 20) restX = target.pos.x;
+    final distance =
+        (Vec2(restX, target.pos.y) - ball.pos).length.clamp(240.0, 780.0).toDouble();
+    final passSkill = keeper.profile.passSkill;
+    final baseSpeed = 7.6 + passSkill * 2.0;
+    final powerFactor =
+        0.76 + keeper.stamina * 0.12 + keeper.profile.passSkill * 0.18;
+    const loft = 11.5;
+    var bestPower = 1.0;
+    var bestError = double.infinity;
+    for (var candidate = 0.60; candidate <= 2.001; candidate += 0.05) {
+      final power = candidate.toDouble();
+      final launch = baseSpeed * power * powerFactor;
+      final rest = _simulateHighPassRestDistance(launch, loft);
+      final error = (rest - distance).abs();
+      if (error < bestError) {
+        bestError = error;
+        bestPower = power;
+      }
+    }
+    return (loft, bestPower);
+  }
+
+  /// Picks the loft for a corner cross so the ball arrives over the penalty
+  /// area at a head-ball height of 1.80–2.20 m when it has covered the
+  /// distance to [landingPos]. [clampedPower] is the user's power input; a
+  /// single press of the long-pass button keeps the launch speed in a
+  /// controlled band instead of firing a rocket over everyone's head.
+  (double, double) _cornerHighBallParams(
+    PlayerGame player,
+    Vec2 landingPos,
+    double clampedPower,
+  ) {
+    final distance = (landingPos - ball.pos).length.clamp(80.0, 430.0).toDouble();
+    final passSkill = player.profile.passSkill;
+    final baseSpeed = 7.6 + passSkill * 2.0;
+    final powerFactor =
+        0.76 + player.stamina * 0.12 + player.profile.passSkill * 0.18;
+    final power = (0.92 + clampedPower * 0.10).clamp(0.92, 1.25).toDouble();
+    final launch = (baseSpeed * power * powerFactor).clamp(3.0, 11.2).toDouble();
+    final targetHeight = 1.80 + random.nextDouble() * 0.40;
+    double coveredAtArrival(double loft) =>
+        _highPassDistanceAtHeight(launch, loft, targetHeight);
+    var low = 1.0;
+    var high = 13.0;
+    final atHigh = coveredAtArrival(high);
+    final atLow = coveredAtArrival(low);
+    if (atHigh < 0 || atHigh < distance) {
+      // Even the highest arc falls short of the landing spot: use the
+      // highest arc so the ball drops as close as possible.
+      return (13.0, power);
+    }
+    if (atLow >= distance) {
+      // Even the flattest arc overshoots: use the lowest possible arc.
+      return (1.0, power);
+    }
+    for (var i = 0; i < 26; i++) {
+      final mid = (low + high) / 2;
+      final covered = coveredAtArrival(mid);
+      if (covered < 0 || covered < distance) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+    return (((low + high) / 2).clamp(1.0, 13.0).toDouble(), power);
+  }
+
+  /// Simulates a high pass launched at [launchSpeed] px/frame with vertical
+  /// velocity [loft] m/s and returns the total horizontal distance (px) the
+  /// ball travels before coming to rest. Mirrors [BallPhysics.update].
+  double _simulateHighPassRestDistance(double launchSpeed, double loft) {
+    const dt = 1.0 / 60.0;
+    const airDrag = 0.986;
+    const groundDrag = 0.985;
+    const airLimit = 11.2;
+    var speed = launchSpeed;
+    var height = 0.08;
+    var vertical = loft;
+    final cruise = launchSpeed * 0.34;
+    var bounced = false;
+    var distance = 0.0;
+    for (var frame = 0; frame < 2400; frame++) {
+      distance += speed;
+      final previousHeight = height;
+      height += vertical * dt;
+      vertical -= GameConstants.gravityMeters * dt;
+      if (height <= 0) {
+        if (previousHeight > 0.05 && vertical < -0.25) {
+          height = 0;
+          vertical = -vertical * 0.46;
+          speed *= 0.82;
+          bounced = true;
+          if (vertical < 0.8) vertical = 0;
+        } else {
+          height = 0;
+          vertical = 0;
+        }
+      }
+      final inAir = height > 0.08;
+      speed *= inAir ? airDrag : groundDrag;
+      if (inAir && speed > airLimit) speed = airLimit;
+      if (!bounced && height > 0.25 && speed < cruise) speed = cruise;
+      if (speed < 0.07) speed = 0;
+      if (speed == 0 && vertical == 0) break;
+    }
+    return distance;
+  }
+
+  /// Simulates a high pass and returns the horizontal distance (px) covered
+  /// at the moment the ball is falling through [arrivalHeight] meters while
+  /// still in the air. Returns -1 if the ball never reaches that height on
+  /// a downward flight.
+  double _highPassDistanceAtHeight(
+    double launchSpeed,
+    double loft,
+    double arrivalHeight,
+  ) {
+    const dt = 1.0 / 60.0;
+    const airDrag = 0.986;
+    const groundDrag = 0.985;
+    const airLimit = 11.2;
+    var speed = launchSpeed;
+    var height = 0.08;
+    var vertical = loft;
+    final cruise = launchSpeed * 0.34;
+    var distance = 0.0;
+    for (var frame = 0; frame < 1200; frame++) {
+      distance += speed;
+      height += vertical * dt;
+      vertical -= GameConstants.gravityMeters * dt;
+      if (height <= 0) {
+        return -1;
+      }
+      final inAir = height > 0.08;
+      speed *= inAir ? airDrag : groundDrag;
+      if (inAir && speed > airLimit) speed = airLimit;
+      if (height > 0.25 && speed < cruise) speed = cruise;
+      if (height <= arrivalHeight && vertical < 0) {
+        return distance;
+      }
+    }
+    return -1;
   }
 
   /// Nearest teammate who is open (no opponent within ~55 px). If all are
@@ -1454,6 +1721,30 @@ class MatchEngine {
       if (_ballProtectedByKeeperAgainst(owner.teamId.opponent)) {
         return;
       }
+      // A teammate who is NOT the controlled player can take possession
+      // from the controlled carrier by running right next to him (a
+      // one-touch pass via the run).
+      if (!isTeamAiControlled(owner.teamId) &&
+          ball.owner == controlledPlayer(owner.teamId)) {
+        for (final mate in sorted.where(
+          (p) => p.teamId == owner.teamId && p != owner && !p.isSentOff,
+        )) {
+          if (mate.controlled) {
+            continue;
+          }
+          if (mate.pos.distanceTo(owner.pos) >=
+              mate.radius + owner.radius + 3) {
+            continue;
+          }
+          if (mate.tackleContactCooldown > 0) {
+            continue;
+          }
+          mate.tackleContactCooldown = 0.8;
+          owner.tackleContactCooldown = 0.8;
+          ball.attachTo(mate);
+          return;
+        }
+      }
       for (final defender in sorted.where((p) => p.teamId != owner.teamId)) {
         if (defender.pos.distanceTo(owner.pos) <
             defender.radius + owner.radius + 3) {
@@ -1732,6 +2023,9 @@ class MatchEngine {
     if (ball.lastKickType == KickType.shoot && !player.isGoalkeeper) {
       shotDiagnostics.blocked += 1;
     }
+    // A teammate's deflection of a pass also counts as a successful pass —
+    // the ball reached one of the passer's own players.
+    _markPassSuccessfulIfDue(player);
     final incoming = ball.vel.isZero
         ? (ball.pos - player.pos).normalized(
             Vec2(teamById(player.teamId).attackDirection.toDouble(), 0),
@@ -2942,65 +3236,85 @@ class MatchEngine {
     return best ?? allMatchPlayers.first;
   }
 
+  /// Records a VAR decision from the replay screen. The decision is always
+  /// executed at the CURRENT moment of the match (now), stamped with the
+  /// current minute — a decision can never be applied to a past period.
   MatchTimelineEvent? addVarDecisionAtCurrentReplay(
     String kind,
     PlayerGame player,
   ) {
     final frame = currentReplayFrame;
     if (!replayMode || frame == null) return null;
-    final eventMinute = frame.minute.ceil();
     final eventFrame = replayIndex;
     final team = teamById(player.teamId);
 
     switch (kind) {
       case 'foul':
+      case 'handball': {
         player.profile.foulsCommitted += 1;
         player.matchFoulsCommitted += 1;
-        return _recordTimelineEvent(
-          kind: 'foul',
-          title: 'VAR: FAUL EKLENDI',
+        final event = _recordTimelineEvent(
+          kind: kind,
+          title: kind == 'foul' ? 'VAR: FAUL EKLENDI' : 'VAR: EL EKLENDI',
           detail: player.profile.name,
           teamId: player.teamId,
           relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
           replayIndexOverride: eventFrame,
         );
-      case 'handball':
-        player.profile.foulsCommitted += 1;
-        player.matchFoulsCommitted += 1;
-        return _recordTimelineEvent(
-          kind: 'handball',
-          title: 'VAR: EL EKLENDI',
-          detail: player.profile.name,
-          teamId: player.teamId,
-          relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
-          replayIndexOverride: eventFrame,
-        );
-      case 'offside':
-        return _recordTimelineEvent(
+        // The restart happens right now from the live ball position.
+        if (!finished) {
+          closeReplay();
+          final fouledTeam = opponentOf(team);
+          if (isInPenaltyBox(ball.pos, player.teamId)) {
+            startPenalty(fouledTeam.id, shootout: false);
+          } else {
+            _handleFreeKick(fouledTeam.id, ball.pos);
+          }
+          _startPause(
+            kind == 'foul' ? 'VAR: FAUL' : 'VAR: ELLE OYNAMA',
+            'Karar aninda uygulandi',
+            1.6,
+            null,
+            kind: 'var',
+          );
+        }
+        return event;
+      }
+      case 'offside': {
+        final event = _recordTimelineEvent(
           kind: 'offside',
           title: 'VAR: OFSAYT EKLENDI',
           detail: player.profile.name,
           teamId: player.teamId,
           relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
           replayIndexOverride: eventFrame,
         );
+        // The defending team gets a free kick right now.
+        if (!finished) {
+          closeReplay();
+          _handleFreeKick(opponentOf(team).id, ball.pos);
+          _startPause(
+            'VAR: OFSAYT',
+            'Karar aninda uygulandi',
+            1.6,
+            null,
+            kind: 'var',
+          );
+        }
+        return event;
+      }
       case 'yellowCard':
       case 'redCard':
         _issueCard(
           player,
           violent: kind == 'redCard',
           reckless: kind == 'yellowCard',
-          reason: "VAR $eventMinute' karari",
+          reason: 'VAR onayli kart',
           forcedCard: kind == 'redCard' ? 'red' : 'yellow',
-          eventMinute: eventMinute,
           eventReplayIndex: eventFrame,
         );
         final matches = timelineEvents.where(
           (event) =>
-              event.minute == eventMinute &&
               event.relatedPlayerId == player.id &&
               (event.kind == 'yellowCard' || event.kind == 'redCard'),
         );
@@ -3012,7 +3326,6 @@ class MatchEngine {
           detail: team.name,
           teamId: team.id,
           relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
           replayIndexOverride: eventFrame,
         );
         if (!finished) {
@@ -3027,7 +3340,7 @@ class MatchEngine {
         final goal = GoalEvent(
           teamId: team.id,
           scorerName: player.profile.name,
-          minute: eventMinute,
+          minute: minute.ceil(),
           scorerPlayerId: player.id,
         );
         team.goals.add(goal);
@@ -3037,7 +3350,6 @@ class MatchEngine {
           detail: '${team.name} • ${player.profile.name}',
           teamId: team.id,
           relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
           replayIndexOverride: eventFrame,
         );
       case 'injury':
@@ -3056,7 +3368,7 @@ class MatchEngine {
             playerName: player.profile.name,
             teamId: player.teamId,
             days: days,
-            minute: eventMinute,
+            minute: minute.ceil(),
           ),
         );
         if (team.players.contains(player)) {
@@ -3066,9 +3378,8 @@ class MatchEngine {
           kind: 'injury',
           title: 'VAR: SAKATLIK EKLENDI',
           detail: '${player.profile.name} • $days gun',
-          teamId: player.teamId,
+          teamId: team.id,
           relatedPlayerId: player.id,
-          minuteOverride: eventMinute,
           replayIndexOverride: eventFrame,
         );
       default:
@@ -3124,8 +3435,11 @@ class MatchEngine {
       return;
     }
     _replayPlaybackAccumulator += dt;
-    while (_replayPlaybackAccumulator >= 0.08) {
-      _replayPlaybackAccumulator -= 0.08;
+    // Slow motion (0.25x) stretches each frame, fast forward (4x) rushes
+    // through it.
+    final frameStep = 0.08 / replaySpeed;
+    while (_replayPlaybackAccumulator >= frameStep) {
+      _replayPlaybackAccumulator -= frameStep;
       replayIndex += 1;
       if (replayIndex >= replayFrames.length) {
         replayIndex = replayFrames.length - 1;
@@ -3222,8 +3536,15 @@ class MatchEngine {
     );
   }
 
+  /// Every referee decision recorded on the timeline can be canceled or
+  /// reinstated from the VAR screen — goals, penalties, fouls, handballs,
+  /// offsides and cards.
   bool canToggleTimelineDecision(MatchTimelineEvent timeline) =>
       timeline.kind == 'goal' ||
+      timeline.kind == 'penalty' ||
+      timeline.kind == 'foul' ||
+      timeline.kind == 'handball' ||
+      timeline.kind == 'offside' ||
       timeline.kind == 'yellowCard' ||
       timeline.kind == 'redCard';
 
@@ -3240,6 +3561,82 @@ class MatchEngine {
         toggleGoalReview(goalIndex);
         timeline.canceled = goals[goalIndex].canceled;
       }
+      return;
+    }
+    if (timeline.kind == 'penalty') {
+      // A penalty decision is tied to the penalty goal it produced (if any).
+      final goals = reviewGoals;
+      final goalIndex = goals.indexWhere(
+        (goal) =>
+            goal.minute == timeline.minute &&
+            goal.teamId == timeline.teamId &&
+            goal.isPenalty,
+      );
+      if (goalIndex >= 0) {
+        toggleGoalReview(goalIndex);
+        timeline.canceled = goals[goalIndex].canceled;
+        return;
+      }
+      timeline.canceled = !timeline.canceled;
+      banner = MatchBanner(
+        timeline.canceled
+            ? 'PENALTI KARARI IPTAL'
+            : 'PENALTI KARARI GERI ALINDI',
+        "VAR ${timeline.minute}'",
+        2.0,
+        minute: timeline.minute,
+        kind: 'var',
+      );
+      return;
+    }
+    if (timeline.kind == 'foul' || timeline.kind == 'handball') {
+      final canceling = !timeline.canceled;
+      final playerId = timeline.relatedPlayerId;
+      if (playerId != null) {
+        final players = allMatchPlayers.where((player) => player.id == playerId);
+        if (players.isNotEmpty) {
+          final player = players.first;
+          final delta = canceling ? -1 : 1;
+          player.matchFoulsCommitted = math.max(
+            0,
+            player.matchFoulsCommitted + delta,
+          ).toInt();
+          player.profile.foulsCommitted = math.max(
+            0,
+            player.profile.foulsCommitted + delta,
+          ).toInt();
+          // A card issued by this same decision is canceled or reinstated
+          // together with it.
+          for (final card in disciplinaryEvents) {
+            if (card.minute == timeline.minute &&
+                card.playerId == playerId &&
+                card.canceled != canceling) {
+              _applyCardToggle(card, player, canceling);
+            }
+          }
+        }
+      }
+      timeline.canceled = canceling;
+      banner = MatchBanner(
+        timeline.kind == 'foul'
+            ? (canceling ? 'FAUL KARARI IPTAL' : 'FAUL KARARI GERI ALINDI')
+            : (canceling ? 'EL KARARI IPTAL' : 'EL KARARI GERI ALINDI'),
+        "VAR ${timeline.minute}'",
+        2.0,
+        minute: timeline.minute,
+        kind: 'var',
+      );
+      return;
+    }
+    if (timeline.kind == 'offside') {
+      timeline.canceled = !timeline.canceled;
+      banner = MatchBanner(
+        timeline.canceled ? 'OFSAYT IPTAL' : 'OFSAYT GERI VERILDI',
+        "VAR ${timeline.minute}'",
+        2.0,
+        minute: timeline.minute,
+        kind: 'var',
+      );
       return;
     }
     if (timeline.kind != 'yellowCard' && timeline.kind != 'redCard') {
@@ -3261,12 +3658,24 @@ class MatchEngine {
     );
     if (players.isEmpty) return;
     final player = players.first;
-    final canceling = !resolvedCard.canceled;
+    _applyCardToggle(resolvedCard, player, !resolvedCard.canceled);
+    timeline.canceled = resolvedCard.canceled;
+    banner = MatchBanner(
+      resolvedCard.canceled ? 'KART IPTAL' : 'KART GERI VERILDI',
+      "VAR ${timeline.minute}' • ${resolvedCard.playerName}",
+      2.0,
+      minute: timeline.minute,
+      kind: 'var',
+    );
+  }
+
+  /// Applies or reverts the effects of a disciplinary event on the player.
+  /// [canceling] removes the card; otherwise it reinstates it.
+  void _applyCardToggle(DisciplinaryEvent card, PlayerGame player, bool canceling) {
     final delta = canceling ? -1 : 1;
     final includesYellow =
-        resolvedCard.card == 'yellow' || resolvedCard.card == 'secondYellow';
-    final includesRed =
-        resolvedCard.card == 'red' || resolvedCard.card == 'secondYellow';
+        card.card == 'yellow' || card.card == 'secondYellow';
+    final includesRed = card.card == 'red' || card.card == 'secondYellow';
     if (includesYellow) {
       player.yellowCardsThisMatch = math.max(
         0,
@@ -3302,27 +3711,19 @@ class MatchEngine {
           ..controlled = false;
       }
     }
-    if (resolvedCard.suspensionMatches > 0) {
+    if (card.suspensionMatches > 0) {
       player.profile.suspendedMatchesRemaining = canceling
           ? math.max(
               0,
               player.profile.suspendedMatchesRemaining -
-                  resolvedCard.suspensionMatches,
+                  card.suspensionMatches,
             ).toInt()
           : math.max(
               player.profile.suspendedMatchesRemaining,
-              resolvedCard.suspensionMatches,
+              card.suspensionMatches,
             ).toInt();
     }
-    resolvedCard.canceled = canceling;
-    timeline.canceled = canceling;
-    banner = MatchBanner(
-      canceling ? 'KART IPTAL' : 'KART GERI VERILDI',
-      "VAR ${timeline.minute}' • ${resolvedCard.playerName}",
-      2.0,
-      minute: timeline.minute,
-      kind: 'var',
-    );
+    card.canceled = canceling;
   }
 
   bool swapPlayerPositions(TeamId id, int firstIndex, int secondIndex) {
@@ -3359,6 +3760,91 @@ class MatchEngine {
       null,
     );
     return true;
+  }
+
+  /// Brings a previously substituted player back onto the pitch in place of
+  /// an injured or sent-off player (outIndex). Their played minutes and
+  /// stats are preserved because the same PlayerGame object returns.
+  bool reenterSubstituted(
+    TeamId id,
+    int outIndex,
+    PlayerGame incoming, {
+    double minute = 0,
+  }) {
+    final team = teamById(id);
+    final outgoing = (outIndex >= 0 && outIndex < team.players.length)
+        ? team.players[outIndex]
+        : null;
+    if (outgoing == null || !substitutedOutContains(team, incoming)) {
+      return false;
+    }
+    final ok = team.reenterSubstituted(outIndex, incoming, minute: minute);
+    if (!ok) {
+      return false;
+    }
+    _recordTimelineEvent(
+      kind: 'substitution',
+      title: 'SAHAYA DONUS',
+      detail:
+          '${outgoing.profile.name} cikti • ${incoming.profile.name} dondu',
+      teamId: id,
+      relatedPlayerId: incoming.id,
+      minuteOverride: minute.ceil(),
+    );
+    _startPause(
+      '${team.name}: oyuncu degisikligi',
+      'sahan donusu — ${incoming.profile.name}',
+      0.8,
+      null,
+    );
+    return true;
+  }
+
+  bool substitutedOutContains(TeamGame team, PlayerGame player) =>
+      team.substitutedOut.any((candidate) => candidate.id == player.id);
+
+  /// Designates an outfield player as the team's goalkeeper for the rest of
+  /// the match (used when the keeper is injured or sent off and there is no
+  /// backup keeper). A keeper who can no longer play and is still in the XI
+  /// leaves the match for good.
+  void designateGoalkeeper(PlayerGame player) {
+    if (player.role == PlayerRole.goalkeeper) {
+      return;
+    }
+    player
+      ..role = PlayerRole.goalkeeper
+      ..restartTarget = null;
+    final team = teamById(player.teamId);
+    for (final lost in team.players
+        .where(
+          (keeper) =>
+              keeper != player &&
+              keeper.role == PlayerRole.goalkeeper &&
+              (keeper.isInjuredInMatch || keeper.isSentOff),
+        )
+        .toList()) {
+      lost
+        ..exitedAtMinute = minute
+        ..controlled = false;
+      if (ball.owner == lost) {
+        ball.owner = null;
+      }
+      team.players.remove(lost);
+      team.removedFromMatch.add(lost);
+    }
+    _recordTimelineEvent(
+      kind: 'goalkeeperDesignation',
+      title: 'KALECI DEGISIKLIGI',
+      detail: '${player.profile.name} kaleci olarak belirlendi',
+      teamId: player.teamId,
+      relatedPlayerId: player.id,
+    );
+    _startPause(
+      'KALECI SECIMI',
+      '${player.profile.name} artik kalede',
+      1.2,
+      null,
+    );
   }
 
   void setSubstitutionPaused(bool value) {
@@ -3475,6 +3961,66 @@ class MatchEngine {
 
   int playedMinutesFor(PlayerGame player) => player.minutesThisMatch.round();
 
+  /// The periods (in match minutes) during which [player] was on the pitch.
+  /// An open segment ends with null while the player is still in the game.
+  List<(int, int?)> presenceSegmentsFor(PlayerGame player) {
+    final team = teamById(player.teamId);
+    final segments = <(int, int?)>[];
+    var entry = 0.0;
+    var everCameIn = false;
+    for (final record in team.substitutionLog) {
+      if (record.incoming.id == player.id) {
+        entry = record.minute;
+        everCameIn = true;
+      } else if (record.outgoing.id == player.id) {
+        segments.add((entry.ceil(), record.minute.ceil()));
+      }
+    }
+    final onPitchNow = team.players.any(
+      (candidate) => candidate.id == player.id && !candidate.isSentOff,
+    );
+    if (onPitchNow) {
+      segments.add((entry.ceil(), null));
+      return segments;
+    }
+    final inPitchList =
+        team.players.any((candidate) => candidate.id == player.id);
+    if (!everCameIn && segments.isEmpty && !inPitchList) {
+      // Never played (pure bench player).
+      return segments;
+    }
+    if (segments.isEmpty) {
+      final exit = (player.exitedAtMinute ?? minute).ceil();
+      segments.add((entry.ceil(), exit));
+      return segments;
+    }
+    final last = segments.last;
+    if (last.$2 == null) {
+      final exit = (player.exitedAtMinute ?? minute).ceil();
+      segments[segments.length - 1] = (last.$1, exit);
+    } else if (player.exitedAtMinute != null &&
+        player.exitedAtMinute!.ceil() > (last.$2 ?? 0)) {
+      segments.add((entry.ceil(), player.exitedAtMinute!.ceil()));
+    }
+    return segments;
+  }
+
+  /// Compact VAR label, e.g. "0'-62' • 75'-" or "yedek".
+  String presenceTextFor(PlayerGame player) {
+    final segments = presenceSegmentsFor(player);
+    if (segments.isEmpty) {
+      return 'yedek';
+    }
+    return segments
+        .map(
+          (segment) =>
+              "${segment.$1}'-${segment.$2 == null ? _matchMinuteNow() : '${segment.$2}\''}",
+        )
+        .join(' • ');
+  }
+
+  String _matchMinuteNow() => "${minute.toInt()}'";
+
   double matchRatingFor(PlayerGame player) =>
       _playerMatchRating(player, math.max(1, playedMinutesFor(player)).toInt());
 
@@ -3539,6 +4085,23 @@ class MatchEngine {
       return 'Yuksek pas yolda';
     }
     return 'Top bosta';
+  }
+
+  /// While play is stopped — substitution panel open, VAR screen open or a
+  /// referee pause — every player on the pitch rests and regains stamina.
+  void _recoverStaminaWhileFrozen(double dt) {
+    if (dt <= 0) {
+      return;
+    }
+    for (final player in allPlayers) {
+      if (player.stamina >= 1.0) {
+        continue;
+      }
+      final rate = 0.010 + player.profile.staminaSkill * 0.012;
+      player.stamina = (player.stamina + dt * rate)
+          .clamp(0.0, 1.0)
+          .toDouble();
+    }
   }
 
   void _drainStamina(PlayerGame player, double pixelDistance) {
@@ -3669,12 +4232,21 @@ class MatchEngine {
       final defending = teamById(restartTeamId!);
       if (player.teamId != restartTeamId) {
         // Opponents keep their general position for a goal kick — they
-        // are only pushed just outside the penalty area, never all the
-        // way back to the halfway line.
-        if (isInPenaltyBox(player.pos, defending.id)) {
-          player.pos.x = defending.side == TeamSide.left
-              ? GameConstants.leftBound + 152
-              : GameConstants.rightBound - 152;
+        // are only pushed back if they are closer to the goal than a
+        // third of the pitch.
+        final limitX = defending.side == TeamSide.left
+            ? GameConstants.leftBound +
+                GameConstants.pitchWidth / 3.0 +
+                24.0
+            : GameConstants.rightBound -
+                GameConstants.pitchWidth / 3.0 -
+                24.0;
+        if (defending.side == TeamSide.left) {
+          if (player.pos.x < limitX) {
+            player.pos.x = limitX;
+          }
+        } else if (player.pos.x > limitX) {
+          player.pos.x = limitX;
         }
       }
     }
@@ -3765,6 +4337,22 @@ class MatchEngine {
         player.matchClearances += 1;
       }
     } else if (type == KickType.shoot) {
+      // A "shot" that is not even directed at the opponent goal is just a
+      // long ball (distance) — it never counts as a shot. Only strikes
+      // that head towards the goal count in the stats.
+      final goal = goalCenterFor(team);
+      final toGoal = goal - ball.pos;
+      if (toGoal.lengthSquared > 1) {
+        final aim = direction.normalized(
+          Vec2(team.attackDirection.toDouble(), 0),
+        );
+        final towardGoal = aim.dot(
+          toGoal.normalized(Vec2(team.attackDirection.toDouble(), 0)),
+        );
+        if (towardGoal < 0.30) {
+          return;
+        }
+      }
       player.profile.shots += 1;
       player.matchShots += 1;
       if (team.id == TeamId.blue) {
@@ -3813,6 +4401,34 @@ class MatchEngine {
     return (9.2 + shotPowerSkill * 3.6) * power;
   }
 
+  /// A pass is successful the moment ANY of the passer's teammates touches
+  /// the ball — a clean reception or even a deflection. Each pass is
+  /// counted at most once (guarded by ball.passSuccessCounted).
+  void _markPassSuccessfulIfDue(PlayerGame toucher) {
+    final passer = ball.lastPasser;
+    if (passer == null || passer == toucher) {
+      return;
+    }
+    if (passer.teamId != toucher.teamId) {
+      return;
+    }
+    if (ball.lastKickType != KickType.pass &&
+        ball.lastKickType != KickType.highPass) {
+      return;
+    }
+    if (ball.passSuccessCounted) {
+      return;
+    }
+    ball.passSuccessCounted = true;
+    passer.profile.successfulPasses += 1;
+    passer.matchSuccessfulPasses += 1;
+    if (passer.teamId == TeamId.blue) {
+      blueSuccessfulPasses += 1;
+    } else {
+      redSuccessfulPasses += 1;
+    }
+  }
+
   void _recordReception(PlayerGame receiver) {
     final passer = ball.lastPasser;
     if (passer == null ||
@@ -3822,19 +4438,8 @@ class MatchEngine {
             ball.lastKickType != KickType.highPass)) {
       return;
     }
-    // A pass only counts as successful when it reaches a teammate without
-    // any opponent touching/deflecting it on the way (potentialAssister is
-    // cleared the moment an opponent gets a touch on the ball).
-    if (ball.potentialAssister != passer) {
-      return;
-    }
-    passer.profile.successfulPasses += 1;
-    passer.matchSuccessfulPasses += 1;
-    if (passer.teamId == TeamId.blue) {
-      blueSuccessfulPasses += 1;
-    } else {
-      redSuccessfulPasses += 1;
-    }
+    // As soon as a teammate touches the ball the pass is successful.
+    _markPassSuccessfulIfDue(receiver);
     // Track assists: if the receiver scores a goal within reasonable time
     // (handled in _scoreGoal), and dribble tracking
     receiver.matchDribbles += 1;
@@ -4162,11 +4767,73 @@ class MatchEngine {
           ),
         );
         player.profile.recalculateZekaGucu();
+        _applyMatchAttributeDrift(player, rating);
       }
       player.profile
         ..fitness = player.stamina
         ..fitnessUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     }
+  }
+
+  /// After every match the player's attributes drift a little: strength,
+  /// IQ, shot power and the rest change with small, performance-based
+  /// amounts instead of staying frozen.
+  void _applyMatchAttributeDrift(PlayerGame player, double rating) {
+    final profile = player.profile;
+    double nudge(
+      double value,
+      double delta, {
+      double lo = 40.0,
+      double hi = 99.0,
+    }) =>
+        (value + delta).clamp(lo, hi).toDouble();
+
+    // A gentle random walk so values evolve slowly match to match.
+    final jitter = (random.nextDouble() - 0.5) * 0.8;
+    final performance = (rating - 6.0) * 0.18;
+
+    profile.overallRating = nudge(profile.overallRating, jitter + performance);
+    profile.speedRating = nudge(profile.speedRating, jitter * 0.7);
+    profile.composureRating = nudge(
+      profile.composureRating,
+      player.matchFoulsCommitted >= 4 ? -0.7 : performance * 0.5,
+    );
+    profile.balanceRating = nudge(profile.balanceRating, jitter * 0.5);
+    profile.dayaniklilikGucu = nudge(
+      profile.dayaniklilikGucu,
+      player.stamina > 0.65 ? 0.3 : -0.3,
+    );
+    if (player.matchGoals >= 1) {
+      profile.finishingRating = nudge(
+        profile.finishingRating,
+        0.6 + player.matchGoals * 0.3,
+      );
+    }
+    if (player.matchShots >= 3) {
+      profile.shotPowerRating = nudge(profile.shotPowerRating, 0.4);
+      profile.shootingRating = nudge(profile.shootingRating, 0.3);
+    }
+    if (player.matchShotsOnTarget >= 2) {
+      profile.longShotsRating = nudge(profile.longShotsRating, 0.4);
+    }
+    if (player.matchAssists >= 1) {
+      profile.passingRating = nudge(profile.passingRating, 0.5);
+      profile.curveRating = nudge(profile.curveRating, 0.3);
+    }
+    if (player.matchSuccessfulPasses >= 20) {
+      profile.passingRating = nudge(profile.passingRating, 0.3);
+    }
+    if (player.matchTackles >= 5 && player.role.isDefender) {
+      profile.dayaniklilikGucu = nudge(profile.dayaniklilikGucu, 0.4);
+    }
+    if (player.matchSaves >= 4 && player.isGoalkeeper) {
+      profile.goalkeepingRating = nudge(profile.goalkeepingRating, 0.5);
+      profile.goalkeeperDivingRating = nudge(profile.goalkeeperDivingRating, 0.3);
+    }
+    profile.zekaGucu = nudge(profile.zekaGucu, performance * 0.4);
+
+    // The market value follows the (small) new attribute values.
+    profile.recalculateMarketValue(strong: false);
   }
 
   double _playerMatchRating(PlayerGame player, int minutes) {
@@ -4240,6 +4907,18 @@ class MatchEngine {
     return best;
   }
 
+  /// A goalkeeper who commits a foul goes down on the ground — the same
+  /// "yerde" state the painter uses for keeper dives.
+  void _knockFoulerDown(PlayerGame player) {
+    if (!player.isGoalkeeper || player.isSentOff) {
+      return;
+    }
+    player
+      ..keeperGroundTimer = math.max(player.keeperGroundTimer, 1.1)
+      ..jumpAnimationTimer = 0
+      ..keeperState = 'yerde';
+  }
+
   void _applyReviewedHandball({
     required PlayerGame offender,
     required PlayerGame? attacker,
@@ -4250,6 +4929,7 @@ class MatchEngine {
   }) {
     offender.matchFoulsCommitted += 1;
     offender.profile.foulsCommitted += 1;
+    _knockFoulerDown(offender);
     _recordTimelineEvent(
       kind: 'handball',
       title: 'ELLE OYNAMA',
@@ -4310,6 +4990,7 @@ class MatchEngine {
   }) {
     fouler.profile.foulsCommitted += 1;
     fouler.matchFoulsCommitted += 1;
+    _knockFoulerDown(fouler);
     _recordTimelineEvent(
       kind: 'foul',
       title: 'FAUL',
@@ -4405,9 +5086,10 @@ class MatchEngine {
         ..isSentOff = true
         ..matchRedCards += 1
         ..controlled = false
-        ..pos = Vec2(-100, -100);
+        ..pos = Vec2(-100, -100)
+        ..exitedAtMinute = minute;
       player.profile.redCards += 1;
-      // Every red card, including a second yellow, carries a fixed two-match
+      // Every red card, including a second yellow, carries a one-match
       // suspension. The CEZALAR page can adjust it administratively later.
       suspension = GameConstants.redCardSuspensionMatches;
       player.profile.suspendedMatchesRemaining = math.max(
@@ -4531,10 +5213,12 @@ class MatchEngine {
     player
       ..isSentOff = true
       ..controlled = false
-      ..pos = Vec2(-100, -100);
+      ..pos = Vec2(-100, -100)
+      ..exitedAtMinute = minute;
     if (ball.owner == player) {
       ball.owner = null;
     }
+    teamById(player.teamId).removedFromMatch.add(player);
   }
 
   /// Handle free kick: give ball to fouled team.
@@ -4570,6 +5254,108 @@ class MatchEngine {
     if (nearGoal && isTeamAiControlled(defending.id)) {
       chooseFreeKickWall(_wallCandidates.take(4).map((player) => player.id));
     }
+    _shapeFreeKickSupport(team, defending, taker, nearGoal);
+  }
+
+  /// Both teams get real set-piece shape: the attacking team sends
+  /// runners into and around the box so the taker always has targets, and
+  /// the defending team (outside the wall) man-marks the runners so no
+  /// gaps are left open.
+  void _shapeFreeKickSupport(
+    TeamGame attacking,
+    TeamGame defending,
+    PlayerGame taker,
+    bool nearGoal,
+  ) {
+    final goal = goalCenterFor(attacking);
+    var slot = 0;
+    for (final attacker in attacking.players.where(
+      (player) =>
+          !player.isGoalkeeper &&
+          player != taker &&
+          !player.isSentOff &&
+          !player.isInjuredInMatch,
+    )) {
+      if (nearGoal) {
+        // A fan of runners inside and just outside the box.
+        attacker.restartTarget = Vec2(
+          goal.x - attacking.attackDirection * (16 + (slot % 3) * 30),
+          GameConstants.virtualHeight / 2 -
+              100 +
+              (slot % 7) * 34 +
+              (slot.isEven ? -12 : 12),
+        )..clampTo(
+            GameConstants.leftBound + 20,
+            GameConstants.topBound + 20,
+            GameConstants.rightBound - 20,
+            GameConstants.bottomBound - 20,
+          );
+      } else {
+        // Distant free kick: the attackers push up towards the box.
+        attacker.restartTarget = Vec2(
+          goal.x - attacking.attackDirection * (150 + (slot % 3) * 40),
+          GameConstants.virtualHeight / 2 -
+              90 +
+              (slot % 5) * 44 +
+              (slot.isEven ? -14 : 14),
+        )..clampTo(
+            GameConstants.leftBound + 20,
+            GameConstants.topBound + 20,
+            GameConstants.rightBound - 20,
+            GameConstants.bottomBound - 20,
+          );
+      }
+      slot += 1;
+    }
+    // Defenders (who are not in the wall) each take up the runner that is
+    // closest to them and stand between that runner and their own goal.
+    var defendSlot = 0;
+    for (final defender in defending.players.where(
+      (player) =>
+          !player.isGoalkeeper &&
+          !player.isSentOff &&
+          !player.isInjuredInMatch,
+    )) {
+      PlayerGame? marked;
+      var bestDistance = double.infinity;
+      for (final attacker in attacking.players) {
+        if (attacker == taker ||
+            attacker.isGoalkeeper ||
+            attacker.isSentOff ||
+            attacker.restartTarget == null) {
+          continue;
+        }
+        final distance = attacker.pos.distanceTo(defender.pos);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          marked = attacker;
+        }
+      }
+      if (marked != null && marked.restartTarget != null) {
+        defender.restartTarget = marked.restartTarget! +
+            Vec2(
+              defending.attackDirection * (12 + (defendSlot % 3) * 8),
+              defendSlot.isEven ? -8 : 8,
+            )..clampTo(
+                GameConstants.leftBound + 20,
+                GameConstants.topBound + 20,
+                GameConstants.rightBound - 20,
+                GameConstants.bottomBound - 20,
+              );
+      } else {
+        defender.restartTarget = Vec2(
+          goalCenterFor(defending).x +
+              defending.attackDirection * (60 + (defendSlot % 3) * 22),
+          GameConstants.virtualHeight / 2 - 70 + defendSlot * 24,
+        )..clampTo(
+            GameConstants.leftBound + 20,
+            GameConstants.topBound + 20,
+            GameConstants.rightBound - 20,
+            GameConstants.bottomBound - 20,
+          );
+      }
+      defendSlot += 1;
+    }
   }
 
   void chooseFreeKickWall(Iterable<String> playerIds) {
@@ -4577,9 +5363,9 @@ class MatchEngine {
       return;
     }
     final defending = teamById(wallDefendingTeamId!);
+    // Any number of players may join the wall — there is no cap.
     final selected = _wallCandidates
         .where((player) => playerIds.contains(player.id))
-        .take(5)
         .toList();
     wallSelectionPending = false;
     wallDefendingTeamId = null;
@@ -4593,7 +5379,9 @@ class MatchEngine {
     final towardGoal = (ownGoal - ball.pos).normalized(
       Vec2(-defending.attackDirection.toDouble(), 0),
     );
-    final lineCenter = ball.pos + towardGoal * 66;
+    // The wall stands clearly further from the ball than the 9.15 m rule
+    // suggests — the user asked for extra space between ball and wall.
+    final lineCenter = ball.pos + towardGoal * 98;
     final lateral = Vec2(-towardGoal.y, towardGoal.x);
     for (var index = 0; index < selected.length; index++) {
       final offset = index - (selected.length - 1) / 2;

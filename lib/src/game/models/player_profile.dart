@@ -115,6 +115,7 @@ class PlayerProfile {
     required this.name,
     required this.heightMeters,
     required this.isGoalkeeper,
+    this.country = '',
     this.number,
     this.overallRating = 60,
     this.shootingRating = 60,
@@ -178,6 +179,10 @@ class PlayerProfile {
 
   final String id;
   String name;
+
+  /// Country of the player (assigned from the admin page).
+  /// Empty string = no country set.
+  String country;
   final double heightMeters;
   final bool isGoalkeeper;
   int? number;
@@ -283,6 +288,11 @@ class PlayerProfile {
       ? 0
       : (shotsOnTarget * 100 / shots).round().clamp(0, 100).toInt();
 
+  /// Puan ortalaması — the average rating across every played match.
+  double get pointAverage => matchesPlayed <= 0
+      ? 0
+      : (points / matchesPlayed).clamp(0, 10).toDouble();
+
   /// Advances injury recovery and disciplinary suspension by one team match.
   void advanceUnavailableStatusAfterTeamMatch() {
     if (injuredDaysRemaining > 0) {
@@ -384,18 +394,7 @@ class PlayerProfile {
 
   /// Compact market value text: "1.00 Mr" (milyar), "850 Mn" (milyon),
   /// "12 B" (bin).
-  String get marketValueText {
-    final v = marketValue;
-    if (v >= 1000000000) {
-      final b = v / 1000000000;
-      return '${b.toStringAsFixed(b >= 10 ? 0 : 2)} Mr';
-    }
-    if (v >= 1000000) {
-      final m = v / 1000000;
-      return '${m.toStringAsFixed(m >= 10 ? 0 : 1)} Mn';
-    }
-    return '${v.round()} B';
-  }
+  String get marketValueText => formatMarketValue(marketValue);
 
   /// Full market value with thousand separators, e.g. 1.250.000.000.
   String get marketValueFull {
@@ -598,6 +597,7 @@ class PlayerProfile {
     return PlayerProfile(
       id: json['id'] as String,
       name: json['name'] as String,
+      country: json['country'] as String? ?? '',
       heightMeters: (json['heightMeters'] as num).toDouble(),
       isGoalkeeper: json['isGoalkeeper'] as bool? ?? false,
       number: (json['number'] as num?)?.toInt(),
@@ -700,6 +700,7 @@ class PlayerProfile {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'country': country,
         'heightMeters': heightMeters,
         'isGoalkeeper': isGoalkeeper,
         'number': number,
@@ -778,4 +779,18 @@ class PlayerProfile {
         'injuryUpdatedAt': injuryUpdatedAt,
         'matchHistory': matchHistory.map((r) => r.toJson()).toList(),
       };
+}
+
+/// Formats a market value (any amount) into the compact "Mr/Mn/B" text.
+/// Used for single players as well as summed team totals.
+String formatMarketValue(double v) {
+  if (v >= 1000000000) {
+    final b = v / 1000000000;
+    return '${b.toStringAsFixed(b >= 10 ? 0 : 2)} Mr';
+  }
+  if (v >= 1000000) {
+    final m = v / 1000000;
+    return '${m.toStringAsFixed(m >= 10 ? 0 : 1)} Mn';
+  }
+  return '${v.round()} B';
 }

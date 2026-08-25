@@ -24,6 +24,15 @@ enum FormationType {
   support4411,
   counter523,
   creators3421,
+  bus451,
+  press532,
+  high3412,
+  extreme244,
+  libero3511,
+  wide334,
+  double5221,
+  wm3223,
+  oval4123,
   balanced,
   attacking,
   compact,
@@ -144,9 +153,45 @@ const Map<FormationType, _FormationSpec> _formationSpecs = {
     '3-4-2-1 Cift Oyun Kuruculu Sistem',
     [3, 4, 2, 1],
   ),
+  FormationType.bus451: _FormationSpec('4-5-1 Cekilgi Otobus', [4, 5, 1]),
+  FormationType.press532: _FormationSpec('5-3-2 Pres Destekli Sistem', [
+    5,
+    3,
+    2,
+  ]),
+  FormationType.high3412: _FormationSpec('3-4-1-2 Ikili Forvet Sistemi', [
+    3,
+    4,
+    1,
+    2,
+  ]),
+  FormationType.extreme244: _FormationSpec('2-4-4 Ekstrem Hucum', [2, 4, 4]),
+  FormationType.libero3511: _FormationSpec('3-5-1-1 Libero Destekli', [
+    3,
+    5,
+    1,
+    1,
+  ]),
+  FormationType.wide334: _FormationSpec('3-3-4 Genis Hucum', [3, 3, 4]),
+  FormationType.double5221: _FormationSpec('5-2-2-1 Katli Savunma', [
+    5,
+    2,
+    2,
+    1,
+  ]),
+  FormationType.wm3223: _FormationSpec('3-2-2-3 Klasik WM', [3, 2, 2, 3]),
+  FormationType.oval4123: _FormationSpec('4-1-2-3 Yuvarlak Orta Saha', [
+    4,
+    1,
+    2,
+    3,
+  ]),
 };
 
-const playableFormationTypes = [
+/// Every playable formation, sorted defensively: the most defensive
+/// setups (5 back lines first) come first, then 4 back, 3 back and the
+/// extreme attacking 2 back systems.
+const List<FormationType> _unsortedPlayableFormations = [
   FormationType.bus541,
   FormationType.kontrollu5311,
   FormationType.midfield361,
@@ -170,7 +215,34 @@ const playableFormationTypes = [
   FormationType.support4411,
   FormationType.counter523,
   FormationType.creators3421,
+  FormationType.bus451,
+  FormationType.press532,
+  FormationType.high3412,
+  FormationType.extreme244,
+  FormationType.libero3511,
+  FormationType.wide334,
+  FormationType.double5221,
+  FormationType.wm3223,
+  FormationType.oval4123,
 ];
+
+int _formationDefensiveScore(FormationType type) {
+  final spec = _formationSpecs[type._normalized]!;
+  return spec.lines.isEmpty ? 0 : spec.lines.first;
+}
+
+final List<FormationType> playableFormationTypes = _sortPlayableFormations();
+
+List<FormationType> _sortPlayableFormations() {
+  final sorted = [..._unsortedPlayableFormations];
+  sorted.sort((a, b) {
+    final byDefense = _formationDefensiveScore(b)
+        .compareTo(_formationDefensiveScore(a));
+    if (byDefense != 0) return byDefense;
+    return a.title.compareTo(b.title);
+  });
+  return sorted;
+}
 
 extension FormationText on FormationType {
   String get title =>

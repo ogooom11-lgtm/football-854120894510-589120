@@ -24,5 +24,5 @@ class GameConstants {
   static const double gravityMeters = 9.8;
   static const double replayFreezeSeconds = 2.6;
   static const double periodPauseSeconds = 2.2;
-  static const int redCardSuspensionMatches = 2;
+  static const int redCardSuspensionMatches = 1;
 }

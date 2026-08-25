@@ -41,6 +41,11 @@ class PlayerGame {
   int yellowCardsThisMatch = 0;
   double stamina = 1.0;
   double minutesThisMatch = 0;
+
+  /// The match minute when this player last left the pitch (substitution,
+  /// red card or injury removal). Null while the player is on the pitch or
+  /// has never been on it.
+  double? exitedAtMinute;
   String keeperState = 'hazir';
   GoalkeeperState goalkeeperState = GoalkeeperState.idle;
   GoalkeeperAction goalkeeperAction = GoalkeeperAction.stay;

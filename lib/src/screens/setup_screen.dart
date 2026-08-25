@@ -9,6 +9,7 @@ import '../game/enums/ai_play_style.dart';
 import '../game/enums/match_mode.dart';
 import '../game/enums/player_role.dart';
 import '../game/enums/team_id.dart';
+import '../game/logic/role_affinity.dart';
 import '../game/models/formation.dart';
 import '../game/models/jersey_kit.dart';
 import '../game/models/match_event.dart';
@@ -20,6 +21,8 @@ import '../storage/roster_storage.dart';
 import 'account_detail_screen.dart';
 import 'free_agents_screen.dart';
 import 'game_screen.dart';
+import 'player_detail_screen.dart';
+import 'team_detail_screen.dart';
 import 'team_players_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -38,6 +41,7 @@ class _SetupScreenState extends State<SetupScreen> {
       TextEditingController();
   final TextEditingController _blueNameController = TextEditingController();
   final TextEditingController _redNameController = TextEditingController();
+  final TextEditingController _newCountryController = TextEditingController();
   final FocusNode _keyboardFocus = FocusNode();
   final Set<LogicalKeyboardKey> _pressedKeys = <LogicalKeyboardKey>{};
   SavedGameData? _data;
@@ -57,6 +61,18 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _adminPasswordError = false;
   int _pendingAdminTab = 5;
   int _adminSubTab = 0;
+  String _adminTransferPlayerId = '';
+  String _adminTransferTeamId = '';
+  // Admin "Değer" tab (kimo@ only).
+  String _valueTeamId = '';
+  bool _valueQuickUp = true;
+  int _valueQuickStep = 1;
+  String _valueSearch = '';
+  String _valueTeamFilter = 'all';
+  final Set<String> _valueSelectedPlayerIds = {};
+  final List<({String attrKey, bool up, int amount})> _valueAdjustments = [
+    (attrKey: 'shotPower', up: true, amount: 5),
+  ];
   String _penaltySearch = '';
   String _accountSearch = '';
   String _teamSearch = '';
@@ -79,6 +95,7 @@ class _SetupScreenState extends State<SetupScreen> {
     _importPlayersPathController.dispose();
     _blueNameController.dispose();
     _redNameController.dispose();
+    _newCountryController.dispose();
     _adminUnlockTimer?.cancel();
     _adminPasswordController.dispose();
     _keyboardFocus.dispose();
@@ -763,6 +780,16 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
+  static const List<(int, IconData, String)> _navItems = [
+    (0, Icons.account_circle, 'Hesap'),
+    (1, Icons.sports_soccer, 'Mac'),
+    (2, Icons.groups, 'Takimlar'),
+    (3, Icons.directions_run, 'Oyuncular'),
+    (4, Icons.help_outline, 'Aciklama'),
+    (5, Icons.admin_panel_settings, 'Yonetim'),
+    (6, Icons.gavel, 'Cezalar'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -777,22 +804,32 @@ class _SetupScreenState extends State<SetupScreen> {
         body: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xff08130e), Color(0xff040906), Color(0xff0a1812)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xff07130e),
+                Color(0xff04100a),
+                Color(0xff0a1a12),
+              ],
             ),
           ),
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _topBar(),
-                  const SizedBox(height: 14),
-                  _setupTabs(),
-                  const SizedBox(height: 14),
-                  Expanded(child: _setupPage(data)),
+                  _sideNav(data),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _headerBar(data),
+                        const SizedBox(height: 12),
+                        Expanded(child: _setupPage(data)),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -802,61 +839,335 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  Widget _setupTabs() {
-    final data = _data;
-    const segments = <ButtonSegment<int>>[
-      ButtonSegment(
-        value: 0,
-        icon: Icon(Icons.account_circle),
-        label: Text('Hesap'),
+  Widget _sideNav(SavedGameData data) {
+    final account = data.activeAccount;
+    return Container(
+      width: 110,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xff0e1f18), Color(0xff081310)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xffd4af37).withValues(alpha: 0.22)),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black38,
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
       ),
-      ButtonSegment(
-        value: 1,
-        icon: Icon(Icons.sports_soccer),
-        label: Text('Mac'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        child: Column(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xff00c896), Color(0xff0a7d5a)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xff00c896).withValues(alpha: 0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.sports_soccer, size: 30, color: Colors.white),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'BOMBAN',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.8,
+                color: Color(0xfff5d67b),
+              ),
+            ),
+            const Text(
+              'FUTBOL',
+              style: TextStyle(
+                fontSize: 8.5,
+                letterSpacing: 3.4,
+                color: Colors.white38,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: ListView(
+                children: [
+                  for (final item in _navItems)
+                    _navItem(data, item.$1, item.$2, item.$3),
+                ],
+              ),
+            ),
+            GestureDetector(
+              onTap: () => setState(() => _setupTab = 0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.10),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 11,
+                      backgroundColor:
+                          const Color(0xff00c896).withValues(alpha: 0.45),
+                      child: Text(
+                        account.username.isNotEmpty
+                            ? account.username[0].toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        account.username,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      ButtonSegment(
-        value: 2,
-        icon: Icon(Icons.groups),
-        label: Text('Takimlar'),
+    );
+  }
+
+  Widget _navItem(
+    SavedGameData data,
+    int value,
+    IconData icon,
+    String label,
+  ) {
+    final active = _setupTab == value;
+    final locked = (value == 5 || value == 6) && data.adminLoggedIn != true;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () {
+            // CEZALAR and Yonetim stay visible but always ask for the
+            // admin password when the admin is not logged in.
+            if (locked) {
+              _openAdminLogin(targetTab: value);
+              return;
+            }
+            setState(() => _setupTab = value);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              gradient: active
+                  ? const LinearGradient(
+                      colors: [Color(0xff12402e), Color(0xff0d2b20)],
+                    )
+                  : null,
+              borderRadius: BorderRadius.circular(14),
+              border: active
+                  ? Border.all(
+                      color: const Color(0xffffd34d).withValues(alpha: 0.65),
+                      width: 1.2,
+                    )
+                  : Border.all(color: Colors.transparent),
+              boxShadow: active
+                  ? const [BoxShadow(color: Color(0x3300c896), blurRadius: 10)]
+                  : const [],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 21,
+                  color: active
+                      ? const Color(0xfff5d67b)
+                      : (locked ? Colors.white30 : Colors.white60),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                    color: active ? Colors.white : Colors.white54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-      ButtonSegment(
-        value: 3,
-        icon: Icon(Icons.directions_run),
-        label: Text('Oyuncular'),
+    );
+  }
+
+  Widget _headerBar(SavedGameData data) {
+    final (title, subtitle) = switch (_setupTab) {
+      0 => (
+          'Hesaplar',
+          'Hesap olustur, giris yap ve aktif duzenleyiciyi sec'
+        ),
+      1 => ('Mac Ayarlari', 'Takim, dizilis, forma ve kadroyu sec'),
+      2 => ('Takimlar', 'Takim yonetimi, formlar, degerler ve sonuclar'),
+      3 => ('Oyuncular', 'Kadroyu yonet; oyuncuya tiklayip profilini ac'),
+      4 => ('Aciklama', 'Nasil oynanir, kisayollar ve yonetim'),
+      5 => ('Yonetim', 'Yonetici paneli'),
+      _ => ('Cezalar', 'Ceza ve sakatlik yonetimi'),
+    };
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 13, 20, 13),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xff0d1d16), Color(0xff0a1511)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xffd4af37).withValues(alpha: 0.30)),
       ),
-      ButtonSegment(
-        value: 4,
-        icon: Icon(Icons.help_outline),
-        label: Text('Aciklama'),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white54, fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+          if (_showAdminPasswordField)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 180,
+                  child: TextField(
+                    controller: _adminPasswordController,
+                    autofocus: true,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      hintText: data.adminPasswordSet
+                          ? 'Yonetici sifresi'
+                          : 'Yeni yonetici sifresi',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(
+                          color: _adminPasswordError
+                              ? Colors.redAccent
+                              : const Color(0xffffd34d),
+                        ),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      isDense: true,
+                      errorText: _adminPasswordError ? 'Hatali sifre' : null,
+                    ),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    onSubmitted: (_) => _submitAdminPassword(),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  icon: const Icon(Icons.check, color: Color(0xffffd34d)),
+                  onPressed: _submitAdminPassword,
+                  tooltip: 'Onayla',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white54),
+                  onPressed: _cancelAdminLogin,
+                  tooltip: 'Iptal',
+                ),
+              ],
+            ),
+          if (!_showAdminPasswordField) ...[
+            OutlinedButton.icon(
+              onPressed: _openAccountDetail,
+              icon: const Icon(Icons.person, size: 18, color: Colors.white70),
+              label: Text(
+                data.activeAccount.username,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white24, width: 1),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 11,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              onPressed: _startMatch,
+              icon: const Icon(Icons.play_arrow),
+              label: const Text(
+                'Maca basla',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xff00c896),
+                foregroundColor: const Color(0xff00130c),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 12,
+                ),
+                shadowColor: const Color(0xff00c896).withValues(alpha: 0.5),
+                elevation: 4,
+              ),
+            ),
+          ],
+        ],
       ),
-      ButtonSegment(
-        value: 5,
-        icon: Icon(Icons.admin_panel_settings),
-        label: Text('Yonetim'),
-      ),
-      ButtonSegment(
-        value: 6,
-        icon: Icon(Icons.gavel),
-        label: Text('CEZALAR'),
-      ),
-    ];
-    final selectedValue = segments.any((segment) => segment.value == _setupTab)
-        ? _setupTab
-        : 0;
-    return SegmentedButton<int>(
-      segments: segments,
-      selected: {selectedValue},
-      onSelectionChanged: (selection) {
-        final target = selection.first;
-        // CEZALAR and Yonetim pages stay visible but always ask for the
-        // admin password when the admin is not logged in.
-        if ((target == 5 || target == 6) && data?.adminLoggedIn != true) {
-          _openAdminLogin(targetTab: target);
-          return;
-        }
-        setState(() => _setupTab = target);
-      },
     );
   }
 
@@ -877,164 +1188,6 @@ class _SetupScreenState extends State<SetupScreen> {
       6 => data.adminLoggedIn ? _penaltiesPage(data) : _lockedPenaltiesPage(),
       _ => _helpPage(),
     };
-  }
-
-  Widget _topBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xff0e231b), Color(0xff0a1511), Color(0xff0d1a12)],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xffd4af37).withValues(alpha: 0.35)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 22,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xff00c896), Color(0xff0a7d5a)],
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xff00c896).withValues(alpha: 0.35),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.sports_soccer, size: 34, color: Colors.white),
-          ),
-          const SizedBox(width: 16),
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'BOMBAN FUTBOL',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2.2,
-                  color: Color(0xfff5d67b),
-                ),
-              ),
-              Text(
-                'Profesyonel Futbol Yonetimi',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-          ),
-          const Spacer(),
-        const Spacer(),
-        if (_showAdminPasswordField)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 180,
-                child: TextField(
-                  controller: _adminPasswordController,
-                  autofocus: true,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    hintText: _data?.adminPasswordSet == true
-                        ? 'Yonetici sifresi'
-                        : 'Yeni yonetici sifresi',
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6),
-                      borderSide: BorderSide(
-                        color: _adminPasswordError
-                            ? Colors.redAccent
-                            : const Color(0xffffd34d),
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    isDense: true,
-                    errorText: _adminPasswordError ? 'Hatali sifre' : null,
-                  ),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  onSubmitted: (_) => _submitAdminPassword(),
-                ),
-              ),
-              const SizedBox(width: 6),
-              IconButton(
-                icon: const Icon(Icons.check, color: Color(0xffffd34d)),
-                onPressed: _submitAdminPassword,
-                tooltip: 'Onayla',
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white54),
-                onPressed: _cancelAdminLogin,
-                tooltip: 'Iptal',
-              ),
-            ],
-          ),
-        if (!_showAdminPasswordField)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _openAccountDetail,
-                icon: const Icon(Icons.person, size: 18, color: Colors.white70),
-                label: const Text(
-                  'Hesap',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white70,
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.white24, width: 1),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: _startMatch,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Maca basla'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xff00c896),
-                  foregroundColor: const Color(0xff00130c),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 12,
-                  ),
-                  textStyle: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 14,
-                  ),
-                  shadowColor: const Color(0xff00c896).withValues(alpha: 0.5),
-                  elevation: 4,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _accountPage(SavedGameData data) {
@@ -1436,10 +1589,10 @@ class _SetupScreenState extends State<SetupScreen> {
                   leading: const Icon(Icons.shield),
                   title: Text(team.name),
                   subtitle: Text(
-                    'Oyuncu ${players.length} | saha $fielders | kaleci $keepers | G ${team.wins} B ${team.draws} M ${team.losses}',
+                    'Oyuncu ${players.length} | saha $fielders | kaleci $keepers | Toplam deger ${formatMarketValue(data.teamTotalValue(team))} | G ${team.wins} B ${team.draws} M ${team.losses} | ${team.formText}',
                   ),
                   trailing: SizedBox(
-                    width: 290,
+                    width: 344,
                     child: Row(
                       children: [
                         Expanded(child: _ownerDropdown(data, team)),
@@ -1449,6 +1602,16 @@ class _SetupScreenState extends State<SetupScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
                         const SizedBox(width: 2),
+                        IconButton(
+                          tooltip: 'Takim sonucu ve mac gecmisi',
+                          onPressed: () => _openTeamDetail(team.id),
+                          icon: const Icon(Icons.receipt_long),
+                        ),
+                        IconButton(
+                          tooltip: 'Formalar (renkler)',
+                          onPressed: () => _showKitManager(team),
+                          icon: const Icon(Icons.checkroom),
+                        ),
                         IconButton(
                           tooltip: 'Oyunculari yonet',
                           onPressed: () => _openTeamPlayers(team.id),
@@ -1505,7 +1668,12 @@ class _SetupScreenState extends State<SetupScreen> {
           'Oyuncular sayfasi: oyuncu ekle, adini duzenle, kaleci olarak isaretle ve oyuncuyu yalniz bir takima bagla. Bir oyuncu baska takima verilirse eski takimindan otomatik cikar.\n\n'
           'Mac kadrolari: her takim icin ilk 11, yedekler ve oyuncu mevkisini sec. Takim sahibi giris yapmadan kadro duzenlenmez.\n\n'
           'Oyun icinde F1/F2 gorsel dizilis ve degisiklik ekranini acar. Oyuncularin yerini surukleyerek hak kullanmadan degistirebilir, yedegi sahadaki daireye birakarak degisiklik yapabilirsin. F8 kaleci tahmin, erisim ve karar debug cizgilerini acar.\n\n'
-          'VAR icin R tusuna iki kez bas. Alt cubuk kaydi akici oynatir; oklar veya A/D kaydi 3 saniyelik adimlarla ileri geri alir. Gol dugmeleri golu iptal eder veya geri alir.',
+          'VAR icin R tusuna iki kez bas. Alt cubuk kaydi akici oynatir; oklar veya A/D kaydi 3 saniyelik adimlarla ileri geri alir. HIZ satirindaki dugmeler (veya - / + tuslari) oynatmayi 0.25x ile 4.0x arasinda yavaslatir/hizlandirir. Her VAR karari (faul, el, ofsayt, kart, penalti, gol) aninda, o saniyede uygulanir; OLAYLAR listesinden her karar iptal edilebilir veya geri verilebilir. Golu iptal veya geri al dugmesi de calisir.\n\n'
+          'Takim Oyuncuları sayfasinda siralama menusuyle oyuncu degerine, puan ortalamasina, gole, pase, hiz veya bitiricilige gore sirala ve oyuncu adini panoya kopyala. Ulke atamasi ve yeni ulke ekleme isi Yonetim > Ulkeler tanesinden yapilir; takim silme yalnizca Yonetim panelindendir.\n\n'
+          'Kirmizi kart 1 mac stop cezasina mal olur. Degisiklik panelinde SAHADAN AYRILANLAR listesinden cikmis bir oyuncuyu sakat/kirmizi kartli oyuncunun yerine geri dondur; harris sakatlanir ve harris yedegi yoksa "Kaleci sec" ile sahadaki bir oyuncuyu kaleci yapabilirsin. Mac sonuc ekraninda kartlarin dakikalari ve takim istatistiklari (top, pas, sut, faul, kart) goruntulenir. Yonetim > Değer (kimo@): takim geneli deger artir/azalt (kucuk/buyuk) veya coklu oyuncu secip ozellik bazinda toplu duzeltme yap.\n\n'
+          'Formalar: her takim kendi forma listesini tutar. Mac sayfasindaki forma satirindaki + tusu veya Takimlar sayfasindaki forma simgesiyle yeni forma ekleyebilirsin; forma/short/corap/numara/kaleci renklerini hazir renk secicisinden ya da ozel renk olusturucustan (ton + parlaklik) secersin. Her takima istedigince forma ekleyebilir, kullan, duzenle, kopyalayabilir veya silebilirsin....\n\n'
+          'Oyuncu profili: herhangi bir sayfada oyuncu adina tiklayinca tam profil acilir — her macin skoru, dakikasi, golu ve asisti (dakikalarlariyla), aldigi puan (not), kartlari ve istatistikleri; 8.5 uzeri not alan "macin adami" oldugu maclar ayri listede; piyasa degeri ve tum ozellikler de gosterilir....\n\n'
+          'Takim sayfasi: takim adina tiklayinca (veya Takimlar sayfasindaki fis simgesiyle) tum mac sonuclari, form durumu (ornek: 4 galibiyet art arda) ve kadronun toplam piyasa degeri goruntulenir.',
           style: TextStyle(color: Colors.white70, height: 1.55, fontSize: 15),
         ),
       ),
@@ -1725,11 +1893,20 @@ class _SetupScreenState extends State<SetupScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  profile.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                InkWell(
+                  onTap: () => _openPlayerDetail(profile.id),
+                  child: Tooltip(
+                    message: 'Oyuncu profilini ac (maclar, goller, asistler, puanlar)',
+                    child: Text(
+                      profile.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xffdce8e2),
+                      ),
+                    ),
+                  ),
                 ),
                 Text(
                   'Rey:${profile.effectiveOverall.toStringAsFixed(0)} SutGuc:${profile.shotPowerRating.toStringAsFixed(0)} Sut%:${profile.shootingAccuracyPercent} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Deger:${profile.marketValueText}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
@@ -1783,8 +1960,12 @@ class _SetupScreenState extends State<SetupScreen> {
             icon: const Icon(Icons.edit),
           ),
           IconButton(
-            tooltip: 'Sil',
-            onPressed: canEdit ? () => _deletePlayer(profile) : null,
+            tooltip: data.adminFullAccess
+                ? 'Sil'
+                : 'Oyuncu silme islemini sadece yonetici (admin) yapabilir',
+            onPressed: data.adminFullAccess
+                ? () => _deletePlayer(profile)
+                : null,
             icon: const Icon(Icons.delete_outline),
           ),
         ],
@@ -2124,7 +2305,10 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _adminPage(SavedGameData data) {
-    final subTab = _adminSubTab == 2 && !data.adminFullAccess ? 0 : _adminSubTab;
+    final subTab =
+        (_adminSubTab == 2 || _adminSubTab == 5) && !data.adminFullAccess
+            ? 0
+            : _adminSubTab;
     return Column(
       children: [
         Container(
@@ -2254,6 +2438,17 @@ class _SetupScreenState extends State<SetupScreen> {
                 icon: Icon(Icons.tune),
                 label: Text('Oyuncu ayarlari'),
               ),
+            const ButtonSegment(
+              value: 4,
+              icon: Icon(Icons.public),
+              label: Text('Ulkeler'),
+            ),
+            if (data.adminFullAccess)
+              const ButtonSegment(
+                value: 5,
+                icon: Icon(Icons.trending_up),
+                label: Text('Değer'),
+              ),
           ],
           selected: {subTab},
           onSelectionChanged: (selection) =>
@@ -2265,10 +2460,693 @@ class _SetupScreenState extends State<SetupScreen> {
             1 => _adminTeamsTab(data),
             2 when data.adminFullAccess => _adminPlayersTab(data),
             3 => _adminTransfersTab(data),
+            4 => _adminCountriesTab(data),
+            5 when data.adminFullAccess => _adminValueTab(data),
             _ => _adminAccountsTab(data),
           },
         ),
       ],
+    );
+  }
+
+  /// Admin page: country management. The admin adds new countries and
+  /// removes the unused ones; players and teams get their country from the
+  /// dropdowns on the Takimlar / Oyuncu ayarlari tabs.
+  Widget _adminCountriesTab(SavedGameData data) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _newCountryController,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.public),
+                  labelText: 'Yeni ulke ekle',
+                  isDense: true,
+                ),
+                onSubmitted: (_) => _addCountry(data),
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              onPressed: () => _addCountry(data),
+              icon: const Icon(Icons.add),
+              label: const Text('Ekle'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Expanded(
+          child: ListView.separated(
+            itemCount: data.countries.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 6),
+            itemBuilder: (context, index) {
+              final country = data.countries[index];
+              final playerCount =
+                  data.players.where((profile) => profile.country == country)
+                      .length;
+              final teamCount = data.teams
+                  .where((item) => !item.isDeleted && item.country == country)
+                  .length;
+              final inUse = playerCount + teamCount > 0;
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xff0d1a16),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: inUse
+                        ? Colors.white.withValues(alpha: 0.10)
+                        : Colors.white.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.public, color: Color(0xffffd34d)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            country,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            '$playerCount oyuncu  •  $teamCount takim'
+                            '${inUse ? '' : '  •  kullanilmiyor'}',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: inUse
+                          ? 'Ulke kullaniliyor; once oyuncu/takim ulkeleri degistir'
+                          : 'Ulkeyi sil',
+                      onPressed: inUse
+                          ? null
+                          : () {
+                              setState(() {
+                                data.countries.remove(country);
+                              });
+                              _save();
+                            },
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.redAccent,
+                        size: 18,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _addCountry(SavedGameData data) {
+    final name = _newCountryController.text.trim();
+    if (name.isEmpty) {
+      return;
+    }
+    if (data.countries.contains(name)) {
+      _showMessage('Bu ulke zaten listesinde');
+      return;
+    }
+    setState(() {
+      data.countries.add(name);
+      _newCountryController.clear();
+    });
+    _save();
+  }
+
+  // ---------------------------------------------------------------------
+  // Admin "Değer" tab — only visible with kimo@ (adminFullAccess).
+  // Quick team-wide value raise/lower (small or big) plus a batch editor:
+  // select any players/keepers, stack attribute adjustments and apply.
+  // ---------------------------------------------------------------------
+
+  static const _valueAttributes = [
+    (key: 'overall', label: 'Genel oyun (OVR)'),
+    (key: 'speed', label: 'Hız'),
+    (key: 'stamina', label: 'Dayanıklılık'),
+    (key: 'shotPower', label: 'Şut gücü'),
+    (key: 'shooting', label: 'İska'),
+    (key: 'finishing', label: 'Bitiricilik'),
+    (key: 'passing', label: 'Pas'),
+    (key: 'longShots', label: 'Uzun şut'),
+    (key: 'curve', label: 'Kavis'),
+    (key: 'composure', label: 'Soğukkanlılık'),
+    (key: 'balance', label: 'Denge'),
+    (key: 'zeka', label: 'Zekâ'),
+    (key: 'dayaniklilik', label: 'Dayanıklılık gücü'),
+    (key: 'goalkeeping', label: 'Kalecilik (genel)'),
+    (key: 'gkReaction', label: 'Kaleci refleks'),
+    (key: 'gkPositioning', label: 'Kaleci konumlanma'),
+    (key: 'gkDiving', label: 'Kaleci düşme/sılta'),
+    (key: 'gkHighBalls', label: 'Kaleci yüksek top'),
+  ];
+
+  double _readAttr(PlayerProfile player, String key) => switch (key) {
+        'overall' => player.overallRating,
+        'speed' => player.speedRating,
+        'stamina' => player.staminaRating,
+        'shotPower' => player.shotPowerRating,
+        'shooting' => player.shootingRating,
+        'finishing' => player.finishingRating,
+        'passing' => player.passingRating,
+        'longShots' => player.longShotsRating,
+        'curve' => player.curveRating,
+        'composure' => player.composureRating,
+        'balance' => player.balanceRating,
+        'zeka' => player.zekaGucu,
+        'dayaniklilik' => player.dayaniklilikGucu,
+        'goalkeeping' => player.goalkeepingRating,
+        'gkReaction' => player.goalkeeperReactionRating,
+        'gkPositioning' => player.goalkeeperPositioningRating,
+        'gkDiving' => player.goalkeeperDivingRating,
+        _ => player.goalkeeperHighBallsRating,
+      };
+
+  void _writeAttr(PlayerProfile player, String key, double value) {
+    final clamped = value.clamp(1.0, 99.0).toDouble();
+    switch (key) {
+      case 'overall':
+        player.overallRating = clamped;
+      case 'speed':
+        player.speedRating = clamped;
+      case 'stamina':
+        player.staminaRating = clamped;
+      case 'shotPower':
+        player.shotPowerRating = clamped;
+      case 'shooting':
+        player.shootingRating = clamped;
+      case 'finishing':
+        player.finishingRating = clamped;
+      case 'passing':
+        player.passingRating = clamped;
+      case 'longShots':
+        player.longShotsRating = clamped;
+      case 'curve':
+        player.curveRating = clamped;
+      case 'composure':
+        player.composureRating = clamped;
+      case 'balance':
+        player.balanceRating = clamped;
+      case 'zeka':
+        player.zekaGucu = clamped;
+      case 'dayaniklilik':
+        player.dayaniklilikGucu = clamped;
+      case 'goalkeeping':
+        player.goalkeepingRating = clamped;
+      case 'gkReaction':
+        player.goalkeeperReactionRating = clamped;
+      case 'gkPositioning':
+        player.goalkeeperPositioningRating = clamped;
+      case 'gkDiving':
+        player.goalkeeperDivingRating = clamped;
+      default:
+        player.goalkeeperHighBallsRating = clamped;
+    }
+  }
+
+  /// The core attributes a team-wide quick adjust touches.
+  static const _coreAttributeKeys = [
+    'overall',
+    'speed',
+    'stamina',
+    'shotPower',
+    'shooting',
+    'finishing',
+    'passing',
+    'composure',
+    'balance',
+    'zeka',
+    'dayaniklilik',
+    'goalkeeping',
+  ];
+
+  void _applyTeamValueAdjust(SavedGameData data) {
+    final team = data.activeTeams
+        .where((item) => item.id == _valueTeamId)
+        .toList();
+    if (team.isEmpty) {
+      _showMessage('Once bir takim sec');
+      return;
+    }
+    final target = team.first;
+    final delta = (_valueQuickUp ? 1 : -1) * _valueQuickStep.toDouble();
+    var count = 0;
+    for (final player in data.players) {
+      if (!target.playerIds.contains(player.id)) continue;
+      for (final key in _coreAttributeKeys) {
+        _writeAttr(player, key, _readAttr(player, key) + delta);
+      }
+      player.recalculateMarketValue(strong: false);
+      count += 1;
+    }
+    _save();
+    _showMessage(
+      '${target.name}: $count oyuncunun degerleri '
+      '${_valueQuickUp ? 'yukari' : 'asagi'} alindi ($delta.toStringAsFixed(0))',
+    );
+  }
+
+  void _applyValueAdjustments(SavedGameData data) {
+    final selected = data.players
+        .where((player) => _valueSelectedPlayerIds.contains(player.id))
+        .toList();
+    if (selected.isEmpty) {
+      _showMessage('Once oyuncu secin');
+      return;
+    }
+    if (_valueAdjustments.isEmpty) {
+      _showMessage('En az bir duzeltme satiri ekleyin');
+      return;
+    }
+    for (final player in selected) {
+      for (final adjustment in _valueAdjustments) {
+        final delta =
+            (adjustment.up ? 1 : -1) * adjustment.amount.toDouble();
+        _writeAttr(
+          player,
+          adjustment.attrKey,
+          _readAttr(player, adjustment.attrKey) + delta,
+        );
+      }
+      player.recalculateMarketValue(strong: false);
+    }
+    _save();
+    _showMessage(
+      '${selected.length} oyuncunun degerleri guncellendi '
+      '(${_valueAdjustments.length} duzeltme)',
+    );
+  }
+
+  Widget _adminValueTab(SavedGameData data) {
+    final teamFilterValue = _valueTeamFilter;
+    final players = data.players
+        .where(
+          (player) =>
+              _valueSearch.isEmpty ||
+              player.name.toLowerCase().contains(_valueSearch),
+        )
+        .where(
+          (player) {
+            if (teamFilterValue == 'all') {
+              return true;
+            }
+            return player.isGoalkeeper
+                ? teamFilterValue == 'gk'
+                : teamFilterValue == 'field';
+          },
+        )
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+        // --- Team-wide quick adjust -------------------------------------
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: const Color(0xffffd34d).withValues(alpha: 0.3),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.bolt, size: 17, color: Color(0xffffd34d)),
+                  SizedBox(width: 7),
+                  Text(
+                    'Takim geneli deger ayari',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      value: data.activeTeams
+                              .any((team) => team.id == _valueTeamId)
+                          ? _valueTeamId
+                          : null,
+                      isDense: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Takim',
+                      ),
+                      items: [
+                        for (final team in data.activeTeams)
+                          DropdownMenuItem(
+                            value: team.id,
+                            child: Text(
+                              team.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _valueTeamId = value ?? ''),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: true,
+                          icon: Icon(Icons.trending_up, size: 16),
+                          label: Text('Artir'),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          icon: Icon(Icons.trending_down, size: 16),
+                          label: Text('Azalt'),
+                        ),
+                      ],
+                      selected: {_valueQuickUp},
+                      onSelectionChanged: (selection) =>
+                          setState(() => _valueQuickUp = selection.first),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 1,
+                          label: Text('Kucuk 1'),
+                        ),
+                        ButtonSegment(
+                          value: 3,
+                          label: Text('Buyuk 3'),
+                        ),
+                      ],
+                      selected: {_valueQuickStep},
+                      onSelectionChanged: (selection) => setState(
+                        () => _valueQuickStep = selection.first,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton.icon(
+                    onPressed: _valueTeamId.isEmpty
+                        ? null
+                        : () => _applyTeamValueAdjust(data),
+                    icon: const Icon(Icons.done, size: 16),
+                    label: const Text('Tum takim'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // --- Batch editor -------------------------------------------------
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.playlist_add_check,
+                      size: 17, color: Color(0xffffd34d)),
+                  const SizedBox(width: 7),
+                  Text(
+                    'Oyuncular ve harrislar icin toplu deger duzeltmesi',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'oyunculari sec → duzeltmeleri ekleyin → uygula',
+                    style: TextStyle(color: Colors.white38, fontSize: 10.5),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        labelText: 'Oyuncu ara',
+                        isDense: true,
+                      ),
+                      onChanged: (value) =>
+                          setState(() => _valueSearch = value.trim().toLowerCase()),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: teamFilterValue,
+                      isDense: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Filtre',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'all',
+                          child: Text('Hepsi'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'field',
+                          child: Text('Saha'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'gk',
+                          child: Text('Kaleci'),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _valueTeamFilter = value ?? 'all'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => setState(
+                      () => _valueSelectedPlayerIds
+                        ..clear()
+                        ..addAll(players.map((player) => player.id)),
+                    ),
+                    child: const Text('Tumu sec'),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _valueSelectedPlayerIds.clear()),
+                    child: const Text('Temizle'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 190),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: players.length,
+                  itemBuilder: (context, index) {
+                    final player = players[index];
+                    final selected =
+                        _valueSelectedPlayerIds.contains(player.id);
+                    return CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(
+                        '${player.name}  ${player.effectiveOverall.toStringAsFixed(0)}'
+                        '${player.isGoalkeeper ? '  •  KALECI' : ''}',
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        'Şut ${player.shotPowerRating.toStringAsFixed(0)} • Zeka ${player.zekaGucu.toStringAsFixed(0)} • OVR ${player.overallRating.toStringAsFixed(0)}',
+                        style: const TextStyle(fontSize: 10, color: Colors.white38),
+                      ),
+                      secondary: player.isGoalkeeper
+                          ? const Icon(Icons.back_hand, size: 16)
+                          : null,
+                      value: selected,
+                      onChanged: (value) => setState(() {
+                        if (value == true) {
+                          _valueSelectedPlayerIds.add(player.id);
+                        } else {
+                          _valueSelectedPlayerIds.remove(player.id);
+                        }
+                      }),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.add, size: 14, color: Colors.white54),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Duzeltmeler (secili ${_valueSelectedPlayerIds.length} oyuncu):',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              for (var index = 0; index < _valueAdjustments.length;
+                  index++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: DropdownButtonFormField<String>(
+                          value: _valueAdjustments[index].attrKey,
+                          isDense: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Ozellik',
+                          ),
+                          items: [
+                            for (final attribute in _valueAttributes)
+                              DropdownMenuItem(
+                                value: attribute.key,
+                                child: Text(
+                                  attribute.label,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: (value) => setState(
+                            () => _valueAdjustments[index] = (
+                              attrKey: value ??
+                                  _valueAdjustments[index].attrKey,
+                              up: _valueAdjustments[index].up,
+                              amount: _valueAdjustments[index].amount,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                              value: true,
+                              icon: Icon(Icons.arrow_upward, size: 15),
+                            ),
+                            ButtonSegment(
+                              value: false,
+                              icon: Icon(Icons.arrow_downward, size: 15),
+                            ),
+                          ],
+                          selected: {_valueAdjustments[index].up},
+                          onSelectionChanged: (selection) => setState(
+                            () => _valueAdjustments[index] = (
+                              attrKey: _valueAdjustments[index].attrKey,
+                              up: selection.first,
+                              amount: _valueAdjustments[index].amount,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 74,
+                        child: DropdownButtonFormField<int>(
+                          value: _valueAdjustments[index].amount,
+                          isDense: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Kadar',
+                          ),
+                          items: [
+                            for (final amount in const [1, 2, 3, 5, 10])
+                              DropdownMenuItem(
+                                value: amount,
+                                child: Text('±$amount'),
+                              ),
+                          ],
+                          onChanged: (value) => setState(
+                            () => _valueAdjustments[index] = (
+                              attrKey: _valueAdjustments[index].attrKey,
+                              up: _valueAdjustments[index].up,
+                              amount: value ?? _valueAdjustments[index].amount,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        tooltip: 'Satiri sil',
+                        onPressed: () =>
+                            setState(() => _valueAdjustments.removeAt(index)),
+                        icon: const Icon(Icons.close, size: 15),
+                      ),
+                    ],
+                  ),
+                ),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => setState(
+                      () => _valueAdjustments.add(
+                        (attrKey: 'overall', up: true, amount: 1),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add, size: 15),
+                    label: const Text('Duzeltme ekle (+)'),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton.icon(
+                    onPressed: () => _applyValueAdjustments(data),
+                    icon: const Icon(Icons.check_circle_outline, size: 16),
+                    label: const Text('Uygula'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        ],
+      ),
     );
   }
 
@@ -2433,6 +3311,94 @@ class _SetupScreenState extends State<SetupScreen> {
             style: TextStyle(color: Colors.white60, fontSize: 12),
           ),
           const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xffffd34d).withValues(alpha: 0.35),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.swap_horiz, color: Color(0xffffd34d)),
+                const SizedBox(width: 10),
+                const SizedBox(
+                  width: 130,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Yonetici transferi',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        'Talep olmadan direkt takas',
+                        style: TextStyle(color: Colors.white54, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: data.players.any((profile) =>
+                            profile.id == _adminTransferPlayerId)
+                        ? _adminTransferPlayerId
+                        : null,
+                    isDense: true,
+                    decoration: const InputDecoration(labelText: 'Oyuncu'),
+                    items: [
+                      for (final profile in data.players)
+                        DropdownMenuItem(
+                          value: profile.id,
+                          child: Text(
+                            profile.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _adminTransferPlayerId = value ?? ''),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: data.activeTeams.any((team) =>
+                            team.id == _adminTransferTeamId)
+                        ? _adminTransferTeamId
+                        : null,
+                    isDense: true,
+                    decoration: const InputDecoration(labelText: 'Hedef takim'),
+                    items: [
+                      for (final team in data.activeTeams)
+                        DropdownMenuItem(
+                          value: team.id,
+                          child: Text(team.name, overflow: TextOverflow.ellipsis),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _adminTransferTeamId = value ?? ''),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: _adminTransferPlayerId.isEmpty ||
+                          _adminTransferTeamId.isEmpty
+                      ? null
+                      : () => _applyAdminTransfer(data),
+                  icon: const Icon(Icons.done, size: 16),
+                  label: const Text('Uygula'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
           const Divider(height: 1),
           Expanded(
             child: pending.isEmpty
@@ -2489,11 +3455,41 @@ class _SetupScreenState extends State<SetupScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    profile?.name ?? 'Silinmis oyuncu',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          profile?.name ?? 'Silinmis oyuncu',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      if (profile != null)
+                                        IconButton(
+                                          tooltip: 'Adi kopyala',
+                                          onPressed: () {
+                                            Clipboard.setData(
+                                              ClipboardData(
+                                                text: profile.name,
+                                              ),
+                                            );
+                                            _showMessage(
+                                              '${profile.name} adi kopyalandi',
+                                            );
+                                          },
+                                          icon: const Icon(
+                                            Icons.copy,
+                                            size: 14,
+                                            color: Colors.white54,
+                                          ),
+                                          constraints:
+                                              const BoxConstraints(),
+                                          padding: const EdgeInsets.all(2),
+                                        ),
+                                    ],
                                   ),
                                   Text(
                                     '${targetTeam?.name ?? 'Silinmis takim'} ← ${requester?.username ?? 'Silinmis hesap'}'
@@ -2604,6 +3600,66 @@ class _SetupScreenState extends State<SetupScreen> {
         ],
       ),
     );
+  }
+
+  /// Direct admin transfer: moves the player from whatever team he is in
+  /// (and clears his pending transfer requests) straight into the target
+  /// team — no transfer request needed.
+  Future<void> _applyAdminTransfer(SavedGameData data) async {
+    final player = data.players
+        .where((profile) => profile.id == _adminTransferPlayerId)
+        .toList();
+    final team = data.activeTeams
+        .where((item) => item.id == _adminTransferTeamId)
+        .toList();
+    if (player.isEmpty || team.isEmpty) return;
+    final profile = player.first;
+    final target = team.first;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Yonetici transferi'),
+        content: Text(
+          '${profile.name} oyuncusu ${target.name} takimina direkt '
+          'transfer edilsin mi?\nOyuncu, mevcut takimidaki yerinden cikarilir.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Vazgec'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Transfer et'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    setState(() {
+      for (final item in data.teams) {
+        item.playerIds.remove(profile.id);
+        item.starterPlayerIds.remove(profile.id);
+        item.roleByPlayerId.remove(profile.id);
+        item.slotByPlayerId.remove(profile.id);
+      }
+      data.transferRequests.removeWhere(
+        (request) => request.playerId == profile.id,
+      );
+      if (!target.playerIds.contains(profile.id)) {
+        target.playerIds.add(profile.id);
+        target.roleByPlayerId[profile.id] = profile.isGoalkeeper
+            ? PlayerRole.goalkeeper
+            : PlayerRole.midfieldLeft;
+        if (target.starterPlayerIds.length < 11) {
+          target.starterPlayerIds.add(profile.id);
+        }
+      }
+      _adminTransferPlayerId = '';
+      _adminTransferTeamId = '';
+    });
+    await _save();
+    _showMessage('${profile.name} → ${target.name} (yonetici transferi)');
   }
 
   Future<void> _copyMarketValue(PlayerProfile profile) async {
@@ -2733,7 +3789,7 @@ class _SetupScreenState extends State<SetupScreen> {
             child: ListView.builder(
               itemCount: players.length,
               itemBuilder: (context, index) =>
-                  _adminPlayerCard(players[index]),
+                  _adminPlayerCard(data, players[index]),
             ),
           ),
         ],
@@ -2869,6 +3925,32 @@ class _SetupScreenState extends State<SetupScreen> {
     _load();
   }
 
+  /// Opens the full player profile page (goals, assists, per-match
+  /// ratings, man-of-the-match matches, attributes).
+  Future<void> _openPlayerDetail(String playerId) async {
+    await _save();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerDetailScreen(playerId: playerId),
+      ),
+    );
+    _load();
+  }
+
+  /// Opens the team page with the full match-results history, form and
+  /// total squad value.
+  Future<void> _openTeamDetail(String teamId) async {
+    await _save();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TeamDetailScreen(teamId: teamId),
+      ),
+    );
+    _load();
+  }
+
   /// Applies the piyasa degeri update to every player. The light mode uses
   /// only the last few matches with small swings; the strong mode uses the
   /// whole career with bigger swings.
@@ -2894,17 +3976,39 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  Widget _adminPlayerCard(PlayerProfile profile) {
+  Widget _adminPlayerCard(SavedGameData data, PlayerProfile profile) {
     return ExpansionTile(
       leading: Icon(profile.isGoalkeeper ? Icons.back_hand : Icons.person),
       title: Text(
         '${profile.name}  ${profile.effectiveOverall.toStringAsFixed(0)}',
       ),
       subtitle: Text(
-        '${profile.heightMeters.toStringAsFixed(2)} m | mac ${profile.matchesPlayed} | puan ${profile.points.toStringAsFixed(1)} | deger ${profile.marketValueText}',
+        '${profile.heightMeters.toStringAsFixed(2)} m | mac ${profile.matchesPlayed} | puan ${profile.points.toStringAsFixed(1)} | deger ${profile.marketValueText}'
+        '${profile.country.isNotEmpty ? ' | Ulke: ${profile.country}' : ''}',
       ),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
+        DropdownButtonFormField<String?>(
+          value: profile.country.isNotEmpty ? profile.country : null,
+          isDense: true,
+          decoration: const InputDecoration(labelText: 'Oyuncu ulkesi'),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Ulke yok'),
+            ),
+            for (final country in data.countries)
+              DropdownMenuItem<String?>(
+                value: country,
+                child: Text(country),
+              ),
+          ],
+          onChanged: (value) {
+            setState(() => profile.country = value ?? '');
+            _save();
+          },
+        ),
+        const SizedBox(height: 8),
         _adminSkillSlider(
           label: 'Genel oyun',
           value: profile.overallRating,
@@ -3199,7 +4303,8 @@ class _SetupScreenState extends State<SetupScreen> {
       leading: const Icon(Icons.shield),
       title: Text('${team.name}  ${team.rating.toStringAsFixed(1)}'),
       subtitle: Text(
-        'G ${team.wins} B ${team.draws} M ${team.losses} | oyuncu ${team.playerIds.length}',
+        'G ${team.wins} B ${team.draws} M ${team.losses} | oyuncu ${team.playerIds.length}'
+        '${team.country.isNotEmpty ? ' | Ulke: ${team.country}' : ''}',
       ),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
@@ -3212,6 +4317,27 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
         const SizedBox(height: 8),
         _ownerDropdown(data, team),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String?>(
+          value: team.country.isNotEmpty ? team.country : null,
+          isDense: true,
+          decoration: const InputDecoration(labelText: 'Takim ulkesi'),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Ulke yok'),
+            ),
+            for (final country in data.countries)
+              DropdownMenuItem<String?>(
+                value: country,
+                child: Text(country),
+              ),
+          ],
+          onChanged: (value) {
+            setState(() => team.country = value ?? '');
+            _save();
+          },
+        ),
         const SizedBox(height: 8),
         DropdownButtonFormField<FormationType>(
           value: playableFormationTypes.contains(team.formation)
@@ -3356,19 +4482,19 @@ class _SetupScreenState extends State<SetupScreen> {
           const SizedBox(height: 12),
           _summaryBlock(data.blueTeam, data.bluePlayerIds, data),
           const SizedBox(height: 6),
-          _jerseySelector(data.blueTeam, _blueKitIndex, (i) {
-            setState(() => _blueKitIndex = i);
+          _kitStrip(data.blueTeam, 'Mavi', (index) {
+            setState(() => _blueKitIndex = index);
             _save();
-          }, 'Mavi'),
+          }),
           const SizedBox(height: 10),
           _lineupEditor(data.blueTeam, data),
           const Divider(height: 26),
           _summaryBlock(data.redTeam, data.redPlayerIds, data),
           const SizedBox(height: 6),
-          _jerseySelector(data.redTeam, _redKitIndex, (i) {
-            setState(() => _redKitIndex = i);
+          _kitStrip(data.redTeam, 'Kirmizi', (index) {
+            setState(() => _redKitIndex = index);
             _save();
-          }, 'Kirmizi'),
+          }),
           const SizedBox(height: 10),
           _lineupEditor(data.redTeam, data),
           const SizedBox(height: 14),
@@ -3381,57 +4507,371 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  Widget _jerseySelector(
+  // ---------------------------------------------------------------------
+  // Kit (jersey) system: every team keeps its own list of kits. Teams can
+  // create unlimited custom-colored kits from the editor, switch the
+  // active kit per match, rename, duplicate and delete kits.
+  // ---------------------------------------------------------------------
+
+  static int _clampKitIndex(int index, int length) {
+    if (length <= 1) return 0;
+    if (index < 0) return 0;
+    if (index > length - 1) return length - 1;
+    return index;
+  }
+
+  void _syncKitIndices() {
+    final data = _data;
+    if (data == null) return;
+    _blueKitIndex = _clampKitIndex(
+      data.blueTeam.activeKitIndex,
+      data.blueTeam.jerseyKits.length,
+    );
+    _redKitIndex = _clampKitIndex(
+      data.redTeam.activeKitIndex,
+      data.redTeam.jerseyKits.length,
+    );
+  }
+
+  /// Compact horizontal strip of the team's kits on the match page.
+  /// Tapping a kit activates it; the plus/tune buttons open the editor
+  /// and the full kit manager.
+  Widget _kitStrip(
     SavedTeamProfile team,
-    int selectedIndex,
-    ValueChanged<int> onChanged,
     String label,
+    ValueChanged<int> onChanged,
   ) {
-    final kits = team.jerseyKits.isEmpty
-        ? JerseyFactory.defaultKits()
-        : team.jerseyKits;
-    final value = selectedIndex.clamp(0, kits.length - 1).toInt();
-    return DropdownButtonFormField<int>(
-      value: value,
-      isDense: true,
-      decoration: InputDecoration(labelText: '$label forma'),
-      items: [
-        for (var i = 0; i < kits.length; i++)
-          DropdownMenuItem<int>(
-            value: i,
-            child: Row(
+    final data = _data!;
+    final isBlue = team.id == data.blueTeam.id;
+    final rawIndex = isBlue ? _blueKitIndex : _redKitIndex;
+    final kits =
+        team.jerseyKits.isEmpty ? JerseyFactory.defaultKits() : team.jerseyKits;
+    final value = _clampKitIndex(rawIndex, kits.length);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.checkroom, size: 18, color: Color(0xffffd34d)),
+          const SizedBox(width: 7),
+          Text(
+            '$label forma',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SizedBox(
+              height: 58,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (var i = 0; i < kits.length; i++)
+                    _kitCard(kits[i], i == value, () {
+                      team.activeKitIndex = i;
+                      onChanged(i);
+                    }),
+                  _kitCardAction(
+                    Icons.add,
+                    'Yeni forma ekle',
+                    () => _showKitEditor(team),
+                  ),
+                  _kitCardAction(
+                    Icons.tune,
+                    'Formalari yonet',
+                    () => _showKitManager(team),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kitCard(JerseyKit kit, bool active, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 76,
+        margin: const EdgeInsets.only(right: 6),
+        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 5),
+        decoration: BoxDecoration(
+          color: active
+              ? const Color(0xffffd34d).withValues(alpha: 0.10)
+              : Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: active
+                ? const Color(0xffffd34d)
+                : Colors.white.withValues(alpha: 0.10),
+            width: active ? 1.4 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CustomPaint(
+              size: const Size(42, 36),
+              painter: _KitPreviewPainter(kit),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              kit.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                color: active ? const Color(0xffffd34d) : Colors.white60,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _kitCardAction(
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Tooltip(
+        message: tooltip,
+        child: Container(
+          width: 46,
+          margin: const EdgeInsets.only(right: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          ),
+          child: Center(
+            child: Icon(icon, size: 19, color: const Color(0xffffd34d)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Full kit manager for a team: list of all kits with activate/edit/
+  /// duplicate/delete actions and a "new kit" button.
+  Future<void> _showKitManager(SavedTeamProfile team) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: Container(
+          width: 700,
+          constraints: const BoxConstraints(maxHeight: 600),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.checkroom, color: Color(0xffffd34d), size: 22),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Forma yonetimi',
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          team.name,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Kapat',
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white54),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: team.jerseyKits.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Kayitli forma yok.',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
+                    : ListView(
+                        children: [
+                          for (var i = 0; i < team.jerseyKits.length; i++)
+                            _kitManagerRow(dialogContext, team, i),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: () => _showKitEditor(team),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Yeni forma ekle'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    _syncKitIndices();
+    if (mounted) {
+      setState(() {});
+    }
+    _save();
+  }
+
+  Widget _kitManagerRow(
+    BuildContext dialogContext,
+    SavedTeamProfile team,
+    int index,
+  ) {
+    final kit = team.jerseyKits[index];
+    final isActive = team.activeKitIndex == index;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: isActive
+            ? const Color(0xffffd34d).withValues(alpha: 0.07)
+            : Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isActive
+              ? const Color(0xffffd34d).withValues(alpha: 0.55)
+              : Colors.white.withValues(alpha: 0.09),
+        ),
+      ),
+      child: Row(
+        children: [
+          CustomPaint(size: const Size(50, 42), painter: _KitPreviewPainter(kit)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _kitSwatch(kits[i].shirtColor),
-                const SizedBox(width: 6),
-                _kitSwatch(kits[i].shortsColor),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(kits[i].name, overflow: TextOverflow.ellipsis),
+                Text(
+                  kit.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isActive ? 'AKTIF FORMA' : 'Yedek forma',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: isActive ? const Color(0xffffd34d) : Colors.white54,
+                  ),
                 ),
               ],
             ),
           ),
-      ],
-      onChanged: (index) {
-        if (index == null) {
-          return;
-        }
-        team.activeKitIndex = index;
-        onChanged(index);
-      },
+          if (!isActive)
+            TextButton(
+              onPressed: () {
+                team.activeKitIndex = index;
+                _syncKitIndices();
+                setState(() {});
+                _save();
+              },
+              child: const Text('Kullan'),
+            ),
+          IconButton(
+            tooltip: 'Formayi duzenle',
+            onPressed: () => _showKitEditor(team, editIndex: index),
+            icon: const Icon(Icons.edit, size: 19, color: Colors.white70),
+          ),
+          IconButton(
+            tooltip: 'Formayi ciktir (ayni renkler, yeni ad)',
+            onPressed: () {
+              final copy = JerseyKit(
+                name: '${kit.name} (Kopya)',
+                shirtColor: kit.shirtColor,
+                shortsColor: kit.shortsColor,
+                socksColor: kit.socksColor,
+                numberColor: kit.numberColor,
+                goalkeeperShirtColor: kit.goalkeeperShirtColor,
+              );
+              team.jerseyKits.insert(index + 1, copy);
+              _syncKitIndices();
+              setState(() {});
+              _save();
+            },
+            icon: const Icon(Icons.copy_all, size: 18, color: Colors.white70),
+          ),
+          IconButton(
+            tooltip: team.jerseyKits.length <= 1
+                ? 'En az bir forma kalmali'
+                : 'Formayi sil',
+            onPressed: team.jerseyKits.length <= 1
+                ? null
+                : () {
+                    team.jerseyKits.removeAt(index);
+                    if (team.activeKitIndex >= team.jerseyKits.length) {
+                      team.activeKitIndex = team.jerseyKits.length - 1;
+                    }
+                    _syncKitIndices();
+                    setState(() {});
+                    _save();
+                  },
+            icon: const Icon(
+              Icons.delete_outline,
+              size: 18,
+              color: Colors.white54,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _kitSwatch(Color color) {
-    return Container(
-      width: 18,
-      height: 18,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.white24),
+  /// Opens the kit editor. [editIndex] != null edits an existing kit,
+  /// otherwise a new kit is appended and made active.
+  Future<void> _showKitEditor(SavedTeamProfile team, {int? editIndex}) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => _KitEditorDialog(
+        team: team,
+        editIndex: editIndex,
       ),
     );
+    if (saved != true) return;
+    _syncKitIndices();
+    if (mounted) {
+      setState(() {});
+    }
+    _save();
   }
 
   Widget _summaryBlock(
@@ -3446,7 +4886,6 @@ class _SetupScreenState extends State<SetupScreen> {
     final fielders = selected.where((profile) => !profile.isGoalkeeper).length;
     final valid = keepers >= 1 && fielders >= 10;
     final ownerReady = data.isTeamOwnerLoggedIn(team);
-    final isAdmin = data.adminLoggedIn;
     final ownerMatches = data.accounts
         .where((account) => account.id == team.ownerAccountId)
         .toList();
@@ -3454,34 +4893,35 @@ class _SetupScreenState extends State<SetupScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                team.name,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-            if (isAdmin)
-              IconButton(
-                icon: const Icon(
-                  Icons.delete_outline,
-                  color: Colors.redAccent,
-                  size: 18,
+        // Team deletion is an admin-only action (Yonetim paneli) — the
+        // delete button no longer lives on the match-setup summary.
+        InkWell(
+          onTap: () => _openTeamDetail(team.id),
+          child: Tooltip(
+            message: 'Takim sayfasini ac (sonuclar, forma, deger)',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  team.name,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
-                onPressed: () => _deleteTeam(team),
-                tooltip: 'Takimi sil',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(4),
-              ),
-          ],
+                const SizedBox(width: 6),
+                const Icon(
+                  Icons.receipt_long,
+                  size: 15,
+                  color: Color(0xffffd34d),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 5),
         Text(
-          'Oyuncu: ${selected.length}  Deger: ${team.rating.toStringAsFixed(1)}',
+          'Oyuncu: ${selected.length}  Deger: ${team.rating.toStringAsFixed(1)}  Toplam deger: ${formatMarketValue(data.teamTotalValue(team))}',
         ),
         Text(
-          'Galibiyet: ${team.wins}, Maglubiyet: ${team.losses}, Beraberlik: ${team.draws}',
+          'Galibiyet: ${team.wins}, Maglubiyet: ${team.losses}, Beraberlik: ${team.draws}  |  Form: ${team.formText}',
         ),
         Text(
           'Sahip: ${ownerName ?? 'Secilmedi'} (${ownerReady ? 'giris var' : 'giris yok'})',
@@ -3879,7 +5319,11 @@ class _SetupScreenState extends State<SetupScreen> {
                                             ),
                                           ),
                                         )
-                                      : _formationPlayerStats(selectedPlayer),
+                                      : _formationPlayerStats(
+                                          team,
+                                          data,
+                                          selectedPlayer,
+                                        ),
                                 ),
                               ],
                             ),
@@ -4214,10 +5658,31 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
-  Widget _formationPlayerStats(PlayerProfile player) {
+  Widget _formationPlayerStats(
+    SavedTeamProfile team,
+    SavedGameData data,
+    PlayerProfile player,
+  ) {
     final passPercent = player.passes == 0
         ? 0
         : (player.successfulPasses * 100 / player.passes).round();
+    // The team's fastest player and best finisher (bitiricilik) among the
+    // current squad members — shown whenever a player is selected so the
+    // user can compare and place people in the right spots.
+    PlayerProfile? fastest;
+    PlayerProfile? bestFinisher;
+    for (final mate in data.players) {
+      if (!team.playerIds.contains(mate.id) || mate.isGoalkeeper) {
+        continue;
+      }
+      if (fastest == null || mate.speedRating > fastest.speedRating) {
+        fastest = mate;
+      }
+      if (bestFinisher == null ||
+          mate.finishingRating > bestFinisher.finishingRating) {
+        bestFinisher = mate;
+      }
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(11),
       child: Column(
@@ -4232,6 +5697,42 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
           ),
           const SizedBox(height: 7),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xffffd34d).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xffffd34d).withValues(alpha: 0.40),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'En uygun mevkiler: ${preferredRolesText(player)}',
+                  style: const TextStyle(
+                    color: Color(0xfff5d67b),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Takimin en hizlisi: ${fastest?.name ?? '-'} '
+                  '(${fastest == null ? 0 : fastest.speedRating.round()})   •   '
+                  'En iyi bitirici: ${bestFinisher?.name ?? '-'} '
+                  '(${bestFinisher == null ? 0 : bestFinisher.finishingRating.round()})',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 10,
             runSpacing: 7,
@@ -4592,4 +6093,537 @@ class _SetupScreenState extends State<SetupScreen> {
       ],
     );
   }
+}
+
+/// Kit editor dialog: name the kit, pick shirt/shorts/socks/number/keeper
+/// colors from presets or build a custom color with hue + lightness
+/// sliders. Works for both creating a new kit and editing an existing one.
+class _KitEditorDialog extends StatefulWidget {
+  const _KitEditorDialog({required this.team, this.editIndex});
+
+  final SavedTeamProfile team;
+  final int? editIndex;
+
+  @override
+  State<_KitEditorDialog> createState() => _KitEditorDialogState();
+}
+
+class _KitEditorDialogState extends State<_KitEditorDialog> {
+  late final TextEditingController _nameController;
+  late Color _shirt;
+  late Color _shorts;
+  late Color _socks;
+  late Color _number;
+  late Color _keeper;
+  int _customPart = 0;
+  double _hue = 140;
+  double _lightness = 0.55;
+
+  bool get _isEditing => widget.editIndex != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final kit = _isEditing
+        ? widget.team.jerseyKits[widget.editIndex!]
+        : const JerseyKit(
+            name: 'Yeni forma',
+            shirtColor: Color(0xff1f9d55),
+            shortsColor: Color(0xff101418),
+            socksColor: Color(0xff1f9d55),
+            numberColor: Color(0xffffffff),
+            goalkeeperShirtColor: Color(0xffffd600),
+          );
+    _shirt = kit.shirtColor;
+    _shorts = kit.shortsColor;
+    _socks = kit.socksColor;
+    _number = kit.numberColor;
+    _keeper = kit.goalkeeperShirtColor;
+    _nameController = TextEditingController(
+      text: _isEditing ? kit.name : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  List<({String label, Color value, ValueChanged<Color> set})> get _parts => [
+        (label: 'Forma', value: _shirt, set: (c) => setState(() => _shirt = c)),
+        (label: 'Sort', value: _shorts, set: (c) => setState(() => _shorts = c)),
+        (label: 'Corap', value: _socks, set: (c) => setState(() => _socks = c)),
+        (label: 'Numara', value: _number, set: (c) => setState(() => _number = c)),
+        (label: 'Kaleci', value: _keeper, set: (c) => setState(() => _keeper = c)),
+      ];
+
+  Color get _customColor => _hslToColor(
+        _hue % 360,
+        0.74.clamp(0.0, 1.0).toDouble(),
+        _lightness.clamp(0.08, 0.92).toDouble(),
+      );
+
+  void _applyCustom() {
+    final part = _parts[_customPart];
+    part.set(_customColor);
+  }
+
+  void _saveKit() {
+    final team = widget.team;
+    final name = _nameController.text.trim().isEmpty
+        ? 'Forma ${team.jerseyKits.length + 1}'
+        : _nameController.text.trim();
+    final kit = JerseyKit(
+      name: name,
+      shirtColor: _shirt,
+      shortsColor: _shorts,
+      socksColor: _socks,
+      numberColor: _number,
+      goalkeeperShirtColor: _keeper,
+    );
+    final editIndex = widget.editIndex;
+    if (editIndex != null && editIndex < team.jerseyKits.length) {
+      team.jerseyKits[editIndex] = kit;
+    } else {
+      team.jerseyKits.add(kit);
+      team.activeKitIndex = team.jerseyKits.length - 1;
+    }
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final partLabels = const [
+      'Forma',
+      'Sort',
+      'Corap',
+      'Numara',
+      'Kaleci',
+    ];
+    return Dialog(
+      child: Container(
+        width: 780,
+        constraints: const BoxConstraints(maxHeight: 640),
+        padding: const EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.checkroom, color: Color(0xffffd34d), size: 22),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      _isEditing ? 'Formayi duzenle' : 'Yeni forma olustur',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Kapat',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white54),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Forma adi',
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.10),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        CustomPaint(
+                          size: const Size(56, 46),
+                          painter: _KitPreviewPainter(
+                            JerseyKit(
+                              name: '',
+                              shirtColor: _shirt,
+                              shortsColor: _shorts,
+                              socksColor: _socks,
+                              numberColor: _number,
+                              goalkeeperShirtColor: _keeper,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Kaleci: ${_kitColorText(_keeper)}',
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              for (final part in _parts) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.03),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.07),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 56,
+                        child: Text(
+                          part.label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        width: 26,
+                        height: 26,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color: part.value,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.35),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: [
+                            for (final preset in JerseyFactory.presetColors)
+                              _presetSwatch(
+                                Color(preset.$2),
+                                part.value.toARGB32() == preset.$2,
+                                () => part.set(Color(preset.$2)),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xff00c896).withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xff00c896).withValues(alpha: 0.30),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.palette,
+                          size: 17,
+                          color: Color(0xff00c896),
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            'Ozel renk olustur (herhangi bir renk)',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 130,
+                          child: DropdownButtonFormField<int>(
+                            value: _customPart,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Uygula',
+                            ),
+                            items: [
+                              for (var i = 0; i < partLabels.length; i++)
+                                DropdownMenuItem(
+                                  value: i,
+                                  child: Text(partLabels[i]),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() => _customPart = value);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const SizedBox(
+                          width: 46,
+                          child: Text(
+                            'Ton',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white60,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _hue,
+                            min: 0,
+                            max: 360,
+                            divisions: 360,
+                            onChanged: (value) =>
+                                setState(() => _hue = value),
+                          ),
+                        ),
+                        const SizedBox(
+                          width: 58,
+                          child: Text(
+                            'Parlaklik',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white60,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _lightness,
+                            min: 0.08,
+                            max: 0.92,
+                            divisions: 84,
+                            onChanged: (value) =>
+                                setState(() => _lightness = value),
+                          ),
+                        ),
+                        Container(
+                          width: 42,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: _customColor,
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(
+                              color:
+                                  Colors.white.withValues(alpha: 0.35),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: _applyCustom,
+                          child: const Text('Uygula'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Vazgec'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _saveKit,
+                    icon: const Icon(Icons.check, size: 18),
+                    label: Text(
+                      _isEditing ? 'Kaydet' : 'Formayi ekle',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _presetSwatch(
+    Color color,
+    bool selected,
+    VoidCallback onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 20,
+        height: 20,
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? Colors.white : Colors.white24,
+            width: selected ? 2 : 1,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Draws a small jersey + shorts + socks preview for a kit.
+class _KitPreviewPainter extends CustomPainter {
+  _KitPreviewPainter(this.kit);
+
+  final JerseyKit kit;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // Shirt: top 56% of the box.
+    final sh = h * 0.56;
+    final path = Path();
+    path.moveTo(w * 0.36, sh * 0.02);
+    path.quadraticBezierTo(w * 0.5, sh * 0.15, w * 0.64, sh * 0.02);
+    path.lineTo(w * 0.78, sh * 0.06);
+    path.lineTo(w * 1.0, sh * 0.17);
+    path.lineTo(w * 0.97, sh * 0.35);
+    path.lineTo(w * 0.84, sh * 0.30);
+    path.lineTo(w * 0.84, sh * 0.98);
+    path.lineTo(w * 0.16, sh * 0.98);
+    path.lineTo(w * 0.16, sh * 0.30);
+    path.lineTo(w * 0.03, sh * 0.35);
+    path.lineTo(w * 0.0, sh * 0.17);
+    path.lineTo(w * 0.22, sh * 0.06);
+    path.close();
+    canvas.drawPath(path, Paint()..color = kit.shirtColor);
+
+    // Number on the shirt.
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '10',
+        style: TextStyle(
+          fontWeight: FontWeight.w900,
+          fontSize: h * 0.21,
+          color: kit.numberColor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset((w - tp.width) / 2, sh * 0.44),
+    );
+
+    // Shorts: middle strip.
+    final shorts = Path();
+    final sy = h * 0.60;
+    final shh = h * 0.20;
+    shorts.moveTo(w * 0.14, sy);
+    shorts.lineTo(w * 0.86, sy);
+    shorts.lineTo(w * 0.92, sy + shh);
+    shorts.lineTo(w * 0.55, sy + shh);
+    shorts.lineTo(w * 0.50, sy + shh * 0.42);
+    shorts.lineTo(w * 0.45, sy + shh);
+    shorts.lineTo(w * 0.08, sy + shh);
+    shorts.close();
+    canvas.drawPath(shorts, Paint()..color = kit.shortsColor);
+
+    // Socks: two small rounded rectangles at the bottom.
+    for (final fx in const [0.30, 0.58]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(w * fx, h * 0.845, w * 0.14, h * 0.145),
+          const Radius.circular(3),
+        ),
+        Paint()..color = kit.socksColor,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_KitPreviewPainter oldDelegate) {
+    return oldDelegate.kit.shirtColor != kit.shirtColor ||
+        oldDelegate.kit.shortsColor != kit.shortsColor ||
+        oldDelegate.kit.socksColor != kit.socksColor ||
+        oldDelegate.kit.numberColor != kit.numberColor ||
+        oldDelegate.kit.goalkeeperShirtColor != kit.goalkeeperShirtColor;
+  }
+}
+
+/// Simple RGB caption for the kit editor preview.
+String _kitColorText(Color c) {
+  final r = (c.r * 255).round();
+  final g = (c.g * 255).round();
+  final b = (c.b * 255).round();
+  return 'R$r G$g B$b';
+}
+
+/// HSL to Color (h in degrees, s and l as 0..1 fractions).
+Color _hslToColor(double h, double s, double l) {
+  final c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+  final hp = (h % 360) / 60.0;
+  final hpMod = hp % 2.0;
+  final x = c * (1.0 - (hpMod - 1.0).abs());
+  double r = 0.0, g = 0.0, b = 0.0;
+  if (hp < 1) {
+    r = c;
+    g = x;
+  } else if (hp < 2) {
+    r = x;
+    g = c;
+  } else if (hp < 3) {
+    g = c;
+    b = x;
+  } else if (hp < 4) {
+    g = x;
+    b = c;
+  } else if (hp < 5) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  final m = l - c / 2.0;
+  int to255(double v) => ((v + m) * 255).round().clamp(0, 255);
+  return Color.fromARGB(255, to255(r), to255(g), to255(b));
 }

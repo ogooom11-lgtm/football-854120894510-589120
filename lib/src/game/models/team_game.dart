@@ -22,13 +22,19 @@ class SubstitutionRecord {
     required this.incoming,
     required this.benchIndex,
     required this.minute,
+    this.reentry = false,
   });
 
   final int outIndex;
   final PlayerGame outgoing;
   final PlayerGame incoming;
+  /// -1 when the incoming player came back from the "substituted out" list
+  /// instead of the bench.
   final int benchIndex;
   final double minute;
+  /// True when a previously substituted player was brought back onto the
+  /// pitch (used to replace an injured or sent-off player).
+  final bool reentry;
 }
 
 class TeamGame {
@@ -56,6 +62,9 @@ class TeamGame {
   List<PlayerGame> players;
   final List<PlayerGame> bench;
   final List<PlayerGame> substitutedOut = [];
+  /// Players who left the match for good (injured or sent off with no
+  /// replacement path) — they cannot be brought back.
+  final List<PlayerGame> removedFromMatch = [];
   final List<SubstitutionRecord> substitutionLog = [];
   int score = 0;
   int substitutionsUsed = 0;
@@ -193,8 +202,35 @@ class TeamGame {
 
   int get attackDirection => side == TeamSide.left ? 1 : -1;
 
-  PlayerGame get goalkeeper =>
-      players.firstWhere((player) => player.role == PlayerRole.goalkeeper);
+  /// The goalkeeper to use right now. Prefers a keeper who is actually able
+  /// to play (not sent off, not injured); falls back to any keeper and
+  /// finally to any available outfielder so a team can never be left
+  /// without a last line.
+  PlayerGame get goalkeeper {
+    final able = players.where(
+      (player) =>
+          player.role == PlayerRole.goalkeeper &&
+          !player.isSentOff &&
+          !player.isInjuredInMatch,
+    );
+    if (able.isNotEmpty) return able.first;
+    final any =
+        players.where((player) => player.role == PlayerRole.goalkeeper);
+    if (any.isNotEmpty) return any.first;
+    return players.firstWhere(
+      (player) => !player.isSentOff,
+      orElse: () => players.first,
+    );
+  }
+
+  /// Whether the team currently has a goalkeeper who can actually play.
+  bool get hasActiveGoalkeeper =>
+      players.any(
+        (player) =>
+            player.role == PlayerRole.goalkeeper &&
+            !player.isSentOff &&
+            !player.isInjuredInMatch,
+      );
 
   PlayerGame? playerById(String id) {
     for (final player in players) {
@@ -345,6 +381,7 @@ class TeamGame {
           ..lastDirection = Vec2(attackDirection.toDouble(), 0)
           ..stamina = incoming.stamina;
     players[outIndex] = replacement;
+    outgoing.exitedAtMinute = minute;
     substitutedOut.add(outgoing);
     substitutionLog.add(
       SubstitutionRecord(
@@ -361,8 +398,55 @@ class TeamGame {
     return true;
   }
 
+  /// Brings a previously substituted player [incoming] back onto the pitch
+  /// into slot [outIndex], pushing the outgoing player out of the match for
+  /// good (injured or sent off). The same PlayerGame object is reused, so
+  /// the player's played minutes and match stats stay correct.
+  bool reenterSubstituted(
+    int outIndex,
+    PlayerGame incoming, {
+    double minute = 0,
+  }) {
+    if (outIndex < 0 || outIndex >= players.length) {
+      return false;
+    }
+    if (!substitutedOut.contains(incoming)) {
+      return false;
+    }
+    if (incoming.isSentOff || incoming.isInjuredInMatch) {
+      return false;
+    }
+    final outgoing = players[outIndex];
+    final position = outgoing.pos.copy();
+    final home = outgoing.homePos.copy();
+    players[outIndex] = incoming
+      ..pos = position
+      ..homePos = home
+      ..lastDirection = Vec2(attackDirection.toDouble(), 0);
+    outgoing.exitedAtMinute = minute;
+    substitutedOut.remove(incoming);
+    removedFromMatch.add(outgoing);
+    // A re-entry replaces a lost player one-for-one; grant a bonus slot so
+    // it does not eat into the team's regular changes.
+    bonusSubstitutions += 1;
+    substitutionsUsed += 1;
+    substitutionLog.add(
+      SubstitutionRecord(
+        outIndex: outIndex,
+        outgoing: outgoing,
+        incoming: incoming,
+        benchIndex: -1,
+        minute: minute,
+        reentry: true,
+      ),
+    );
+    resetDirections();
+    return true;
+  }
+
   /// Reverts the most recent substitution: the outgoing player returns to
-  /// his slot and the substitute goes back to the bench.
+  /// his slot and the substitute goes back to the bench (or, for a
+  /// re-entry, back to the substituted-out list).
   bool undoLastSubstitution() {
     if (substitutionLog.isEmpty) {
       return false;
@@ -372,11 +456,18 @@ class TeamGame {
       substitutionLog.insert(0, record);
       return false;
     }
-    players[record.outIndex] = record.outgoing;
-    final benchIndex = record.benchIndex.clamp(0, bench.length).toInt();
-    bench.insert(benchIndex, record.incoming);
+    players[record.outIndex] = record.outgoing
+      ..exitedAtMinute = null;
+    if (record.reentry) {
+      substitutedOut.add(record.incoming);
+      removedFromMatch.remove(record.outgoing);
+      bonusSubstitutions = math.max(0, bonusSubstitutions - 1);
+    } else {
+      final benchIndex = record.benchIndex.clamp(0, bench.length).toInt();
+      bench.insert(benchIndex, record.incoming);
+      substitutedOut.remove(record.outgoing);
+    }
     substitutionsUsed = math.max(0, substitutionsUsed - 1);
-    substitutedOut.remove(record.outgoing);
     resetDirections();
     return true;
   }
