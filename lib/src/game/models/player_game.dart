@@ -119,7 +119,9 @@ class PlayerGame {
     if (role == PlayerRole.striker) {
       return 3.28 * speedFactor * staminaFactor;
     }
-    if (role == PlayerRole.midfieldLeft || role == PlayerRole.midfieldRight) {
+    if (role == PlayerRole.midfieldLeft ||
+        role == PlayerRole.midfieldRight ||
+        role == PlayerRole.attackingMidfielder) {
       return 3.08 * speedFactor * staminaFactor;
     }
     return 2.92 * speedFactor * staminaFactor;

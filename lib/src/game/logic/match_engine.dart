@@ -23,6 +23,9 @@ import 'offside_logic.dart';
 import 'penalty_logic.dart';
 import 'player_ai.dart';
 import 'shot_calculator.dart';
+import '../tactics/tactical_engine.dart';
+import '../tactics/team_play_state.dart';
+import '../tactics/team_shape_kind.dart';
 
 enum TeamMode { attack, defense, press }
 
@@ -102,6 +105,17 @@ class MatchEngine {
   late final double extraSecondStoppage;
   bool finished = false;
   TeamId? winner;
+
+  // ---- Tactical state machine (plan items 3, 16 and 29) ----------------
+  final TacticalEngine _tacticalEngine = const TacticalEngine();
+  final Map<TeamId, TacticalContext> _tacticalContexts = {};
+  TeamId? _currentPossessor;
+  TeamId? _previousPossessor;
+
+  /// How long the current possession has lasted — drives the transition
+  /// windows of plan item 16. Public so tests and debug tooling can inspect
+  /// (or pin) the state machine.
+  double possessionStateTimer = 0;
 
   MatchBanner? banner;
   bool varReviewActive = false;
@@ -340,6 +354,189 @@ class MatchEngine {
         : TeamMode.defense;
   }
 
+  // ----------------------------------------------------------------------
+  // Team play states (plan items 3, 16 and 29)
+  // ----------------------------------------------------------------------
+
+  /// Advances the possession bookkeeping and rebuilds both teams' tactical
+  /// contexts. Runs every tick before the player AI so every decision uses
+  /// the same, consistent tactical picture.
+  void _tickPlayStates(double dt) {
+    final owner = ball.owner?.teamId;
+    if (owner != _currentPossessor) {
+      _previousPossessor = _currentPossessor;
+      _currentPossessor = owner;
+      possessionStateTimer = 0;
+    } else {
+      possessionStateTimer += dt;
+    }
+    _tacticalContexts.clear();
+    for (final team in [blueTeam, redTeam]) {
+      final state = currentPlayState(team);
+      final shape = shapeKindFor(team, state);
+      _tacticalContexts[team.id] = _tacticalEngine.evaluate(
+        engine: this,
+        team: team,
+        playState: state,
+        shapeKind: shape,
+      );
+    }
+  }
+
+  /// The five game states (plan item 3): possession, attacking transition,
+  /// organised defence, defensive transition and pressing.
+  TeamPlayState currentPlayState(TeamGame team) {
+    final override = team.id == TeamId.blue
+        ? blueTacticalOverride
+        : redTacticalOverride;
+    final owner = ball.owner?.teamId;
+    if (owner == team.id) {
+      // Counter-press survived → quick vertical attack right after winning
+      // the ball (plan item 16: exploit the space before the opponent
+      // re-organises).
+      final justWon =
+          _previousPossessor != null && _previousPossessor != team.id;
+      final window = _attackingTransitionWindow(team);
+      if (justWon && possessionStateTimer < window && _spaceAheadFor(team)) {
+        return TeamPlayState.attackingTransition;
+      }
+      return TeamPlayState.possession;
+    }
+    if (owner != null) {
+      if (override == TeamMode.press) {
+        return TeamPlayState.pressing;
+      }
+      // Just lost the ball: the brief defensive transition in which the
+      // nearest players counter-press and the rest return to shape; if the
+      // press fails the team settles into the organised defence.
+      final justLost = _previousPossessor == team.id;
+      final window = _defensiveTransitionWindow(team);
+      if (justLost && possessionStateTimer < window) {
+        return TeamPlayState.defensiveTransition;
+      }
+      return TeamPlayState.organizedDefense;
+    }
+    // Loose ball: press it when it is inside the team's pressing trigger
+    // zone, otherwise hold the organised shape.
+    if (override == TeamMode.defense) {
+      return TeamPlayState.organizedDefense;
+    }
+    return _insidePressTrigger(team)
+        ? TeamPlayState.pressing
+        : TeamPlayState.organizedDefense;
+  }
+
+  double _attackingTransitionWindow(TeamGame team) {
+    final style = playStyleFor(team.id);
+    return 1.6 + style.tempoFactor * 1.1;
+  }
+
+  double _defensiveTransitionWindow(TeamGame team) {
+    final style = playStyleFor(team.id);
+    return 1.2 + style.counterPressIntensity * 2.2;
+  }
+
+  /// Is there space to run into ahead of [team]? Used to decide whether a
+  /// ball won deep becomes a fast attack or a build-up (plan item 16).
+  bool _spaceAheadFor(TeamGame team) {
+    final opponent = opponentOf(team);
+    final d = team.attackDirection;
+    final mostAdvanced = team.players
+        .where((player) => !player.isGoalkeeper && !player.isSentOff)
+        .fold<double>(0.0, (best, player) {
+      final advance = ((player.pos.x -
+                  (team.side == TeamSide.left
+                      ? GameConstants.leftBound
+                      : GameConstants.rightBound)) *
+              d /
+              GameConstants.pitchWidth)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      return math.max(best, advance);
+    });
+    var opponentsBehind = 0;
+    for (final player in opponent.players) {
+      if (player.isGoalkeeper || player.isSentOff) {
+        continue;
+      }
+      final advance = ((player.pos.x -
+                  (team.side == TeamSide.left
+                      ? GameConstants.leftBound
+                      : GameConstants.rightBound)) *
+              d /
+              GameConstants.pitchWidth)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      if (advance < mostAdvanced - 0.06) {
+        opponentsBehind++;
+      }
+    }
+    return opponentsBehind >= 2 ||
+        playStyleFor(team.id).tempoFactor >= 1.4;
+  }
+
+  bool _insidePressTrigger(TeamGame team) {
+    final style = playStyleFor(team.id);
+    final d = team.attackDirection;
+    final ownGoalX = team.side == TeamSide.left
+        ? GameConstants.leftBound
+        : GameConstants.rightBound;
+    final ballAdvance =
+        ((ball.pos.x - ownGoalX) * d / GameConstants.pitchWidth)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    // Higher pressing intensity moves the trigger line toward the halfway
+    // line; chasing a result also pushes the team up to win the ball
+    // (plan item 17).
+    final chasing = (team.score - opponentOf(team).score) < 0;
+    final trigger = 0.96 - style.pressingIntensity * 0.42 - (chasing ? 0.06 : 0.0);
+    return ballAdvance >= trigger.clamp(0.30, 0.95).toDouble();
+  }
+
+  /// Which formation shape the team currently expresses (plan items 4, 24):
+  /// the official formation never changes, its behaviour does.
+  TeamShapeKind shapeKindFor(TeamGame team, TeamPlayState state) =>
+      switch (state) {
+        TeamPlayState.possession => TeamShapeKind.attacking,
+        TeamPlayState.attackingTransition => TeamShapeKind.attacking,
+        TeamPlayState.organizedDefense => TeamShapeKind.defensive,
+        TeamPlayState.defensiveTransition => TeamShapeKind.transition,
+        TeamPlayState.pressing => TeamShapeKind.pressing,
+      };
+
+  /// The tactical context of the current tick (plan item 29). Rebuilt in
+  /// [_tickPlayStates]; falls back to a fresh evaluation when queried before
+  /// the first tick.
+  TacticalContext tacticalContextFor(TeamGame team) {
+    final cached = _tacticalContexts[team.id];
+    if (cached != null) {
+      return cached;
+    }
+    final state = currentPlayState(team);
+    final context = _tacticalEngine.evaluate(
+      engine: this,
+      team: team,
+      playState: state,
+      shapeKind: shapeKindFor(team, state),
+    );
+    _tacticalContexts[team.id] = context;
+    return context;
+  }
+
+  /// The x coordinate of the opponent's second-last defender — the offside
+  /// line the attackers play against (plan item 10).
+  double offsideLineFor(TeamGame attackingTeam) {
+    final defending = opponentOf(attackingTeam);
+    final d = attackingTeam.attackDirection;
+    final defenders = [...defending.players]
+      ..sort(
+        (a, b) => d == 1
+            ? b.pos.x.compareTo(a.pos.x)
+            : a.pos.x.compareTo(b.pos.x),
+      );
+    return defenders.length > 1 ? defenders[1].pos.x : defenders.first.pos.x;
+  }
+
   bool get lateCloseGamePressure {
     final closeScore = (blueTeam.score - redTeam.score).abs() <= 1;
     final lateRegulation =
@@ -376,8 +573,14 @@ class MatchEngine {
   }
 
   bool shouldAttackersDrop(TeamGame team) {
+    // Attackers and wingers track back to help when the danger is high or
+    // the result must be protected — without turning into defenders
+    // (plan item 11).
+    final protectingLead =
+        (team.score - opponentOf(team).score) >= 1 && minute >= 70;
     return teamUnderDanger(team) ||
-        (lateCloseGamePressure && teamMode(team) == TeamMode.defense);
+        (lateCloseGamePressure && teamMode(team) == TeamMode.defense) ||
+        protectingLead;
   }
 
   bool counterOpportunityFor(TeamGame team, PlayerGame player) {
@@ -470,6 +673,7 @@ class MatchEngine {
       player.minutesThisMatch += elapsedGameMinutes;
     }
     _trackPossession(dt);
+    _tickPlayStates(dt);
     _tickSetPieceAttack(dt);
     _checkPeriodEnd();
     _tickAiAutoControl(dt);
@@ -989,32 +1193,39 @@ class MatchEngine {
   }
 
   /// Assigns the nearest suitable teammate to a space vacated by a player.
+  /// The vacancy is measured against the player's *dynamic* anchor (his
+  /// current role spot in the live team shape), so the shape is always
+  /// redistributed — whoever roams away is covered (plan items 15 and 27).
   Vec2? coverageTargetFor(PlayerGame player, TeamGame team) {
     if (player.isGoalkeeper || ball.owner == player || player.restartTarget != null) {
       return null;
     }
+    final context = tacticalContextFor(team);
     PlayerGame? vacancy;
+    Vec2? vacancyAnchor;
     var bestDistance = 0.0;
     for (final teammate in team.players) {
       if (teammate == player || teammate.isGoalkeeper || ball.owner == teammate) {
         continue;
       }
-      final departed = teammate.pos.distanceTo(teammate.homePos);
+      final anchor = context.dynamicAnchor(teammate);
+      final departed = teammate.pos.distanceTo(anchor);
       if (departed < 118) {
         continue;
       }
       final closestCover = team.players
           .where((candidate) => candidate != teammate && !candidate.isGoalkeeper)
-          .reduce((a, b) => a.pos.distanceTo(teammate.homePos) <
-                  b.pos.distanceTo(teammate.homePos)
+          .reduce((a, b) => a.pos.distanceTo(anchor) <
+                  b.pos.distanceTo(anchor)
               ? a
               : b);
       if (closestCover == player && departed > bestDistance) {
         vacancy = teammate;
+        vacancyAnchor = anchor;
         bestDistance = departed;
       }
     }
-    return vacancy?.homePos.copy();
+    return vacancyAnchor?.copy();
   }
 
   void moveTowards(PlayerGame player, Vec2 target, double force, double dt) {
@@ -4709,12 +4920,12 @@ class MatchEngine {
   }
 
   Vec2 _aiMovementTarget(TeamGame team, PlayerGame controlled, Vec2 ballPos) {
-    final difficulty = aiDifficulty;
     final style = playStyleFor(team.id);
+    final context = tacticalContextFor(team);
 
-    // If we have the ball, move towards opponent goal
+    // If we have the ball, the carrier drives at the opponent goal and the
+    // rest take their dynamic shape/support spots (plan item 29).
     if (ball.owner != null && ball.owner!.teamId == team.id) {
-      // Move the ball carrier forward
       if (ball.owner == controlled) {
         final goalCenter = goalCenterFor(team);
         // Add some width variation based on role and style
@@ -4726,43 +4937,33 @@ class MatchEngine {
         }
         return goalCenter;
       }
-      // Support the ball carrier
-      final carrier = ball.owner!;
-      final supportSpacing = 60 * style.widthFactor;
-      final supportX = carrier.pos.x + team.attackDirection * supportSpacing;
-      final supportY =
-          GameConstants.virtualHeight / 2 +
-          (controlled.pos.y - GameConstants.virtualHeight / 2) * 0.4;
-      return Vec2(supportX, supportY);
+      return context.dynamicAnchor(controlled);
     }
 
-    // If opponent has the ball, defend
+    // If opponent has the ball: press when in range, otherwise hold the
+    // dynamic defensive shape (plan items 6, 14 and 22).
     if (ball.owner != null && ball.owner!.teamId != team.id) {
       final carrier = ball.owner!;
       final distToCarrier = controlled.pos.distanceTo(carrier.pos);
       final pressRange =
-          140 * difficulty.aggressionFactor * style.pressingIntensity;
-      if (distToCarrier < pressRange || controlled.role.isDefender) {
-        // Pressure the ball carrier
-        return carrier.pos - Vec2(team.attackDirection * 16, 0);
+          140 * aiDifficulty.aggressionFactor * style.pressingIntensity;
+      if (distToCarrier < pressRange) {
+        // Pressure the ball carrier from the goal side (plan item 12).
+        final goalCenter = goalCenterFor(team);
+        final goalSide =
+            (goalCenter - carrier.pos).normalized(Vec2(0, 1));
+        return carrier.pos + goalSide * 10;
       }
-      // Defensive positioning - affected by defensive line
-      final defensiveDepth = 80 * style.defensiveLineFactor;
-      final defendX = team.side == TeamSide.left
-          ? carrier.pos.x - defensiveDepth
-          : carrier.pos.x + defensiveDepth;
-      return Vec2(
-        defendX
-            .clamp(GameConstants.leftBound + 40, GameConstants.rightBound - 40)
-            .toDouble(),
-        carrier.pos.y
-            .clamp(GameConstants.topBound + 40, GameConstants.bottomBound - 40)
-            .toDouble(),
-      );
+      return context.dynamicAnchor(controlled);
     }
 
-    // Loose ball - go get it
-    return ballPos;
+    // Loose ball - the designated chaser goes to the interception point,
+    // everybody else keeps his dynamic anchor (plan item 6).
+    final chaser = team.closestTo(ball.pos, includeGoalkeeper: false);
+    if (chaser == controlled) {
+      return ballPos;
+    }
+    return context.dynamicAnchor(controlled);
   }
 
   void _tickAiKickDecision(TeamId id, PlayerGame controlled, double dt) {
