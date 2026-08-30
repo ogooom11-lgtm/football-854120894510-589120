@@ -4,6 +4,7 @@ import '../config/game_constants.dart';
 import '../enums/kick_type.dart';
 import '../enums/player_role.dart';
 import '../enums/ai_difficulty.dart';
+import '../enums/ai_play_style.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
 import '../models/player_game.dart';
@@ -85,11 +86,38 @@ class PlayerAi {
     var force = context.playState.urgency;
 
     if (ball.owner != null && ball.owner!.teamId != team.id) {
-      // ---------------- Opponent has the ball (plan item 23, defensive
-      // priority): protect the goal, stop the danger, cover, close the
-      // lane, press, return to shape.
-      final duty = _selectDefensiveDuty(player, team, opponent, context, engine);
-      switch (duty) {
+      final keeper = engine.ball.owner!;
+      if (engine.shouldWaitForKeeperRelease(team)) {
+        // The opponent keeper has the ball: attackers only press him when
+        // one of his own defenders stands close to him. Otherwise everyone
+        // holds the release-wait shape.
+        final keeperTeam = engine.teamById(keeper.teamId);
+        final defenderNear = keeperTeam.players.any(
+          (mate) =>
+              !mate.isGoalkeeper &&
+              !mate.isSentOff &&
+              mate.pos.distanceTo(keeper.pos) < 85,
+        );
+        final nearestChaser = team.closestTo(
+          keeper.pos,
+          includeGoalkeeper: false,
+        );
+        if (defenderNear &&
+            nearestChaser == player &&
+            player.role.isAttacker) {
+          finalTarget =
+              keeper.pos - Vec2(team.attackDirection.toDouble() * 14, 0);
+          force += 0.08;
+        } else {
+          finalTarget = _keeperReleaseWaitTarget(player, team, opponent, engine);
+        }
+      } else {
+        // ---------------- Opponent has the ball (plan item 23, defensive
+        // priority): protect the goal, stop the danger, cover, close the
+        // lane, press, return to shape.
+        final duty =
+            _selectDefensiveDuty(player, team, opponent, context, engine);
+        switch (duty) {
         case DefensiveDuty.protectGoal:
           finalTarget = _protectGoalTarget(player, team, engine);
           force += 0.10;
@@ -129,6 +157,7 @@ class PlayerAi {
               }
             }
           }
+        }
       }
     } else if (ball.owner != null && ball.owner!.teamId == team.id) {
       // ---------------- We have the ball (plan item 23, offensive

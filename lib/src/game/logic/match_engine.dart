@@ -1201,7 +1201,6 @@ class MatchEngine {
       return null;
     }
     final context = tacticalContextFor(team);
-    PlayerGame? vacancy;
     Vec2? vacancyAnchor;
     var bestDistance = 0.0;
     for (final teammate in team.players) {
@@ -1220,7 +1219,6 @@ class MatchEngine {
               ? a
               : b);
       if (closestCover == player && departed > bestDistance) {
-        vacancy = teammate;
         vacancyAnchor = anchor;
         bestDistance = departed;
       }
