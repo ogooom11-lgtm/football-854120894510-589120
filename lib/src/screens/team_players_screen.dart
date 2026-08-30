@@ -27,29 +27,47 @@ class TeamPlayersScreen extends StatefulWidget {
 /// Sort keys of the players page (مطلب الفرز الكامل: القيمة، معدل النقاط،
 /// الأهداف، السرعة، الإنهاء...).
 enum _PlayerSort {
-  name('الاسم', (p) => p.name.toLowerCase()),
-  number('الرقم', (p) => (p.number ?? 99).toDouble()),
-  marketValue('القيمة السوقية', (p) => p.marketValue),
-  averagePoints('معدل النقاط', (p) {
-    if (p.matchesPlayed == 0) return 0.0;
-    return p.points / p.matchesPlayed;
-  }),
-  totalPoints('مجموع النقاط', (p) => p.points),
-  goals('الأهداف', (p) => p.goals.toDouble()),
-  assists('الصناعة', (p) => p.assists.toDouble()),
-  overall('التقييم العام', (p) => p.effectiveOverall),
-  speed('السرعة', (p) => p.speedRating),
-  finishing('الإنهاء', (p) => p.finishingRating),
-  shotPower('قوة التسديد', (p) => p.shotPowerRating),
-  successfulPasses('التمريرات الناجحة', (p) => p.successfulPasses.toDouble()),
-  matchesPlayed('المباريات', (p) => p.matchesPlayed.toDouble()),
-  stamina('التحمل', (p) => p.staminaRating),
-  zeka('الذكاء', (p) => p.zekaGucu);
+  name('الاسم'),
+  number('الرقم'),
+  marketValue('القيمة السوقية'),
+  averagePoints('معدل النقاط'),
+  totalPoints('مجموع النقاط'),
+  goals('الأهداف'),
+  assists('الصناعة'),
+  overall('التقييم العام'),
+  speed('السرعة'),
+  finishing('الإنهاء'),
+  shotPower('قوة التسديد'),
+  successfulPasses('التمريرات الناجحة'),
+  matchesPlayed('المباريات'),
+  stamina('التحمل'),
+  zeka('الذكاء');
 
-  const _PlayerSort(this.label, this.value);
+  const _PlayerSort(this.label);
 
   final String label;
-  final double Function(PlayerProfile) value;
+
+  /// Numeric comparison value used by the roster sort. The [name] key is
+  /// handled with a string comparison by the caller before reaching here.
+  double valueOf(PlayerProfile player) => switch (this) {
+    _PlayerSort.number => (player.number ?? 99).toDouble(),
+    _PlayerSort.marketValue => player.marketValue,
+    _PlayerSort.averagePoints => player.matchesPlayed == 0
+        ? 0.0
+        : player.points / player.matchesPlayed,
+    _PlayerSort.totalPoints => player.points,
+    _PlayerSort.goals => player.goals.toDouble(),
+    _PlayerSort.assists => player.assists.toDouble(),
+    _PlayerSort.overall => player.effectiveOverall,
+    _PlayerSort.speed => player.speedRating,
+    _PlayerSort.finishing => player.finishingRating,
+    _PlayerSort.shotPower => player.shotPowerRating,
+    _PlayerSort.successfulPasses => player.successfulPasses.toDouble(),
+    _PlayerSort.matchesPlayed => player.matchesPlayed.toDouble(),
+    _PlayerSort.stamina => player.staminaRating,
+    _PlayerSort.zeka => player.zekaGucu,
+    _PlayerSort.name => 0,
+  };
 }
 
 class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
@@ -590,13 +608,17 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
         )
         .toList()
       ..sort((a, b) {
-        final av = _sortKey.value(a);
-        final bv = _sortKey.value(b);
-        var cmp = av.compareTo(bv);
-        if (cmp == 0) {
-          cmp = a.name
-              .toLowerCase()
-              .compareTo(b.name.toLowerCase());
+        int cmp;
+        if (_sortKey == _PlayerSort.name) {
+          cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          if (cmp == 0) {
+            cmp = (a.number ?? 0).compareTo(b.number ?? 0);
+          }
+        } else {
+          cmp = _sortKey.valueOf(a).compareTo(_sortKey.valueOf(b));
+          if (cmp == 0) {
+            cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
         }
         return _sortAscending ? cmp : -cmp;
       });
