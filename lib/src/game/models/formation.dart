@@ -25,6 +25,11 @@ enum FormationType {
   support4411,
   counter523,
   creators3421,
+  control3511,
+  narrow4132,
+  defensive5212,
+  midfield3412,
+  bus631,
   balanced,
   attacking,
   compact,
@@ -247,6 +252,43 @@ const Map<FormationType, _FormationSpec> _formationSpecs = {
   ),
 };
 
+const Map<FormationType, _FormationSpec> _extraSpecs = {
+  FormationType.control3511: _FormationSpec('3-5-1-1 Kontrollu Orta Saha', [3, 5, 1, 1], [
+    _gk,
+    _cb1, _lib, _cb2,
+    _lwb, _cm1, _dm, _cm2, _rwb,
+    _am,
+    _st,
+  ]),
+  FormationType.narrow4132: _FormationSpec('4-1-3-2 Dar Hucum', [4, 1, 3, 2], [
+    _gk,
+    _lb, _cb1, _cb2, _rb,
+    _dm,
+    _lw, _am, _rw,
+    _st, _st,
+  ]),
+  FormationType.defensive5212: _FormationSpec('5-2-1-2 Guclu Savunma', [5, 2, 1, 2], [
+    _gk,
+    _lwb, _cb1, _lib, _cb2, _rwb,
+    _dm, _cm1,
+    _am,
+    _st, _st,
+  ]),
+  FormationType.midfield3412: _FormationSpec('3-4-1-2 Elmas Orta Saha', [3, 4, 1, 2], [
+    _gk,
+    _cb1, _lib, _cb2,
+    _lwb, _cm1, _cm2, _rwb,
+    _am,
+    _st, _st,
+  ]),
+  FormationType.bus631: _FormationSpec('6-3-1 Tam Otobus', [6, 3, 1], [
+    _gk,
+    _lwb, _lb, _cb1, _cb2, _rb, _rwb,
+    _cm1, _dm, _cm2,
+    _st,
+  ]),
+};
+
 const playableFormationTypes = [
   FormationType.bus541,
   FormationType.kontrollu5311,
@@ -271,7 +313,50 @@ const playableFormationTypes = [
   FormationType.support4411,
   FormationType.counter523,
   FormationType.creators3421,
+  FormationType.control3511,
+  FormationType.narrow4132,
+  FormationType.defensive5212,
+  FormationType.midfield3412,
+  FormationType.bus631,
 ];
+
+/// Tactical family of a formation, used by the picker filter/sort
+/// (مطلب فرز التشكيلات).
+enum FormationFamily { defensive, balanced, attacking, midfieldHeavy }
+
+extension FormationFamilyInfo on FormationFamily {
+  String get label => switch (this) {
+        FormationFamily.defensive => 'دفاعي',
+        FormationFamily.balanced => 'متوازن',
+        FormationFamily.attacking => 'هجومي',
+        FormationFamily.midfieldHeavy => 'وسط قوي',
+      };
+}
+
+FormationFamily formationFamily(FormationType type) => switch (type) {
+      FormationType.bus541 ||
+      FormationType.kontrollu5311 ||
+      FormationType.counter523 ||
+      FormationType.defensive5212 ||
+      FormationType.bus631 => FormationFamily.defensive,
+      FormationType.midfield361 ||
+      FormationType.modern4231 ||
+      FormationType.midfield3412 ||
+      FormationType.control3511 ||
+      FormationType.magic4222 ||
+      FormationType.christmas4321 ||
+      FormationType.creators3421 ||
+      FormationType.support4411 ||
+      FormationType.anchor4141 => FormationFamily.midfieldHeavy,
+      FormationType.brazil424 ||
+      FormationType.total343 ||
+      FormationType.total1333 ||
+      FormationType.pyramid235 ||
+      FormationType.bielsa3331 ||
+      FormationType.false460 ||
+      FormationType.narrow4132 => FormationFamily.attacking,
+      _ => FormationFamily.balanced,
+    };
 
 extension FormationText on FormationType {
   String get title =>
@@ -311,8 +396,9 @@ FormationType formationFromName(Object? value) {
 
 FormationPlan formationPlan(FormationType type) {
   final normalized = type._normalized;
-  final spec =
-      _formationSpecs[normalized] ?? _formationSpecs[FormationType.wing433]!;
+  final spec = _formationSpecs[normalized] ??
+      _extraSpecs[normalized] ??
+      _formationSpecs[FormationType.wing433]!;
   return FormationPlan(
     type: normalized,
     name: spec.title,

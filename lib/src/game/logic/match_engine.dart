@@ -155,6 +155,9 @@ class MatchEngine {
   bool replayMode = false;
   bool replayPlaying = false;
   int replayIndex = 0;
+  /// Playback speed of the VAR replay: 0.25 = slow motion, 0.5 = half,
+  /// 1 = real time, 2 = fast forward (مطلب تبطيئ العرض وتسريعه في الفار).
+  double replaySpeed = 1;
   double _replayPlaybackAccumulator = 0;
   bool substitutionPaused = false;
   double blueControlSeconds = 0;
@@ -610,12 +613,19 @@ class MatchEngine {
       return;
     }
     if (substitutionPaused) {
+      // The substitution/VAR break lets every player catch his breath:
+      // stamina recovers during the stoppage
+      // (مطلب: أثناء التبديل والفار اللاعبون يستريحون وتزيد طاقتهم).
+      _recoverStaminaAll(dt * 0.030);
       return;
     }
     _tickCooldowns(dt);
 
     if (_pauseTimer > 0) {
       _pauseTimer -= dt;
+      // Match pauses (VAR reviews, banners, set-piece organisation) also
+      // give the players a small recovery window.
+      _recoverStaminaAll(dt * 0.018);
       _recordReplay(dt);
       if (_pauseTimer <= 0) {
         final callback = _afterPause;
@@ -997,12 +1007,21 @@ class MatchEngine {
                 : mate.pos.distanceTo(player.pos) < 260),
       );
       target = chooseBestPass(player, candidates, preferForward: false);
-      kickDirection =
-          (target?.pos ?? _cornerDeliverySpot(team, high: highDelivery)) -
-          ball.pos;
+      final cornerTarget = target?.pos ?? _cornerDeliverySpot(team, high: highDelivery);
+      kickDirection = cornerTarget - ball.pos;
       if (highDelivery) {
-        loft = 5.75 + clampedPower * 1.50;
-        finalPower = 0.86 + clampedPower * 0.27;
+        // One press of the long pass must drop INTO the penalty area at a
+        // header-friendly height of 1.8-2.2 m
+        // (مطلب الركنية: تصل منطقة الجزاء بارتفاع ١.٨٠ - ٢.٢٠).
+        final speedBase = 7.6 + player.profile.passingRating / 100.0 * 2.0;
+        final distance = (cornerTarget - ball.pos).length;
+        final delivery = _aerialDelivery(
+          distancePx: distance,
+          arrivalHeight: 1.80 + random.nextDouble() * 0.40,
+          speedBase: speedBase,
+        );
+        loft = delivery.loft;
+        finalPower = delivery.power;
       } else {
         finalPower = 0.74 + clampedPower * 0.22;
       }
@@ -1262,6 +1281,37 @@ class MatchEngine {
     _clampRestartPosition(player);
   }
 
+  /// Computes the (power, loft) pair that makes a lofted kick from
+  /// [speedBase] land near [distancePx] with an arrival height close to
+  /// [arrivalHeight] metres. Used for goal kicks, corner deliveries and
+  /// long keeper throws so one button press produces a realistic,
+  /// repeatable ball flight instead of an uncontrolled rocket.
+  ({double power, double loft}) _aerialDelivery({
+    required double distancePx,
+    required double arrivalHeight,
+    required double speedBase,
+    double minHeight = 0.8,
+  }) {
+    const gravity = GameConstants.gravityMeters;
+    final clampedHeight = arrivalHeight.clamp(0.30, 2.30).toDouble();
+    // Solve v*t - 0.5*g*t^2 = h on the descending branch while the
+    // horizontal speed covers the distance in the same t.
+    var speedPxS = (speedBase * 60 * 0.86).clamp(240.0, 660.0).toDouble();
+    var t = distancePx / speedPxS;
+    // Vertical launch velocity that passes through (t, arrivalHeight):
+    var v = (clampedHeight + 0.5 * gravity * t * t) / t;
+    // The arrival must be on the descending branch (apex before arrival).
+    final apexT = v / gravity;
+    if (apexT > t * 0.92) {
+      v = gravity * t * 0.92;
+      t = distancePx / speedPxS;
+      v = (clampedHeight + 0.5 * gravity * t * t) / t;
+    }
+    final loft = v.clamp(2.2, 14.0).toDouble();
+    final power = (speedPxS / 60.0 / speedBase).clamp(0.42, 2.20).toDouble();
+    return (power: power, loft: math.max(loft, minHeight));
+  }
+
   bool distributeFromGoalkeeper(
     PlayerGame keeper, {
     required bool high,
@@ -1329,23 +1379,64 @@ class MatchEngine {
     final forward = Vec2(team.attackDirection.toDouble(), 0);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
-    final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
-    final kickPower = (high
-            ? math.max(
-                clampedPower,
-                goalKick ? 1.55 : (1.15 - keeper.profile.goalkeeperStats.distribution * 0.25),
-              )
-            : math.max(clampedPower, 0.82))
-        .toDouble();
+    double kickPower;
+    double kickLoft = 0;
+    if (high) {
+      final speedBase = 7.6 + keeper.profile.passingRating / 100.0 * 2.0;
+      if (goalKick) {
+        // A goal kick must land between a quarter and two-thirds of the
+        // pitch — never fly to the opposite penalty area
+        // (مطلب: قوة الكرة بعد ربع الملعب وقبل ثلثيه).
+        var distance = (target.pos - ball.pos).length;
+        final maxDistance = GameConstants.pitchWidth * 0.62;
+        final minDistance = GameConstants.pitchWidth * 0.24;
+        final clampedDistance = distance.clamp(minDistance, maxDistance);
+        final direction = (target.pos - ball.pos).normalized(Vec2(team.attackDirection.toDouble(), 0));
+        final landing = ball.pos +
+            direction * clampedDistance;
+        final delivery = _aerialDelivery(
+          distancePx: clampedDistance,
+          arrivalHeight: 1.6,
+          speedBase: speedBase,
+        );
+        kickPower = math.max(delivery.power, power.clamp(0.72, 1.60));
+        kickLoft = delivery.loft;
+        // Keep the flight inside the requested band: aim the kick at the
+        // clamped landing point instead of the raw target.
+        releaseFromPlayer(
+          keeper,
+          landing - ball.pos,
+          kickPower,
+          type: KickType.highPass,
+          target: target,
+          loft: kickLoft,
+        );
+        keeper
+          ..catchTimer = 0
+          ..keeperParryCooldown = math.max(keeper.keeperParryCooldown, 0.48)
+          ..manualOverride = 0.42
+          ..lastDirection = forward;
+        return ball.owner == null && ball.vel.length > 0.1;
+      }
+      // Normal high throw: a short-to-mid delivery.
+      final distance = (target.pos - ball.pos).length.clamp(120.0, 430.0);
+      final delivery = _aerialDelivery(
+        distancePx: distance,
+        arrivalHeight: 1.1,
+        speedBase: speedBase,
+      );
+      kickPower = math.max(delivery.power, power.clamp(0.72, 1.35));
+      kickLoft = delivery.loft;
+    } else {
+      kickPower = math.max(power.clamp(0.72, 1.35), 0.82);
+    }
     releaseFromPlayer(
       keeper,
       target.pos - ball.pos,
       kickPower,
       type: high ? KickType.highPass : KickType.pass,
       target: target,
-      loft: high
-          ? (goalKick ? 14.5 : 3.2 + keeper.profile.goalkeeperStats.distribution * 0.9)
-          : 0,
+      loft: kickLoft,
     );
     keeper
       ..catchTimer = 0
@@ -1671,9 +1762,14 @@ class MatchEngine {
           }
           final defendingTeam = teamById(defender.teamId);
           final cautious = defender.yellowCardsThisMatch > 0;
+          // The AI defender can dispossess the human-controlled dribbler
+          // too — the ball is never glued to the controlled player
+          // (مطلب: اللاعب غير المتحكم به يقدر يمتلك الكرة من المتحكم به).
+          final controlledCarrier = owner.manualOverride > 0;
           final tackleChance =
               (defender.role.isDefender ? 0.34 : 0.22) *
-              (cautious ? 0.72 : 1.0);
+              (cautious ? 0.72 : 1.0) *
+              (controlledCarrier ? 1.22 : 1.0);
           final lateContact =
               (owner.pos.x - defender.pos.x) *
                   teamById(owner.teamId).attackDirection >
@@ -1866,6 +1962,10 @@ class MatchEngine {
         }
         ball.attachTo(player);
       } else {
+        // A failed control still counts as a teammate TOUCH: if the ball
+        // came from a team-mate's pass, the pass was delivered successfully
+        // (مطلب: التمريرة الناجحة بمجرد لمس الزميل لها).
+        _recordTeammateTouch(player);
         _deflectFromPlayer(player, strong: false);
       }
       return;
@@ -3332,7 +3432,7 @@ class MatchEngine {
     if (!replayPlaying || replayFrames.isEmpty) {
       return;
     }
-    _replayPlaybackAccumulator += dt;
+    _replayPlaybackAccumulator += dt * replaySpeed;
     while (_replayPlaybackAccumulator >= 0.08) {
       _replayPlaybackAccumulator -= 0.08;
       replayIndex += 1;
@@ -3548,13 +3648,24 @@ class MatchEngine {
     return swapped;
   }
 
-  bool substitute(TeamId id, int outIndex, int benchIndex, {double minute = 0}) {
+  bool substitute(
+    TeamId id,
+    int outIndex,
+    int benchIndex, {
+    double minute = 0,
+    bool allowKeeperSwap = false,
+  }) {
     final team = teamById(id);
     final ownerWasOut =
         outIndex >= 0 &&
         outIndex < team.players.length &&
         ball.owner == team.players[outIndex];
-    final ok = team.substitute(outIndex, benchIndex, minute: minute);
+    final ok = team.substitute(
+      outIndex,
+      benchIndex,
+      minute: minute,
+      allowKeeperSwap: allowKeeperSwap,
+    );
     if (!ok) {
       return false;
     }
@@ -3576,6 +3687,43 @@ class MatchEngine {
 
   /// Reverts the last substitution of [id]'s team (undo from the
   /// substitution panel).
+  /// Brings a previously substituted-out player back for the player on the
+  /// pitch at [outIndex] (مطلب: إعادة إدخال أي لاعب سبق تبديله).
+  bool reenterFromLog(TeamId id, int outIndex, int logIndex,
+      {double minute = 0}) {
+    final team = teamById(id);
+    final ownerWasOut =
+        outIndex >= 0 &&
+        outIndex < team.players.length &&
+        ball.owner == team.players[outIndex];
+    final ok = team.reenterFromLog(outIndex, logIndex, minute: minute);
+    if (!ok) {
+      return false;
+    }
+    if (ownerWasOut) {
+      ball.attachTo(team.players[outIndex]);
+    }
+    _startPause(
+      '${team.name}: اعادة ادخال',
+      '${team.substitutionsUsed}/${team.substitutionLimit}',
+      0.8,
+      null,
+    );
+    return true;
+  }
+
+  /// Emergency reinstatement of a sent-off player (arcade rule: used when
+  /// the squad has nobody left to bring on).
+  bool reinstateSentOff(TeamId id, int slotIndex, {double minute = 0}) {
+    final team = teamById(id);
+    final ok = team.reinstateSentOff(slotIndex, minute: minute);
+    if (!ok) {
+      return false;
+    }
+    _startPause('${team.name}: عودة مطرود', 'طوارئ', 0.8, null);
+    return true;
+  }
+
   bool undoLastSubstitutionFor(TeamId id) {
     final team = teamById(id);
     final last = team.substitutionLog.isEmpty
@@ -3768,6 +3916,28 @@ class MatchEngine {
               (1.20 - player.profile.staminaSkill * 0.52),
     );
   }
+
+  /// Recovers a small amount of stamina for everyone still on the pitch.
+  /// Used during substitution breaks and VAR pauses so the stoppages act
+  /// as a genuine breather (مطلب استشفاء الطاقة أثناء التوقفات).
+  void _recoverStaminaAll(double amount) {
+    if (amount <= 0) {
+      return;
+    }
+    final cap = playerFitnessCap();
+    for (final player in allPlayers) {
+      if (player.isSentOff) {
+        continue;
+      }
+      final recovery = amount *
+          (0.7 + player.profile.staminaSkill * 0.6) *
+          (player.isGoalkeeper ? 1.2 : 1.0);
+      player.stamina = math.min(cap, player.stamina + recovery);
+    }
+  }
+
+  /// The stamina ceiling during a match: the player's long-term fitness.
+  double playerFitnessCap() => 1.0;
 
   /// Pressing costs extra energy through the engine, so it cannot conflict
   /// with the normal movement drain handled above.
@@ -3974,6 +4144,28 @@ class MatchEngine {
         player.matchClearances += 1;
       }
     } else if (type == KickType.shoot) {
+      // A kick from behind the halfway line that can never reach the goal
+      // is a clearance (تبعيد), not a shot — only balls genuinely directed
+      // at the goal and able to arrive there count as shots.
+      final goalX = goalCenterFor(team).x;
+      final distanceToGoal = (goalX - ball.pos.x).abs();
+      final ownHalf = team.attackDirection == 1
+          ? player.pos.x < GameConstants.virtualWidth / 2
+          : player.pos.x > GameConstants.virtualWidth / 2;
+      final shotGravity = restartKind == RestartKind.freeKick
+          ? GameConstants.gravityMeters * 5.30
+          : GameConstants.gravityMeters;
+      final horizontalSpeed =
+          math.max(0.1, _shotLaunchSpeed(player, power) * 60);
+      // Rough carry: how far the ball travels before it comes back down
+      // (plus a small roll allowance).
+      final timeToGround = (loft / shotGravity) * 2 + 0.25;
+      final carryPx = horizontalSpeed * timeToGround * 0.92;
+      if (ownHalf && carryPx < distanceToGoal * 0.72) {
+        player.profile.clearances += 1;
+        player.matchClearances += 1;
+        return;
+      }
       player.profile.shots += 1;
       player.matchShots += 1;
       if (team.id == TeamId.blue) {
@@ -3986,12 +4178,7 @@ class MatchEngine {
           GameConstants.virtualHeight / 2 - GameConstants.goalPixelHeight / 2;
       final bottom =
           GameConstants.virtualHeight / 2 + GameConstants.goalPixelHeight / 2;
-      final goalX = goalCenterFor(team).x;
-      final horizontalSpeed = math.max(0.1, _shotLaunchSpeed(player, power) * 60);
-      final flightSeconds = (goalX - ball.pos.x).abs() / horizontalSpeed;
-      final shotGravity = restartKind == RestartKind.freeKick
-          ? GameConstants.gravityMeters * 5.30
-          : GameConstants.gravityMeters;
+      final flightSeconds = distanceToGoal / horizontalSpeed;
       final curvedProjectedY = projectedY == null
           ? null
           : projectedY + curve * flightSeconds * flightSeconds * 30;
@@ -4048,6 +4235,32 @@ class MatchEngine {
     // (handled in _scoreGoal), and dribble tracking
     receiver.matchDribbles += 1;
     receiver.matchSuccessfulDribbles += 1;
+  }
+
+  /// A pass counts as successful the moment any teammate touches it —
+  /// even a heavy touch or a deflection off a team-mate. Opponent touches
+  /// already void the pass through [ball.potentialAssister].
+  void _recordTeammateTouch(PlayerGame receiver) {
+    final passer = ball.lastPasser;
+    if (passer == null ||
+        passer == receiver ||
+        passer.teamId != receiver.teamId ||
+        (ball.lastKickType != KickType.pass &&
+            ball.lastKickType != KickType.highPass)) {
+      return;
+    }
+    if (ball.potentialAssister != passer) {
+      return;
+    }
+    passer.profile.successfulPasses += 1;
+    passer.matchSuccessfulPasses += 1;
+    if (passer.teamId == TeamId.blue) {
+      blueSuccessfulPasses += 1;
+    } else {
+      redSuccessfulPasses += 1;
+    }
+    // Count a single touch exactly once.
+    ball.potentialAssister = null;
   }
 
   void takeContextualShot(
@@ -4371,6 +4584,18 @@ class MatchEngine {
           ),
         );
         player.profile.recalculateZekaGucu();
+        // Small performance-based attribute drift after every match
+        // (مطلب: القوة والذكاء وقوة التسديد تتغير تغييراً بسيطاً).
+        player.profile.applyMatchDevelopment(
+          rating: rating,
+          matchGoals: player.matchGoals,
+          matchAssists: player.matchAssists,
+          matchShotsOnTarget: player.matchShotsOnTarget,
+          matchSuccessfulPasses: player.matchSuccessfulPasses,
+          matchPasses: player.matchPasses,
+          matchFoulsCommitted: player.matchFoulsCommitted,
+          matchSaves: player.matchSaves,
+        );
       }
       player.profile
         ..fitness = player.stamina
@@ -4519,6 +4744,18 @@ class MatchEngine {
   }) {
     fouler.profile.foulsCommitted += 1;
     fouler.matchFoulsCommitted += 1;
+    // A goalkeeper involved in the foul ends up flat on the ground and
+    // needs a moment to get back up (مطلب: الحارس بعد الخطأ يبقى واقعاً).
+    if (fouler.isGoalkeeper) {
+      fouler
+        ..keeperGroundTimer = math.max(fouler.keeperGroundTimer, 1.5)
+        ..keeperState = 'faul yerde';
+    }
+    if (victim.isGoalkeeper) {
+      victim
+        ..keeperGroundTimer = math.max(victim.keeperGroundTimer, 1.2)
+        ..keeperState = 'faul yerde';
+    }
     _recordTimelineEvent(
       kind: 'foul',
       title: 'FAUL',
@@ -4573,6 +4810,23 @@ class MatchEngine {
     }
   }
 
+  /// Human-readable on-pitch window for a player, used by the VAR panel:
+  /// a player who already left the match shows exactly when he was playing
+  /// (مطلب عرض فترة تواجد اللاعب في الفار).
+  String presenceWindowFor(PlayerGame? player) {
+    if (player == null) {
+      return '';
+    }
+    final entered = player.enteredMatchMinute.floor();
+    final left = player.leftMatchMinute;
+    final stillOn = !player.isSentOff &&
+        teamById(player.teamId).players.contains(player);
+    if (left == null || stillOn) {
+      return '${player.profile.name}: على الأرض من الدقيقة $entered';
+    }
+    return '${player.profile.name}: لعب $entered–${left.floor()}';
+  }
+
   DisciplinaryEvent? _issueCard(
     PlayerGame player, {
     required bool violent,
@@ -4616,8 +4870,9 @@ class MatchEngine {
         ..controlled = false
         ..pos = Vec2(-100, -100);
       player.profile.redCards += 1;
-      // Every red card, including a second yellow, carries a fixed two-match
-      // suspension. The CEZALAR page can adjust it administratively later.
+      player.leftMatchMinute = minute;
+      // A red card (straight or second yellow) costs exactly one team match
+      // (مطلب: عقاب الكرت الأحمر مباراة واحدة).
       suspension = GameConstants.redCardSuspensionMatches;
       player.profile.suspendedMatchesRemaining = math.max(
         player.profile.suspendedMatchesRemaining,
@@ -4741,6 +4996,7 @@ class MatchEngine {
       ..isSentOff = true
       ..controlled = false
       ..pos = Vec2(-100, -100);
+    player.leftMatchMinute = minute;
     if (ball.owner == player) {
       ball.owner = null;
     }
@@ -4788,8 +5044,10 @@ class MatchEngine {
     final defending = teamById(wallDefendingTeamId!);
     final selected = _wallCandidates
         .where((player) => playerIds.contains(player.id))
-        .take(5)
-        .toList();
+        .toList()
+      ..sort((a, b) => _wallCandidates
+          .indexOf(a)
+          .compareTo(_wallCandidates.indexOf(b)));
     wallSelectionPending = false;
     wallDefendingTeamId = null;
     _wallCandidates.clear();
@@ -4802,7 +5060,11 @@ class MatchEngine {
     final towardGoal = (ownGoal - ball.pos).normalized(
       Vec2(-defending.attackDirection.toDouble(), 0),
     );
-    final lineCenter = ball.pos + towardGoal * 66;
+    // The regulation 9.15 m wall distance instead of the old tight 66 px —
+    // the human wall stands clearly farther from the ball
+    // (مطلب: الحائط البشري يكون بعيد أكثر عن الكرة).
+    final lineCenter =
+        ball.pos + towardGoal * GameConstants.freeKickWallDistancePx;
     final lateral = Vec2(-towardGoal.y, towardGoal.x);
     for (var index = 0; index < selected.length; index++) {
       final offset = index - (selected.length - 1) / 2;
@@ -5009,14 +5271,35 @@ class MatchEngine {
         preferForward: false,
       );
       if (target != null) {
-        releaseFromPlayer(
-          controlled,
-          target.pos - ball.pos,
-          1.0,
-          type: random.nextDouble() < 0.55 ? KickType.highPass : KickType.pass,
-          target: target,
-          loft: random.nextDouble() < 0.55 ? 5.5 : 0,
-        );
+        final highDelivery = random.nextDouble() < 0.72;
+        if (highDelivery) {
+          // AI corners use the same aerial delivery: the ball drops into
+          // the box at 1.8-2.2 m so headers are fair contests.
+          final speedBase =
+              7.6 + controlled.profile.passingRating / 100.0 * 2.0;
+          final distance = (target.pos - ball.pos).length;
+          final delivery = _aerialDelivery(
+            distancePx: distance,
+            arrivalHeight: 1.80 + random.nextDouble() * 0.40,
+            speedBase: speedBase,
+          );
+          releaseFromPlayer(
+            controlled,
+            target.pos - ball.pos,
+            delivery.power,
+            type: KickType.highPass,
+            target: target,
+            loft: delivery.loft,
+          );
+        } else {
+          releaseFromPlayer(
+            controlled,
+            target.pos - ball.pos,
+            0.78,
+            type: KickType.pass,
+            target: target,
+          );
+        }
       }
       return;
     }

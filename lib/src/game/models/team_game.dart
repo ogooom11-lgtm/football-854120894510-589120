@@ -316,6 +316,7 @@ class TeamGame {
     int outIndex,
     int benchIndex, {
     double minute = 0,
+    bool allowKeeperSwap = false,
   }) {
     if (substitutionsUsed >= substitutionLimit ||
         outIndex < 0 ||
@@ -326,7 +327,11 @@ class TeamGame {
     }
     final outgoing = players[outIndex];
     final incoming = bench[benchIndex];
-    if (outgoing.isGoalkeeper != incoming.profile.isGoalkeeper) {
+    // Emergency mode lets a field player take the keeper slot (or vice
+    // versa) when no proper keeper is available
+    // (مطلب: تعيين لاعب أرضي حارساً عند غياب الحارس).
+    if (!allowKeeperSwap &&
+        outgoing.isGoalkeeper != incoming.profile.isGoalkeeper) {
       return false;
     }
     final role = outgoing.role;
@@ -343,8 +348,10 @@ class TeamGame {
           )
           ..homePos = home
           ..lastDirection = Vec2(attackDirection.toDouble(), 0)
-          ..stamina = incoming.stamina;
+          ..stamina = incoming.stamina
+          ..enteredMatchMinute = minute;
     players[outIndex] = replacement;
+    outgoing.leftMatchMinute = minute;
     substitutedOut.add(outgoing);
     substitutionLog.add(
       SubstitutionRecord(
@@ -358,6 +365,90 @@ class TeamGame {
     bench.removeAt(benchIndex);
     substitutionsUsed += 1;
     resetDirections();
+    return true;
+  }
+
+  /// Re-enters a previously substituted-out (or injured / sent-off when no
+  /// bench remains) player for the player currently on the pitch at
+  /// [outIndex]. Returns true when the swap happened.
+  bool reenterFromLog(
+    int outIndex,
+    int logIndex, {
+    double minute = 0,
+  }) {
+    if (substitutionsUsed >= substitutionLimit ||
+        outIndex < 0 ||
+        outIndex >= players.length ||
+        logIndex < 0 ||
+        logIndex >= substitutedOut.length) {
+      return false;
+    }
+    final outgoing = players[outIndex];
+    final returning = substitutedOut[logIndex];
+    if (outgoing.isGoalkeeper != returning.isGoalkeeper) {
+      return false;
+    }
+    final role = outgoing.role;
+    final number = returning.number ?? outgoing.number;
+    final position = outgoing.pos.copy();
+    final home = outgoing.homePos.copy();
+    final replacement =
+        PlayerGame(
+            profile: returning.profile,
+            teamId: id,
+            role: role,
+            number: number,
+            position: position,
+          )
+          ..homePos = home
+          ..lastDirection = Vec2(attackDirection.toDouble(), 0)
+          ..stamina = math.max(0.55, returning.stamina + 0.25)
+          ..enteredMatchMinute = minute;
+    players[outIndex] = replacement;
+    outgoing.leftMatchMinute = minute;
+    substitutedOut.removeAt(logIndex);
+    substitutedOut.add(outgoing);
+    substitutionLog.add(
+      SubstitutionRecord(
+        outIndex: outIndex,
+        outgoing: outgoing,
+        incoming: replacement,
+        benchIndex: -1,
+        minute: minute,
+      ),
+    );
+    substitutionsUsed += 1;
+    resetDirections();
+    return true;
+  }
+
+  /// Players who left the pitch through substitution and could come back.
+  List<PlayerGame> get reentryCandidates => List.unmodifiable(substitutedOut);
+
+  /// Emergency: puts a sent-off player back on the pitch in [slotIndex]
+  /// (his own slot by default). Used when the team has no replacements left
+  /// (مطلب: قد يعود المطرود إذا لم يكن هناك بدلاء).
+  bool reinstateSentOff(int slotIndex, {double minute = 0}) {
+    if (slotIndex < 0 || slotIndex >= players.length) {
+      return false;
+    }
+    if (!players[slotIndex].isSentOff) {
+      return false;
+    }
+    final player = players[slotIndex];
+    player
+      ..isSentOff = false
+      ..leftMatchMinute = null
+      ..stamina = math.max(0.6, player.stamina);
+    final plan = formationPlan(formation);
+    if (slotIndex < plan.spots.length) {
+      final spot = plan.spots[slotIndex];
+      final home = pitchPoint(spot.x, spot.y, side);
+      player
+        ..role = spot.role
+        ..homePos = home
+        ..pos = home.copy();
+    }
     return true;
   }
 

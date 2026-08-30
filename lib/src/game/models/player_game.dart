@@ -41,6 +41,13 @@ class PlayerGame {
   int yellowCardsThisMatch = 0;
   double stamina = 1.0;
   double minutesThisMatch = 0;
+
+  /// The match minute this player entered and (if he already left through
+  /// a substitution, injury or red card) the minute he went off. The VAR
+  /// panel uses these to show exactly when the player was on the pitch
+  /// (مطلب: الفترة يل كان اللاعب متواجد باللعبة تبين في الفار).
+  double enteredMatchMinute = 0;
+  double? leftMatchMinute;
   String keeperState = 'hazir';
   GoalkeeperState goalkeeperState = GoalkeeperState.idle;
   GoalkeeperAction goalkeeperAction = GoalkeeperAction.stay;

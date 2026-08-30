@@ -172,7 +172,18 @@ class PlayerAi {
         finalTarget = _cornerAttackTarget(player, team, engine);
       } else {
         final chase = _looseBallChaser(team, engine);
-        if (chase == player) {
+        final dangerLooseBall = engine.isInPenaltyBox(ball.pos, team.id) &&
+            (player.role.isDefender ||
+                player.role == PlayerRole.defensiveMidfielder);
+        if (dangerLooseBall &&
+            player.pos.distanceTo(ball.pos) < 170 &&
+            (chase == player || _isSecondChaser(player, chase, team, engine))) {
+          // A ball bouncing around our own box must be smashed away
+          // immediately — defenders never dribble there
+          // (مطلب: يبعدو كل كرة بتجيهون تلقائي).
+          finalTarget = _interceptionPoint(player, engine);
+          force += 0.16;
+        } else if (chase == player) {
           finalTarget = _interceptionPoint(player, engine);
           force += 0.10;
         } else if (_isSecondChaser(player, chase, team, engine) &&
@@ -818,6 +829,28 @@ class PlayerAi {
       return;
     }
     final context = engine.tacticalContextFor(team);
+    // Own penalty box: any defender who somehow keeps the ball smashes it
+    // up the pitch right away — zero risk in front of our own goal
+    // (مطلب: لا فجوات ولا مراوغة أمام المرمى).
+    if (engine.isInPenaltyBox(player.pos, team.id) &&
+        (player.role.isDefender ||
+            player.role == PlayerRole.defensiveMidfielder) &&
+        !engine.isRestartWaitingForHuman(team) &&
+        engine.restartKind != RestartKind.throwIn &&
+        engine.restartKind != RestartKind.freeKick) {
+      engine.releaseFromPlayer(
+        player,
+        Vec2(
+          team.attackDirection.toDouble(),
+          (random.nextDouble() - 0.5) * 0.9,
+        ),
+        1.10,
+        type: KickType.highPass,
+        loft: 4.4 + random.nextDouble() * 0.8,
+      );
+      player.aiCooldown = 0.55;
+      return;
+    }
     if (player.aiCooldown > 0) {
       final d = team.attackDirection;
       final wideEnd =
@@ -1232,7 +1265,17 @@ class PlayerAi {
     MatchEngine engine,
   ) {
     if (engine.isGoalKickLockedAgainst(team.id)) {
+      // Opponent goal kick: nobody bunches at the halfway line any more.
+      // Everyone holds a normal role lane; only the attacking line pulls
+      // back — to just past the first third of the pitch — so the keeper
+      // has room to build up (مطلب ضربة المرمى).
       final centerX = GameConstants.virtualWidth / 2;
+      final ownHalfX = team.attackDirection == 1
+          ? GameConstants.leftBound + GameConstants.pitchWidth * 0.42
+          : GameConstants.rightBound - GameConstants.pitchWidth * 0.42;
+      final retreatX = team.attackDirection == 1
+          ? GameConstants.leftBound + GameConstants.pitchWidth * 0.34
+          : GameConstants.rightBound - GameConstants.pitchWidth * 0.34;
       final lane = switch (player.role) {
         PlayerRole.leftWing ||
         PlayerRole.leftWingBack ||
@@ -1241,14 +1284,28 @@ class PlayerAi {
         PlayerRole.rightWingBack ||
         PlayerRole.rightBack => 0.72,
         PlayerRole.striker => 0.50,
+        PlayerRole.attackingMidfielder => 0.50,
         PlayerRole.midfieldLeft => 0.40,
         PlayerRole.midfieldRight => 0.60,
         _ => 0.50,
       };
-      return Vec2(
-        opponent.side == TeamSide.left ? centerX + 36 : centerX - 36,
+      // Defenders/midfield: normal own-half positions. Attack line: retreat.
+      final x = player.role.isAttacker || player.role == PlayerRole.attackingMidfielder
+          ? retreatX
+          : player.role.isDefender
+              ? ownHalfX - team.attackDirection * 60
+              : ownHalfX;
+      final target = Vec2(
+        x,
         GameConstants.topBound + GameConstants.pitchHeight * lane,
       );
+      target.clampTo(
+        GameConstants.leftBound + 40,
+        GameConstants.topBound + 40,
+        GameConstants.rightBound - 40,
+        GameConstants.bottomBound - 40,
+      );
+      return target;
     }
     final boxGuardX = opponent.side == TeamSide.left
         ? GameConstants.leftBound + 178

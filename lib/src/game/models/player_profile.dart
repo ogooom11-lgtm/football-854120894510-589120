@@ -173,11 +173,16 @@ class PlayerProfile {
     this.fitnessUpdatedAt = 0,
     this.marketValue = 1000000000,
     this.injuryUpdatedAt = 0,
+    this.country = 'غير محدد',
     List<PlayerMatchRecord>? matchHistory,
   }) : matchHistory = matchHistory ?? <PlayerMatchRecord>[];
 
   final String id;
   String name;
+
+  /// The player's national country (مطلب الدول). Managed and assigned from
+  /// the admin section; shown on the player pages.
+  String country;
   final double heightMeters;
   final bool isGoalkeeper;
   int? number;
@@ -282,6 +287,55 @@ class PlayerProfile {
   int get shootingAccuracyPercent => shots == 0
       ? 0
       : (shotsOnTarget * 100 / shots).round().clamp(0, 100).toInt();
+
+  /// Applies a small, performance-driven drift to the player's attributes
+  /// after a played match. Great performances nudge finishing, composure
+  /// and intelligence up; poor ones nudge them down. Deliberately tiny so
+  /// careers evolve gradually instead of swinging.
+  void applyMatchDevelopment({
+    required double rating,
+    required int matchGoals,
+    required int matchAssists,
+    required int matchShotsOnTarget,
+    required int matchSuccessfulPasses,
+    required int matchPasses,
+    required int matchFoulsCommitted,
+    required int matchSaves,
+  }) {
+    double drift(double current, double delta) =>
+        current.clamp(30, 99).toDouble() + delta <= 99 &&
+                current.clamp(30, 99).toDouble() + delta >= 30
+            ? current + delta
+            : current;
+
+    final form = (rating - 6.5) * 0.045;
+    shootingRating = drift(shootingRating, form);
+    finishingRating = drift(
+      finishingRating,
+      form + matchGoals * 0.06 + matchShotsOnTarget * 0.012,
+    );
+    shotPowerRating = drift(shotPowerRating, matchGoals * 0.025);
+    composureRating = drift(composureRating, form * 0.6);
+    final passRate =
+        matchPasses == 0 ? 0.0 : matchSuccessfulPasses / matchPasses;
+    passingRating = drift(
+      passingRating,
+      (passRate - 0.72) * 0.10 + matchAssists * 0.03,
+    );
+    if (isGoalkeeper) {
+      goalkeepingRating = drift(goalkeepingRating, matchSaves * 0.02 + form * 0.5);
+      goalkeeperHandlingRating = drift(goalkeeperHandlingRating, matchSaves * 0.015);
+    }
+    if (matchFoulsCommitted >= 3) {
+      composureRating = drift(composureRating, -0.05);
+    }
+    // A gentle market-value response to form (±2% at the extremes).
+    if (rating >= 7.8) {
+      marketValue = (marketValue * 1.02).clamp(1e6, 5e9).toDouble();
+    } else if (rating < 5.8) {
+      marketValue = (marketValue * 0.985).clamp(1e6, 5e9).toDouble();
+    }
+  }
 
   /// Advances injury recovery and disciplinary suspension by one team match.
   void advanceUnavailableStatusAfterTeamMatch() {
@@ -682,6 +736,7 @@ class PlayerProfile {
       fitness: (json['fitness'] as num?)?.toDouble() ?? 1.0,
       fitnessUpdatedAt: (json['fitnessUpdatedAt'] as num?)?.toInt() ?? 0,
       marketValue: (json['marketValue'] as num?)?.toDouble() ?? 1000000000,
+      country: json['country'] as String? ?? 'غير محدد',
       injuryUpdatedAt: (json['injuryUpdatedAt'] as num?)?.toInt() ?? 0,
       matchHistory: (json['matchHistory'] as List<dynamic>? ?? const [])
           .map((item) =>
@@ -776,6 +831,7 @@ class PlayerProfile {
         'fitnessUpdatedAt': fitnessUpdatedAt,
         'marketValue': marketValue.round(),
         'injuryUpdatedAt': injuryUpdatedAt,
+        'country': country,
         'matchHistory': matchHistory.map((r) => r.toJson()).toList(),
       };
 }

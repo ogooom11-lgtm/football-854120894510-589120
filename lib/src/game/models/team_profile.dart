@@ -87,6 +87,7 @@ class SavedTeamProfile {
     this.draws = 0,
     this.rating = 50,
     this.playStyle = AiPlayStyle.balanced,
+    this.country = 'غير محدد',
     this.aiDifficulty = AiDifficulty.medium,
     this.isDeleted = false,
     List<JerseyKit>? jerseyKits,
@@ -114,6 +115,10 @@ class SavedTeamProfile {
   int draws;
   double rating;
   AiPlayStyle playStyle;
+
+  /// The team's country (مطلب الدول): assigned from the admin section and
+  /// shown beside the team.
+  String country;
   AiDifficulty aiDifficulty;
   bool isDeleted; // soft delete
   List<JerseyKit> jerseyKits;
@@ -209,6 +214,7 @@ class SavedTeamProfile {
         (s) => s.name == json['playStyle'],
         orElse: () => AiPlayStyle.balanced,
       ),
+      country: json['country'] as String? ?? 'غير محدد',
       aiDifficulty: AiDifficulty.values.firstWhere(
         (d) => d.name == json['aiDifficulty'],
         orElse: () => AiDifficulty.medium,
@@ -350,6 +356,7 @@ class SavedTeamProfile {
       'draws': draws,
       'rating': double.parse(rating.toStringAsFixed(1)),
       'playStyle': playStyle.name,
+      'country': country,
       'aiDifficulty': aiDifficulty.name,
       'isDeleted': isDeleted,
       'jerseyKits': jerseyKits.map((k) => k.toJson()).toList(),

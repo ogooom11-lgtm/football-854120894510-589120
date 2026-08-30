@@ -24,5 +24,12 @@ class GameConstants {
   static const double gravityMeters = 9.8;
   static const double replayFreezeSeconds = 2.6;
   static const double periodPauseSeconds = 2.2;
-  static const int redCardSuspensionMatches = 2;
+  /// A straight red card costs the player exactly one team match
+  /// (المطلب: عقاب الكرت الأحمر مباراة واحدة).
+  static const int redCardSuspensionMatches = 1;
+  /// Standard free-kick wall distance: 9.15 m converted to the pitch scale
+  /// (105 m ≈ pitchWidth px) — the human wall stands clearly farther from
+  /// the ball than before.
+  static double get freeKickWallDistancePx =>
+      9.15 * GameConstants.pitchWidth / 105;
 }

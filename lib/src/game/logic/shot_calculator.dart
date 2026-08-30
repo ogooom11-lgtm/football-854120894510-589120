@@ -82,16 +82,23 @@ class ShotCalculator {
     final baseHeight = _baseTargetHeight(context);
     // Height error is kept smaller so shots do not constantly clip the
     // crossbar band; missing high is possible but less frequent.
+    // The height error stays small: shooting logic previously produced too
+    // many balls flying into the crossbar band
+    // (مطلب إصلاح منطق العارضة).
     final heightSigma = (baseSigma *
-            (1.05 + context.powerInput * 0.72) /
+            (0.72 + context.powerInput * 0.40) /
             math.sqrt(conditions) *
             (1.08 - stats.balance * 0.26))
-        .clamp(0.02, 1.15)
+        .clamp(0.02, 0.46)
         .toDouble();
     final heightError = _gaussian() * heightSigma;
-    final leanLift = context.bodyLean.clamp(-1.0, 1.0) * 0.52;
+    final leanLift = context.bodyLean.clamp(-1.0, 1.0) * 0.34;
+    // Non-chip shots are aimed below the crossbar with a safety margin:
+    // the ball may still miss high through the height error, but the *aim*
+    // itself no longer points at the bar.
+    final heightCap = context.shotType == ShotType.chip ? 5.2 : 2.12;
     final targetHeight = (baseHeight + heightError + leanLift)
-        .clamp(0.0, context.shotType == ShotType.chip ? 5.2 : 4.9)
+        .clamp(0.0, heightCap)
         .toDouble();
 
     final releasePower = _releasePower(context) *
@@ -274,9 +281,9 @@ class ShotCalculator {
       ShotType.ground => 0.02 + power * 0.10,
       ShotType.low => 0.14 + power * 0.34,
       ShotType.normal => 0.45 + power * 0.72,
-      ShotType.power => 0.55 + power * 0.92,
+      ShotType.power => 0.48 + power * 0.62,
       ShotType.finesse => 0.38 + power * 0.58,
-      ShotType.chip => 1.65 + power * 2.15,
+      ShotType.chip => 1.45 + power * 1.70,
       ShotType.volley => (0.40 +
               context.ballHeight * 0.60 +
               power * 0.72)

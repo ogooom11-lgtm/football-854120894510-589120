@@ -136,9 +136,15 @@ class SavedGameData {
     this.aiDifficulty = AiDifficulty.medium,
     this.bluePlayStyle = AiPlayStyle.balanced,
     this.redPlayStyle = AiPlayStyle.balanced,
+    List<String>? countries,
     List<FinishedMatchSummary>? matchArchive,
     List<TransferRequest>? transferRequests,
-  }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[],
+  }) : countries = countries ??
+            <String>[
+              'قطر', 'السعودية', 'مصر', 'المغرب', 'البرازيل', 'الأرجنتين',
+              'فرنسا', 'إسبانيا', 'إنجلترا', 'ألمانيا', 'تركيا', 'العراق',
+            ],
+       matchArchive = matchArchive ?? <FinishedMatchSummary>[],
        transferRequests = transferRequests ?? <TransferRequest>[];
 
   final List<SavedAccountProfile> accounts;
@@ -165,6 +171,10 @@ class SavedGameData {
   AiPlayStyle redPlayStyle;
   final List<FinishedMatchSummary> matchArchive;
   final List<TransferRequest> transferRequests;
+
+  /// The country catalogue managed from the admin section; every player and
+  /// every team can be assigned one of these (مطلب الدول).
+  final List<String> countries;
 
   List<TransferRequest> get pendingTransfers =>
       transferRequests.where((request) => request.isPending).toList();
@@ -425,6 +435,9 @@ class SavedGameData {
           (s) => s.name == json['redPlayStyle'],
           orElse: () => AiPlayStyle.balanced,
         ),
+        countries: (json['countries'] as List<dynamic>? ?? const [])
+            .map((item) => item.toString())
+            .toList(),
         matchArchive: (json['matchArchive'] as List<dynamic>? ?? const [])
             .map(
               (item) => FinishedMatchSummary.fromJson(
@@ -502,6 +515,7 @@ class SavedGameData {
       'aiDifficulty': aiDifficulty.name,
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
+      'countries': countries.toList(),
       'matchArchive': matchArchive.map((match) => match.toJson()).toList(),
       'transferRequests': transferRequests
           .map((request) => request.toJson())
