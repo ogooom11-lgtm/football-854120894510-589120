@@ -3531,10 +3531,15 @@ class MatchEngine {
     );
   }
 
+  /// VAR can cancel any decision, applied instantly — no retroactive edits
+  /// (مطلب: VAR يلغي أي قرار ويطبق فوراً).
   bool canToggleTimelineDecision(MatchTimelineEvent timeline) =>
       timeline.kind == 'goal' ||
       timeline.kind == 'yellowCard' ||
-      timeline.kind == 'redCard';
+      timeline.kind == 'redCard' ||
+      timeline.kind == 'foul' ||
+      timeline.kind == 'offside' ||
+      timeline.kind == 'handball';
 
   void toggleTimelineDecision(MatchTimelineEvent timeline) {
     if (timeline.kind == 'goal') {
@@ -3552,6 +3557,16 @@ class MatchEngine {
       return;
     }
     if (timeline.kind != 'yellowCard' && timeline.kind != 'redCard') {
+      // Foul / offside / handball carry no persistent state to revert —
+      // flipping the flag cancels the decision on the spot.
+      timeline.canceled = !timeline.canceled;
+      banner = MatchBanner(
+        timeline.canceled ? 'قرار ملغي' : 'قرار اعيد',
+        "VAR ${timeline.minute}'",
+        2.0,
+        minute: timeline.minute,
+        kind: 'var',
+      );
       return;
     }
     DisciplinaryEvent? cardEvent;
@@ -3603,7 +3618,10 @@ class MatchEngine {
       if (canceling) {
         player
           ..pos = player.homePos.copy()
-          ..controlled = false;
+          ..controlled = false
+          // He is back on the pitch: his presence window closes at the
+          // current minute again (مطلب نافذة حضور اللاعب في VAR).
+          ..leftMatchMinute = null;
       } else {
         if (ball.owner == player) ball.owner = null;
         player

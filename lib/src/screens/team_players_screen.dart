@@ -5,6 +5,7 @@ import '../game/models/player_profile.dart';
 import '../game/models/shooting.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
+import '../game/models/jersey_kit.dart';
 
 /// Standalone page: pick a team, see its players (sorted by name)
 /// and edit them from there. Player value/settings editing only
@@ -150,6 +151,14 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
               ],
             ),
     );
+  }
+
+  Future<void> _openKitsManager(SavedTeamProfile team) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _KitsManagerDialog(team: team, onSaved: _save),
+    );
+    if (mounted) setState(() {});
   }
 
   Widget _sortBar() {
@@ -395,6 +404,40 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
                   ),
                 ),
               ],
+              TextButton.icon(
+                onPressed: () => _openKitsManager(team),
+                icon: const Icon(Icons.checkroom, size: 15),
+                label: const Text(
+                  'الأطقم',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+              if (widget.adminFullAccess)
+                SizedBox(
+                  width: 170,
+                  child: DropdownButtonFormField<String>(
+                    value: _data!.countries.contains(team.country)
+                        ? team.country
+                        : null,
+                    isDense: true,
+                    decoration: const InputDecoration(
+                      labelText: 'دولة الفريق',
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final country in _data!.countries)
+                        DropdownMenuItem(
+                          value: country,
+                          child: Text(country, overflow: TextOverflow.ellipsis),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => team.country = value);
+                      _save();
+                    },
+                  ),
+                ),
             ],
           ),
         ],
@@ -1513,6 +1556,251 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
         SizedBox(
           width: 32,
           child: Text(value.toStringAsFixed(0), textAlign: TextAlign.end),
+        ),
+      ],
+    );
+  }
+}
+
+
+/// Kits manager: choose one of the club kits or build a custom one with
+/// per-part colors (مطلب: قمصان أكثر بألوان مخصصة لكل فريق).
+class _KitsManagerDialog extends StatefulWidget {
+  const _KitsManagerDialog({required this.team, required this.onSaved});
+
+  final SavedTeamProfile team;
+  final Future<void> Function() onSaved;
+
+  @override
+  State<_KitsManagerDialog> createState() => _KitsManagerDialogState();
+}
+
+class _KitsManagerDialogState extends State<_KitsManagerDialog> {
+  static const List<Color> _palette = [
+    Color(0xffe53935),
+    Color(0xffc1272d),
+    Color(0xff8a1538),
+    Color(0xffff7f00),
+    Color(0xffffd700),
+    Color(0xff006c35),
+    Color(0xff2ecc71),
+    Color(0xff75aadb),
+    Color(0xff21304d),
+    Color(0xff6a0dad),
+    Color(0xffff6fa5),
+    Color(0xff16a085),
+    Color(0xffffffff),
+    Color(0xff2c2c2c),
+    Color(0xff000000),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final team = widget.team;
+    final kits = team.jerseyKits;
+    return AlertDialog(
+      backgroundColor: const Color(0xff0c1a14),
+      title: Text('أطقم ${team.name}'),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (var i = 0; i < kits.length; i++)
+                      _kitTile(kits[i], i, active: team.activeKitIndex == i),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 24),
+            FilledButton.tonalIcon(
+              onPressed: _createCustomKit,
+              icon: const Icon(Icons.palette),
+              label: const Text('إنشاء طقم مخصص'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('إغلاق'),
+        ),
+      ],
+    );
+  }
+
+  Widget _kitTile(JerseyKit kit, int index, {required bool active}) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () {
+        setState(() => widget.team.activeKitIndex = index);
+        widget.onSaved();
+      },
+      child: Container(
+        width: 108,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: active ? const Color(0xffffd34d) : Colors.white24,
+            width: active ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            // Mini jersey preview
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: kit.shirtColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(14),
+                  topRight: Radius.circular(14),
+                ),
+                border: Border.all(color: Colors.white24),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                '10',
+                style: TextStyle(
+                  color: kit.numberColor,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            Container(
+              width: 40,
+              height: 10,
+              decoration: BoxDecoration(
+                color: kit.shortsColor,
+                border: Border.all(color: Colors.white24),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              kit.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createCustomKit() async {
+    final team = widget.team;
+    var shirt = const Color(0xff21304d);
+    var shorts = const Color(0xffffffff);
+    var socks = const Color(0xff21304d);
+    var number = const Color(0xffffffff);
+    var keeper = const Color(0xff2ecc71);
+    final nameController = TextEditingController(text: 'طقم مخصص');
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xff102019),
+          title: const Text('طقم مخصص'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'اسم الطقم'),
+                  ),
+                  const SizedBox(height: 10),
+                  _colorRow('القميص', shirt, (c) => shirt = c,
+                      setDialogState),
+                  _colorRow('الشورت', shorts, (c) => shorts = c,
+                      setDialogState),
+                  _colorRow('الشراب', socks, (c) => socks = c, setDialogState),
+                  _colorRow('الرقم', number, (c) => number = c,
+                      setDialogState),
+                  _colorRow('قميص الحارس', keeper, (c) => keeper = c,
+                      setDialogState),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('حفظ الطقم'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    setState(() {
+      widget.team.jerseyKits = [
+        ...widget.team.jerseyKits,
+        JerseyKit(
+          name: nameController.text.trim().isEmpty
+              ? 'طقم مخصص'
+              : nameController.text.trim(),
+          shirtColor: shirt,
+          shortsColor: shorts,
+          socksColor: socks,
+          numberColor: number,
+          goalkeeperShirtColor: keeper,
+        ),
+      ];
+      widget.team.activeKitIndex = widget.team.jerseyKits.length - 1;
+    });
+    await widget.onSaved();
+  }
+
+  Widget _colorRow(
+    String label,
+    Color current,
+    ValueChanged<Color> onPick,
+    void Function(void Function()) setDialogState,
+  ) {
+    return Row(
+      children: [
+        SizedBox(width: 96, child: Text(label)),
+        Expanded(
+          child: Wrap(
+            spacing: 4,
+            children: [
+              for (final color in _palette)
+                GestureDetector(
+                  onTap: () => setDialogState(() => onPick(color)),
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: current == color
+                            ? const Color(0xffffd34d)
+                            : Colors.white24,
+                        width: current == color ? 3 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );

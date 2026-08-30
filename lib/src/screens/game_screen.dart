@@ -42,6 +42,9 @@ class _GameScreenState extends State<GameScreen>
   TeamId? _subTeam;
   String _subBenchSort = 'rating';
   bool _emergencyKeeperMode = false;
+  FormationFamily? _subFamilyFilter;
+  int? _subHighlightedSlot;
+  String _subSlotInfo = '';
   int _subOutIndex = 0;
   int _subBenchIndex = 0;
   bool _subPickingBench = false;
@@ -697,7 +700,13 @@ class _GameScreenState extends State<GameScreen>
         return true;
       }
       if (team.bench.isNotEmpty &&
-          _engine.substitute(teamId, _subOutIndex, _subBenchIndex, minute: _engine.minute)) {
+          _engine.substitute(
+            teamId,
+            _subOutIndex,
+            _subBenchIndex,
+            minute: _engine.minute,
+            allowKeeperSwap: _emergencyKeeperMode,
+          )) {
         if (_injurySubActive) _engine.popInjuryForcedSub();
         _engine.setSubstitutionPaused(false);
         _subTeam = null;
@@ -803,6 +812,7 @@ class _GameScreenState extends State<GameScreen>
                 ),
               ),
               if (!_engine.replayMode && !_engine.finished) _matchHud(),
+              if (!_engine.replayMode && !_engine.finished) _topScoreboard(),
               if (_goalkeeperDebugVisible && !_engine.replayMode)
                 _goalkeeperDebugPanel(),
               if (_engine.ball.owner?.isGoalkeeper == true &&
@@ -999,6 +1009,94 @@ class _GameScreenState extends State<GameScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Floating top scoreboard: modern live score + minute + kit swatches
+  /// (مطلب واجهة لعبة حديثة).
+  Widget _topScoreboard() {
+    final minuteLabel = _engine.minute <= 0
+        ? '0\''
+        : "${_engine.minute.floor()}'";
+    return Positioned(
+      top: 10,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xff07120e).withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.16),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: _engine.blueTeam.jerseyKit?.shirtColor ??
+                        const Color(0xff4d9fff),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white38),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  '${_engine.blueTeam.score}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: Color(0xffffdf6b),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    minuteLabel,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_engine.redTeam.score}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: Color(0xff73b9ff),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: _engine.redTeam.jerseyKit?.shirtColor ??
+                        const Color(0xffff5c5c),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white38),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1543,33 +1641,68 @@ class _GameScreenState extends State<GameScreen>
                           ],
                         ),
                       ),
-                      SizedBox(
-                        width: 250,
-                        child: DropdownButtonFormField<FormationType>(
-                          value: playableFormationTypes.contains(team.formation)
-                              ? team.formation
-                              : FormationType.wing433,
-                          isDense: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Dizilis',
-                          ),
-                          items: [
-                            for (final formation in playableFormationTypes)
-                              DropdownMenuItem(
-                                value: formation,
-                                child: Text(
-                                  formation.title,
-                                  overflow: TextOverflow.ellipsis,
+                      // Formation picker with family filter
+                      // (مطلب: فلترة التشكيلات حسب العائلة).
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 360,
+                            child: Wrap(
+                              spacing: 4,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('الكل',
+                                      style: TextStyle(fontSize: 10)),
+                                  selected: _subFamilyFilter == null,
+                                  onSelected: (_) =>
+                                      setState(() => _subFamilyFilter = null),
+                                  visualDensity: VisualDensity.compact,
                                 ),
+                                for (final family in FormationFamily.values)
+                                  ChoiceChip(
+                                    label: Text(family.label,
+                                        style:
+                                            const TextStyle(fontSize: 10)),
+                                    selected: _subFamilyFilter == family,
+                                    onSelected: (_) => setState(
+                                      () => _subFamilyFilter = family,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            width: 360,
+                            child: DropdownButtonFormField<FormationType>(
+                              value: _pickerFormationValue(team),
+                              isDense: true,
+                              decoration: const InputDecoration(
+                                labelText: 'التشكيل',
                               ),
-                          ],
-                          onChanged: (formation) {
-                            if (formation == null) return;
-                            setState(() {
-                              _engine.setFormation(team.id, formation);
-                            });
-                          },
-                        ),
+                              items: [
+                                for (final formation
+                                    in _filteredFormations(team))
+                                  DropdownMenuItem(
+                                    value: formation,
+                                    child: Text(
+                                      '${formation.title} • ${formationFamily(formation).label}',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                              ],
+                              onChanged: (formation) {
+                                if (formation == null) return;
+                                setState(() {
+                                  _engine.setFormation(team.id, formation);
+                                  _subHighlightedSlot = null;
+                                  _subSlotInfo = '';
+                                });
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(width: 10),
                       Chip(
@@ -1614,6 +1747,40 @@ class _GameScreenState extends State<GameScreen>
                     ],
                   ),
                 ),
+                if (_subSlotInfo.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xff1d5c3a).withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xff2ee59d).withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _subSlotInfo,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => setState(() {
+                            _subHighlightedSlot = null;
+                            _subSlotInfo = '';
+                          }),
+                          icon: const Icon(Icons.close, size: 14),
+                        ),
+                      ],
+                    ),
+                  ),
                 Expanded(
                   child: Row(
                     children: [
@@ -1867,6 +2034,38 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// Tapping a player highlights his slot and shows where he plays plus the
+  /// fastest teammate and best finisher available
+  /// (مطلب: الضغط على اللاعب يظهر مركزه وأسرع زميل وأفضل bitiricilik).
+  void _showSlotInsight(TeamGame team, int slotIndex) {
+    final player = team.players[slotIndex];
+    final mates = team.players
+        .where((mate) => mate != player && !mate.isSentOff)
+        .toList();
+    PlayerGame? fastest;
+    PlayerGame? bestFinisher;
+    for (final mate in mates) {
+      if (fastest == null ||
+          mate.profile.speedRating > fastest.profile.speedRating) {
+        fastest = mate;
+      }
+      if (bestFinisher == null ||
+          mate.profile.finishingRating >
+              bestFinisher.profile.finishingRating) {
+        bestFinisher = mate;
+      }
+    }
+    setState(() {
+      _subHighlightedSlot = slotIndex;
+      _subSlotInfo =
+          '${player.profile.name} — مركزه: ${player.role.code} • '
+          'أسرع زميل: ${fastest?.profile.name ?? '-'} '
+          '(${fastest?.profile.speedRating.toStringAsFixed(0) ?? '-'}) • '
+          'أفضل إنهاء: ${bestFinisher?.profile.name ?? '-'} '
+          '(${bestFinisher?.profile.finishingRating.toStringAsFixed(0) ?? '-'})';
+    });
+  }
+
   Widget _matchFormationSlot({
     required TeamGame team,
     required FormationPlan plan,
@@ -1892,24 +2091,31 @@ class _GameScreenState extends State<GameScreen>
         },
         builder: (context, candidates, rejected) {
           final highlighted = candidates.isNotEmpty;
-          final circle = AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: injuryTarget
-                  ? Colors.redAccent.withValues(alpha: 0.86)
-                  : highlighted
-                  ? const Color(0xffffd34d)
-                  : player.isSentOff
-                  ? Colors.black54
-                  : const Color(0xff101820).withValues(alpha: 0.94),
-              border: Border.all(
-                color: highlighted || injuryTarget
-                    ? Colors.white
-                    : Colors.white70,
-                width: highlighted || injuryTarget ? 3 : 1.5,
+          final tapped = _subHighlightedSlot == slotIndex;
+          final circle = GestureDetector(
+            onTap: () => _showSlotInsight(team, slotIndex),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: injuryTarget
+                    ? Colors.redAccent.withValues(alpha: 0.86)
+                    : highlighted
+                    ? const Color(0xffffd34d)
+                    : tapped
+                    ? const Color(0xff1d5c3a)
+                    : player.isSentOff
+                    ? Colors.black54
+                    : const Color(0xff101820).withValues(alpha: 0.94),
+                border: Border.all(
+                  color: highlighted || injuryTarget
+                      ? Colors.white
+                      : tapped
+                      ? const Color(0xff2ee59d)
+                      : Colors.white70,
+                  width: highlighted || injuryTarget || tapped ? 3 : 1.5,
+                ),
               ),
-            ),
             alignment: Alignment.center,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1945,6 +2151,7 @@ class _GameScreenState extends State<GameScreen>
                 ),
               ],
             ),
+            ),
           );
           if (_injurySubActive || player.isSentOff) return circle;
           return Draggable<PlayerGame>(
@@ -1959,6 +2166,21 @@ class _GameScreenState extends State<GameScreen>
         },
       ),
     );
+  }
+
+  FormationType _pickerFormationValue(TeamGame team) {
+    final filtered = _filteredFormations(team);
+    if (filtered.contains(team.formation)) return team.formation;
+    return filtered.first;
+  }
+
+  List<FormationType> _filteredFormations(TeamGame team) {
+    final family = _subFamilyFilter;
+    final all = playableFormationTypes;
+    final list = family == null
+        ? all
+        : all.where((type) => formationFamily(type) == family).toList();
+    return list.isEmpty ? all : list;
   }
 
   /// Bench sorted by the chosen key (مطلب: قائمة البدلاء مرتبة).
@@ -2586,6 +2808,17 @@ class _GameScreenState extends State<GameScreen>
                         },
                       ),
                     ),
+                    if (targetPlayer != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          'نافذة الحضور: ${_presenceWindowText(targetPlayer)}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Color(0xffb388ff),
+                          ),
+                        ),
+                      ),
                     _varAddButton('foul', 'Faul', Icons.sports, targetPlayer),
                     _varAddButton(
                       'handball',
@@ -2886,6 +3119,20 @@ class _GameScreenState extends State<GameScreen>
         },
       ),
     );
+  }
+
+  /// On-pitch presence window of a player (enter/left minutes) for the VAR
+  /// panel (مطلب: VAR يعرض نافذة وجود اللاعب على أرضية الملعب).
+  String _presenceWindowText(PlayerGame player) {
+    final entered = player.enteredMatchMinute;
+    final left = player.leftMatchMinute;
+    if (player.isSentOff) {
+      return "دخول د${entered.ceil()} • خرج د${left?.ceil() ?? '?'} (طرد)";
+    }
+    if (left != null) {
+      return "دخول د${entered.ceil()} • خرج د${left.ceil()} (تبديل)";
+    }
+    return "على أرضية الملعب منذ د${entered.ceil()}";
   }
 
   Color _timelineEventColor(String kind) => switch (kind) {

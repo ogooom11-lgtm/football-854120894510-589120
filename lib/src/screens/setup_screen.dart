@@ -2516,6 +2516,31 @@ class _SetupScreenState extends State<SetupScreen> {
                                 ],
                               ),
                             ),
+                            // Copy the player name (مطلب: نسخ اسم اللاعب
+                            // في قسم التحويلات).
+                            IconButton(
+                              tooltip: 'نسخ اسم اللاعب',
+                              onPressed: profile == null
+                                  ? null
+                                  : () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: profile.name),
+                                      );
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'تم نسخ: ${profile.name}',
+                                            ),
+                                            duration:
+                                                const Duration(seconds: 1),
+                                          ),
+                                        );
+                                      }
+                                    },
+                              icon: const Icon(Icons.copy, size: 18),
+                            ),
                             if (profile != null)
                               Container(
                                 margin: const EdgeInsets.only(right: 8),
