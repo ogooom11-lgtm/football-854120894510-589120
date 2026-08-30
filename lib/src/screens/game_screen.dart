@@ -40,6 +40,8 @@ class _GameScreenState extends State<GameScreen>
   Duration? _lastTick;
   DateTime? _lastRPress;
   TeamId? _subTeam;
+  String _subBenchSort = 'rating';
+  bool _emergencyKeeperMode = false;
   int _subOutIndex = 0;
   int _subBenchIndex = 0;
   bool _subPickingBench = false;
@@ -636,6 +638,7 @@ class _GameScreenState extends State<GameScreen>
 
   void _closeSubstitutionPanel() {
     if (_injurySubActive) return;
+    _emergencyKeeperMode = false;
     setState(() {
       _subTeam = null;
       _injuryVictim = null;
@@ -949,6 +952,57 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// Team energy bar: when the squad is tired it is instantly visible in
+  /// the HUD (مطلب: الفريق يلي لاعبينه تعبانة يظهر ذلك).
+  Widget _teamEnergyBar(TeamGame team) {
+    final outfield = team.players
+        .where((player) => !player.isGoalkeeper && !player.isSentOff)
+        .toList();
+    final avg = outfield.isEmpty
+        ? 1.0
+        : outfield.map((player) => player.stamina).reduce((a, b) => a + b) /
+            outfield.length;
+    final color = avg > 0.66
+        ? const Color(0xff2ee59d)
+        : avg > 0.45
+            ? const Color(0xffffd34d)
+            : const Color(0xffff5c5c);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 6,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: 64 * avg.clamp(0.0, 1.0),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'طاقة ${(avg * 100).round()}%',
+            style: TextStyle(
+              fontSize: 9,
+              color: color,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _matchHud() {
     final totalControl = (_engine.blueControlSeconds + _engine.redControlSeconds)
         .clamp(1.0, double.infinity);
@@ -981,6 +1035,7 @@ class _GameScreenState extends State<GameScreen>
           ),
           child: Row(
             children: [
+              _teamEnergyBar(_engine.blueTeam),
               Expanded(
                 child: Text(
                   '${_engine.blueTeam.name}  •  Top %$bluePossession  •  Pas ${_engine.blueSuccessfulPasses}/${_engine.bluePasses}  •  Sut ${_engine.blueShots}  •  Kart $blueCards',
@@ -1010,6 +1065,7 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
               ),
+              _teamEnergyBar(_engine.redTeam),
             ],
           ),
         ),
@@ -1533,6 +1589,20 @@ class _GameScreenState extends State<GameScreen>
                           label: Text('+${team.bonusSubstitutions} sakatlik hakki'),
                         ),
                       ],
+                      _subSortDropdown(),
+                      const SizedBox(width: 6),
+                      // Emergency: field player in the keeper slot
+                      // (مطلب: تعيين لاعب أرضي حارساً).
+                      FilterChip(
+                        label: const Text(
+                          'حارس طوارئ',
+                          style: TextStyle(fontSize: 10),
+                        ),
+                        selected: _emergencyKeeperMode,
+                        onSelected: (value) =>
+                            setState(() => _emergencyKeeperMode = value),
+                        visualDensity: VisualDensity.compact,
+                      ),
                       IconButton(
                         tooltip: _injurySubActive
                             ? 'Zorunlu degisiklik tamamlanmali'
@@ -1660,7 +1730,8 @@ class _GameScreenState extends State<GameScreen>
                                         padding: const EdgeInsets.all(8),
                                         itemCount: team.bench.length,
                                         itemBuilder: (context, index) {
-                                          final player = team.bench[index];
+                                          final (benchIndex, player) =
+                                              _sortedBenchPairs(team)[index];
                                           return _matchBenchPlayerCard(
                                             player,
                                             enabled: canSubstitute &&
@@ -1669,6 +1740,7 @@ class _GameScreenState extends State<GameScreen>
                                         },
                                       ),
                               ),
+                              _reentrySection(team),
                               if (team.substitutionLog.isNotEmpty) ...[
                                 const Divider(height: 1),
                                 Container(
@@ -1889,6 +1961,178 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// Bench sorted by the chosen key (مطلب: قائمة البدلاء مرتبة).
+  List<(int, PlayerGame)> _sortedBenchPairs(TeamGame team) {
+    final pairs = [for (var i = 0; i < team.bench.length; i++) (i, team.bench[i])];
+    int compare((int, PlayerGame) a, (int, PlayerGame) b) {
+      switch (_subBenchSort) {
+        case 'stamina':
+          return b.$2.stamina.compareTo(a.$2.stamina);
+        case 'position':
+          final byRole = a.$2.role.code.compareTo(b.$2.role.code);
+          if (byRole != 0) return byRole;
+          return b.$2.profile.effectiveOverall
+              .compareTo(a.$2.profile.effectiveOverall);
+        default:
+          return b.$2.profile.effectiveOverall
+              .compareTo(a.$2.profile.effectiveOverall);
+      }
+    }
+
+    return pairs..sort(compare);
+  }
+
+  Widget _subSortDropdown() {
+    return DropdownButton<String>(
+      value: _subBenchSort,
+      isDense: true,
+      underline: const SizedBox.shrink(),
+      style: const TextStyle(fontSize: 11, color: Colors.white70),
+      dropdownColor: const Color(0xff102019),
+      items: const [
+        DropdownMenuItem(value: 'rating', child: Text('ترتيب: الأعلى تقييماً')),
+        DropdownMenuItem(value: 'stamina', child: Text('ترتيب: الأعلى طاقة')),
+        DropdownMenuItem(value: 'position', child: Text('ترتيب: المركز')),
+      ],
+      onChanged: (value) {
+        if (value != null) setState(() => _subBenchSort = value);
+      },
+    );
+  }
+
+  /// Re-entry + sent-off-return section (مطلب: إعادة إدخال أي لاعب سبق
+  /// الخروج، حتى المصاب أو المطرود إذا لم يوجد بدلاء).
+  Widget _reentrySection(TeamGame team) {
+    final canUseLog = team.substitutionsUsed < team.substitutionLimit;
+    final benchEmpty = team.bench.isEmpty;
+    final sentOff = <int, PlayerGame>{
+      for (var i = 0; i < team.players.length; i++)
+        if (team.players[i].isSentOff) i: team.players[i],
+    };
+    final candidates = team.substitutedOut;
+    if (candidates.isEmpty && sentOff.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 150),
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xff2a1a08).withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: const Color(0xffffd34d).withValues(alpha: 0.35),
+        ),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'إعادة إدخال من خرجوا سابقاً',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                color: Color(0xffffd34d),
+              ),
+            ),
+            const SizedBox(height: 4),
+            for (var logIndex = 0; logIndex < candidates.length; logIndex++)
+              _reentryCard(
+                team,
+                candidates[logIndex],
+                subtitle:
+                    'خرج د${candidates[logIndex].leftMatchMinute?.ceil() ?? '-'}'
+                    '${candidates[logIndex].profile.isUnavailable && !benchEmpty ? ' • متاح فقط بدون بدلاء' : ''}',
+                enabled: canUseLog &&
+                    (benchEmpty ||
+                        !candidates[logIndex].profile.isUnavailable),
+                onReturn: () {
+                  // Drop target selection: swap with the currently selected
+                  // on-pitch index.
+                  _performReentry(team, logIndex, _subOutIndex);
+                },
+              ),
+            for (final entry in sentOff.entries)
+              _reentryCard(
+                team,
+                entry.value,
+                subtitle: 'مطرود • عودة طارئة لمركزه',
+                enabled: true,
+                onReturn: () {
+                  setState(() {
+                    _engine.reinstateSentOff(
+                      team.id,
+                      entry.key,
+                      minute: _engine.minute,
+                    );
+                  });
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _performReentry(TeamGame team, int logIndex, int outIndex) {
+    final changed = _engine.reenterFromLog(
+      team.id,
+      outIndex,
+      logIndex,
+      minute: _engine.minute,
+    );
+    if (!changed && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذر الإعادة: تأكد من تطابق مركز الحارس وعدم نفاد التبديلات',
+          ),
+        ),
+      );
+    }
+    setState(() {});
+  }
+
+  Widget _reentryCard(
+    TeamGame team,
+    PlayerGame player, {
+    required String subtitle,
+    required bool enabled,
+    required VoidCallback onReturn,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${player.number}. ${player.profile.name} — $subtitle',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                color: enabled ? Colors.white70 : Colors.white24,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            height: 22,
+            child: FilledButton.tonal(
+              onPressed: enabled ? onReturn : null,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                textStyle: const TextStyle(fontSize: 10),
+              ),
+              child: const Text('إعادة'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _matchBenchPlayerCard(PlayerGame player, {required bool enabled}) {
     final card = Container(
       margin: const EdgeInsets.only(bottom: 7),
@@ -1984,9 +2228,24 @@ class _GameScreenState extends State<GameScreen>
           dragged.isGoalkeeper == target.isGoalkeeper;
     }
     final benchIndex = team.bench.indexOf(dragged);
-    if (benchIndex < 0 || dragged.profile.isUnavailable) return false;
+    if (benchIndex < 0) {
+      // Re-entry candidate dragged from the previously-subbed list.
+      final logIndex = team.substitutedOut.indexOf(dragged);
+      if (logIndex < 0) return false;
+      if (team.substitutionsUsed >= team.substitutionLimit) return false;
+      if (!_emergencyKeeperMode &&
+          dragged.isGoalkeeper != target.isGoalkeeper) {
+        return false;
+      }
+      if (_injurySubActive && target != _injuryVictim) return false;
+      return team.bench.isEmpty || !dragged.profile.isUnavailable;
+    }
+    if (dragged.profile.isUnavailable) return false;
     if (team.substitutionsUsed >= team.substitutionLimit) return false;
-    if (dragged.profile.isGoalkeeper != target.isGoalkeeper) return false;
+    if (!_emergencyKeeperMode &&
+        dragged.profile.isGoalkeeper != target.isGoalkeeper) {
+      return false;
+    }
     if (_injurySubActive && target != _injuryVictim) return false;
     return true;
   }
@@ -2011,9 +2270,34 @@ class _GameScreenState extends State<GameScreen>
       });
       return;
     }
+    final logIndex = team.substitutedOut.indexOf(dragged);
+    if (team.bench.indexOf(dragged) < 0 && logIndex >= 0) {
+      final changed = _engine.reenterFromLog(
+        team.id,
+        targetSlot,
+        logIndex,
+        minute: _engine.minute,
+      );
+      if (changed && _injurySubActive) {
+        _engine.popInjuryForcedSub();
+      }
+      if (changed) {
+        setState(() {
+          _injurySubActive = false;
+          _injuryVictim = null;
+        });
+      }
+      return;
+    }
     final benchIndex = team.bench.indexOf(dragged);
     if (benchIndex < 0) return;
-    final changed = _engine.substitute(team.id, targetSlot, benchIndex, minute: _engine.minute);
+    final changed = _engine.substitute(
+      team.id,
+      targetSlot,
+      benchIndex,
+      minute: _engine.minute,
+      allowKeeperSwap: _emergencyKeeperMode,
+    );
     if (!changed) return;
     if (_injurySubActive) {
       _engine.popInjuryForcedSub();
@@ -2223,6 +2507,22 @@ class _GameScreenState extends State<GameScreen>
                     },
                     icon: const Icon(Icons.forward_10),
                   ),
+                  const SizedBox(width: 6),
+                  // Replay speed: slow motion to fast forward
+                  // (مطلب تبطيئ العرض وتسريعه).
+                  for (final speed in const [0.25, 0.5, 1.0, 2.0])
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: ChoiceChip(
+                        label: Text('${speed}x'),
+                        selected: _engine.replaySpeed == speed,
+                        onSelected: (_) => setState(
+                          () => _engine.replaySpeed = speed,
+                        ),
+                        labelStyle: const TextStyle(fontSize: 11),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
                   IconButton(
                     tooltip: 'Sona git',
                     onPressed: () {
@@ -2613,100 +2913,335 @@ class _GameScreenState extends State<GameScreen>
     _ => Icons.circle,
   };
 
+  double _possessionFor(TeamId id) {
+    final total = _engine.blueControlSeconds + _engine.redControlSeconds;
+    if (total <= 0) {
+      return 50;
+    }
+    final share = id == TeamId.blue
+        ? _engine.blueControlSeconds / total
+        : _engine.redControlSeconds / total;
+    return share * 100;
+  }
+
   Widget _resultPanel() {
-    final blueGoals = _engine.blueTeam.goals;
-    final redGoals = _engine.redTeam.goals;
     final best = _engine.bestPlayer();
+    final events = [..._engine.timelineEvents];
     return Align(
       alignment: Alignment.center,
       child: Container(
-        width: 620,
-        padding: const EdgeInsets.all(22),
+        width: 680,
+        constraints: const BoxConstraints(maxHeight: 720),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: const Color(0xff101820).withValues(alpha: 0.96),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'MAC SONUCU',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${_engine.blueTeam.name} ${_engine.blueTeam.score} - ${_engine.redTeam.score} ${_engine.redTeam.name}',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                'Macin oyuncusu: ${best.profile.name}  G:${best.matchGoals} P:${best.matchSuccessfulPasses}/${best.matchPasses} S:${best.matchShotsOnTarget}/${best.matchShots} K:${best.matchSaves}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _goalList(_engine.blueTeam.name, blueGoals)),
-                const SizedBox(width: 16),
-                Expanded(child: _goalList(_engine.redTeam.name, redGoals)),
-              ],
-            ),
-            if (_engine.shootout != null) ...[
-              const Divider(height: 28),
-              Text(
-                'Penalti: Mavi ${_engine.shootout!.goalsFor(TeamId.blue)} - ${_engine.shootout!.goalsFor(TeamId.red)} Kirmizi',
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ],
-            const SizedBox(height: 14),
-            Text(
-              'Shot Model: ${_engine.shotDiagnostics.shots} sut • ${_engine.shotDiagnostics.groundShots} yerden • ${_engine.shotDiagnostics.lowShots} alcak • ${_engine.shotDiagnostics.powerShots} guclu • ${_engine.shotDiagnostics.finesseShots} falso • ${_engine.shotDiagnostics.volleys} vole • ${_engine.shotDiagnostics.headers} kafa • ${_engine.shotDiagnostics.saved} kurtaris • ${_engine.shotDiagnostics.blocked} blok • ${_engine.shotDiagnostics.posts} direk • ${_engine.shotDiagnostics.crossbars} ust direk',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: _showPlayerStatistics,
-                  icon: const Icon(Icons.analytics_outlined),
-                  label: const Text('تفاصيل وإحصائيات جميع اللاعبين'),
-                ),
-                FilledButton.tonalIcon(
-                  onPressed: () {
-                    _engine.openReplay(fromStart: false);
-                    setState(() {
-                      _varPanelMinimized = false;
-                      _varBallZoom = 1.0;
-                      _varTargetPlayerId = null;
-                    });
-                  },
-                  icon: const Icon(Icons.video_settings),
-                  label: const Text('فتح مركز تحكم VAR'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Esc: Ana menu',
-              style: TextStyle(color: Colors.white70),
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xff12242c), Color(0xff0d1720)],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xffffd34d).withValues(alpha: 0.35),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 30,
             ),
           ],
         ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ---- Score header ------------------------------------
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 18, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _engine.blueTeam.name,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xfff4d03f),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Text(
+                        '${_engine.blueTeam.score} - ${_engine.redTeam.score}',
+                        style: const TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        _engine.redTeam.name,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xff7ab8ff),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (_engine.shootout != null)
+                Text(
+                  'الترجيح: الأزرق ${_engine.shootout!.goalsFor(TeamId.blue)} - '
+                  '${_engine.shootout!.goalsFor(TeamId.red)} الأحمر',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              const SizedBox(height: 10),
+
+              // ---- Events: goals and cards with minutes --------------
+              _summarySectionTitle('أهداف وبطاقات بالدقائق'),
+              if (events.isEmpty)
+                const Text(
+                  'لا أحداث',
+                  style: TextStyle(color: Colors.white38),
+                )
+              else
+                ...events.where((e) => !e.canceled).map((event) {
+                  final icon = _timelineEventIcon(event.kind);
+                  final color = _timelineEventColor(event.kind);
+                  final teamName = event.teamId == null
+                      ? ''
+                      : _engine.teamById(event.teamId!).name;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 42,
+                          child: Text(
+                            event.minute > 0 ? "${event.minute}'" : '-',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: color,
+                            ),
+                          ),
+                        ),
+                        Icon(icon, size: 16, color: color),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${event.title} • ${event.detail}'
+                            '${teamName.isEmpty ? '' : '  ($teamName)'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              const SizedBox(height: 12),
+
+              // ---- Cards per player ---------------------------------
+              if (_engine.disciplinaryEvents.isNotEmpty) ...[
+                _summarySectionTitle('مذكرة البطاقات'),
+                ..._engine.disciplinaryEvents.map((event) {
+                  final isRed =
+                      event.card == 'red' || event.card == 'secondYellow';
+                  final label = event.card == 'secondYellow'
+                      ? 'صفراء ثانية = حمراء'
+                      : isRed
+                          ? 'حمراء'
+                          : 'صفراء';
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 14,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: isRed ? Colors.redAccent : Colors.amber,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${event.playerName} — $label د${event.minute}'
+                            '${event.suspensionMatches > 0 ? ' • إيقاف ${event.suspensionMatches}م' : ''}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+              ],
+
+              // ---- Quick stats grid ----------------------------------
+              _summarySectionTitle('إحصائيات سريعة'),
+              const SizedBox(height: 6),
+              _statCompareRow(
+                'الاستحواذ',
+                '${_possessionFor(TeamId.blue).toStringAsFixed(0)}%',
+                '${_possessionFor(TeamId.red).toStringAsFixed(0)}%',
+              ),
+              _statCompareRow(
+                'التمريرات (ناجحة)',
+                '${_engine.blueSuccessfulPasses}/${_engine.bluePasses}',
+                '${_engine.redSuccessfulPasses}/${_engine.redPasses}',
+              ),
+              _statCompareRow(
+                'التسديدات',
+                '${_engine.blueShots}',
+                '${_engine.redShots}',
+              ),
+              _statCompareRow(
+                'الأخطاء',
+                '${_engine.blueTeam.players.fold<int>(0, (sum, p) => sum + p.matchFoulsCommitted)}',
+                '${_engine.redTeam.players.fold<int>(0, (sum, p) => sum + p.matchFoulsCommitted)}',
+              ),
+              _statCompareRow(
+                'البطاقات',
+                '${_engine.disciplinaryEvents.where((e) => e.teamId == TeamId.blue).length}',
+                '${_engine.disciplinaryEvents.where((e) => e.teamId == TeamId.red).length}',
+              ),
+              _statCompareRow(
+                'التصديات',
+                '${_engine.blueTeam.goalkeeper.matchSaves}',
+                '${_engine.redTeam.goalkeeper.matchSaves}',
+              ),
+              _statCompareRow(
+                'التبعيدات',
+                '${_engine.blueTeam.players.fold<int>(0, (sum, p) => sum + p.matchClearances)}',
+                '${_engine.redTeam.players.fold<int>(0, (sum, p) => sum + p.matchClearances)}',
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  'رجل المباراة: ${best.profile.name}  '
+                  'أهداف ${best.matchGoals} • تمرير ناجح '
+                  '${best.matchSuccessfulPasses}/${best.matchPasses} • '
+                  'تسديد ${best.matchShotsOnTarget}/${best.matchShots} • '
+                  'إنقاذ ${best.matchSaves}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _showPlayerStatistics,
+                    icon: const Icon(Icons.analytics_outlined),
+                    label: const Text('تفاصيل وإحصائيات جميع اللاعبين'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      _engine.openReplay(fromStart: false);
+                      setState(() {
+                        _varPanelMinimized = false;
+                        _varBallZoom = 1.0;
+                        _varTargetPlayerId = null;
+                      });
+                    },
+                    icon: const Icon(Icons.video_settings),
+                    label: const Text('فتح مركز تحكم VAR'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Esc: القائمة الرئيسية',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _summarySectionTitle(String text) {
+    return Row(
+      children: [
+        Container(width: 4, height: 14, color: const Color(0xffffd34d)),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+        ),
+      ],
+    );
+  }
+
+  Widget _statCompareRow(String label, String blue, String red) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 70,
+            child: Text(
+              blue,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: Color(0xfff4d03f),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+          ),
+          SizedBox(
+            width: 70,
+            child: Text(
+              red,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: Color(0xff7ab8ff),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -57,6 +57,10 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _adminPasswordError = false;
   int _pendingAdminTab = 5;
   int _adminSubTab = 0;
+  String? _adminValueTeamId;
+  String? _adminBulkAttribute;
+  int _adminBulkStep = 1;
+  final Set<String> _adminSelectedPlayerIds = <String>{};
   String _penaltySearch = '';
   String _accountSearch = '';
   String _teamSearch = '';
@@ -456,6 +460,12 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _deletePlayer(PlayerProfile profile) async {
     final data = _data;
     if (data == null) {
+      return;
+    }
+    // حذف اللاعبين متاح فقط لحساب الإدارة (kimo@)
+    // (مطلب: حذف اللاعب من حساب الإدارة فقط).
+    if (!data.adminFullAccess) {
+      _showMessage('حذف اللاعب متاح فقط من حساب الإدارة');
       return;
     }
     setState(() {
@@ -2728,6 +2738,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   setState(() => _adminPlayerSearch = value),
             ),
           ),
+          _adminBulkToolbar(data, players),
           const Divider(height: 1),
           Expanded(
             child: ListView.builder(
@@ -2739,6 +2750,305 @@ class _SetupScreenState extends State<SetupScreen> {
         ],
       ),
     );
+  }
+
+  /// Bulk admin tools (kimo@ only): team-wide market value steps,
+  /// multi-select attribute editor, countries catalogue
+  /// (مطلب: أدوات الإدارة).
+  Widget _adminBulkToolbar(SavedGameData data, List<PlayerProfile> players) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ---- Team-wide value adjust -------------------------------
+          Row(
+            children: [
+              const Icon(Icons.shield_outlined, size: 18),
+              const SizedBox(width: 6),
+              const Text('قيمة كل لاعبي الفريق:'),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<String>(
+                  value: _adminValueTeamId,
+                  isDense: true,
+                  hint: const Text('اختر فريقاً'),
+                  items: [
+                    for (final team in data.activeTeams)
+                      DropdownMenuItem(value: team.id, child: Text(team.name)),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _adminValueTeamId = value),
+                ),
+              ),
+              const SizedBox(width: 8),
+              for (final (label, factor, flat) in const [
+                ('+كبير', 1.10, 20000000.0),
+                ('+صغير', 1.02, 1000000.0),
+                ('-صغير', 0.98, -1000000.0),
+                ('-كبير', 0.90, -20000000.0),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: OutlinedButton(
+                    onPressed: _adminValueTeamId == null
+                        ? null
+                        : () => _adjustTeamValues(
+                              data,
+                              _adminValueTeamId!,
+                              factor: factor,
+                              flat: flat,
+                            ),
+                    child: Text(label),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // ---- Multi-select attribute editor ------------------------
+          Row(
+            children: [
+              const Icon(Icons.checklist, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                'المحددون: ${_adminSelectedPlayerIds.length}',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 200,
+                child: DropdownButtonFormField<String>(
+                  value: _adminBulkAttribute,
+                  isDense: true,
+                  hint: const Text('اختر الصفة'),
+                  items: [
+                    for (final (key, label) in _adminAttributeChoices)
+                      DropdownMenuItem(value: key, child: Text(label)),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _adminBulkAttribute = value),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 110,
+                child: DropdownButtonFormField<int>(
+                  value: _adminBulkStep,
+                  isDense: true,
+                  items: [
+                    for (final step in const [1, 2, 3, 5, 10])
+                      DropdownMenuItem(value: step, child: Text('±$step')),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _adminBulkStep = value ?? 1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _adminBulkAttribute == null ||
+                        _adminSelectedPlayerIds.isEmpty
+                    ? null
+                    : () => _applyBulkAttribute(1),
+                icon: const Icon(Icons.add),
+                label: const Text('زيادة'),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.tonalIcon(
+                onPressed: _adminBulkAttribute == null ||
+                        _adminSelectedPlayerIds.isEmpty
+                    ? null
+                    : () => _applyBulkAttribute(-1),
+                icon: const Icon(Icons.remove),
+                label: const Text('خفض'),
+              ),
+              const SizedBox(width: 6),
+              TextButton(
+                onPressed: _adminSelectedPlayerIds.isEmpty
+                    ? null
+                    : () => setState(() => _adminSelectedPlayerIds.clear()),
+                child: const Text('تفريغ التحديد'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // ---- Countries catalogue ----------------------------------
+          Row(
+            children: [
+              const Icon(Icons.public, size: 18),
+              const SizedBox(width: 6),
+              const Text('الدول:'),
+              const SizedBox(width: 6),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final country in data.countries)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: InputChip(
+                            label: Text(country, style: const TextStyle(fontSize: 11)),
+                            onDeleted: () =>
+                                setState(() => data.countries.remove(country)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'إضافة دولة',
+                onPressed: () => _addCountryToCatalogue(data),
+                icon: const Icon(Icons.add_circle_outline, size: 20),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static const List<(String, String)> _adminAttributeChoices = [
+    ('overallRating', 'التقييم العام'),
+    ('shootingRating', 'التسديد'),
+    ('finishingRating', 'الإنهاء (bitiricilik)'),
+    ('shotPowerRating', 'قوة التسديد (şut gücü)'),
+    ('longShotsRating', 'التسديد من بعيد'),
+    ('curveRating', 'الفalso'),
+    ('composureRating', 'الرباطة'),
+    ('balanceRating', 'التوازن'),
+    ('passingRating', 'التمرير'),
+    ('goalkeepingRating', 'حراسة المرمى'),
+    ('speedRating', 'السرعة'),
+    ('staminaRating', 'التحمل'),
+    ('dayaniklilikGucu', 'الصلابة'),
+    ('zekaGucu', 'الذكاء'),
+  ];
+
+  Future<void> _addCountryToCatalogue(SavedGameData data) async {
+    final controller = TextEditingController();
+    final country = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xff102019),
+        title: const Text('إضافة دولة للكتالوج'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'اسم الدولة'),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    );
+    if (country == null || country.trim().isEmpty || !mounted) return;
+    setState(() {
+      if (!data.countries.contains(country.trim())) {
+        data.countries.add(country.trim());
+      }
+    });
+    await _save();
+  }
+
+  void _adjustTeamValues(
+    SavedGameData data,
+    String teamId, {
+    required double factor,
+    required double flat,
+  }) {
+    final team = data.teams
+        .where((item) => item.id == teamId && !item.isDeleted)
+        .toList();
+    if (team.isEmpty) return;
+    final ids = team.first.playerIds.toSet();
+    var changed = 0;
+    for (final player in data.players) {
+      if (!ids.contains(player.id)) continue;
+      player.marketValue =
+          (player.marketValue * factor + flat).clamp(1000000.0, 5000000000.0)
+              .toDouble();
+      changed++;
+    }
+    _save();
+    _showMessage('تم تعديل قيمة $changed لاعباً');
+  }
+
+  double? _attributeValue(PlayerProfile profile, String key) => switch (key) {
+    'overallRating' => profile.overallRating,
+    'shootingRating' => profile.shootingRating,
+    'finishingRating' => profile.finishingRating,
+    'shotPowerRating' => profile.shotPowerRating,
+    'longShotsRating' => profile.longShotsRating,
+    'curveRating' => profile.curveRating,
+    'composureRating' => profile.composureRating,
+    'balanceRating' => profile.balanceRating,
+    'passingRating' => profile.passingRating,
+    'goalkeepingRating' => profile.goalkeepingRating,
+    'speedRating' => profile.speedRating,
+    'staminaRating' => profile.staminaRating,
+    'dayaniklilikGucu' => profile.dayaniklilikGucu,
+    'zekaGucu' => profile.zekaGucu,
+    _ => null,
+  };
+
+  void _setAttributeValue(PlayerProfile profile, String key, double value) {
+    final clamped = value.clamp(30.0, 99.0).toDouble();
+    switch (key) {
+      case 'overallRating':
+        profile.overallRating = clamped;
+      case 'shootingRating':
+        profile.shootingRating = clamped;
+      case 'finishingRating':
+        profile.finishingRating = clamped;
+      case 'shotPowerRating':
+        profile.shotPowerRating = clamped;
+      case 'longShotsRating':
+        profile.longShotsRating = clamped;
+      case 'curveRating':
+        profile.curveRating = clamped;
+      case 'composureRating':
+        profile.composureRating = clamped;
+      case 'balanceRating':
+        profile.balanceRating = clamped;
+      case 'passingRating':
+        profile.passingRating = clamped;
+      case 'goalkeepingRating':
+        profile.goalkeepingRating = clamped;
+      case 'speedRating':
+        profile.speedRating = clamped;
+      case 'staminaRating':
+        profile.staminaRating = clamped;
+      case 'dayaniklilikGucu':
+        profile.dayaniklilikGucu = clamped;
+      case 'zekaGucu':
+        profile.zekaGucu = clamped;
+    }
+  }
+
+  void _applyBulkAttribute(int direction) {
+    final data = _data;
+    final key = _adminBulkAttribute;
+    if (data == null || key == null) return;
+    var changed = 0;
+    for (final player in data.players) {
+      if (!_adminSelectedPlayerIds.contains(player.id)) continue;
+      final current = _attributeValue(player, key);
+      if (current == null) continue;
+      _setAttributeValue(player, key, current + direction * _adminBulkStep);
+      changed++;
+    }
+    _save();
+    _showMessage('تم تعديل الصفة لـ $changed لاعب');
   }
 
   Widget _lockedAdminPage() {
@@ -2896,7 +3206,16 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Widget _adminPlayerCard(PlayerProfile profile) {
     return ExpansionTile(
-      leading: Icon(profile.isGoalkeeper ? Icons.back_hand : Icons.person),
+      leading: Checkbox(
+        value: _adminSelectedPlayerIds.contains(profile.id),
+        onChanged: (selected) => setState(() {
+          if (selected == true) {
+            _adminSelectedPlayerIds.add(profile.id);
+          } else {
+            _adminSelectedPlayerIds.remove(profile.id);
+          }
+        }),
+      ),
       title: Text(
         '${profile.name}  ${profile.effectiveOverall.toStringAsFixed(0)}',
       ),
@@ -2905,6 +3224,41 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
+        // Per-player market value steps (مطلب: تعديل قيمة لاعب واحد).
+        Row(
+          children: [
+            const Text('القيمة:', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 6),
+            for (final (label, delta) in const [
+              ('+20م', 20000000.0),
+              ('+5م', 5000000.0),
+              ('+1م', 1000000.0),
+              ('-1م', -1000000.0),
+              ('-5م', -5000000.0),
+              ('-20م', -20000000.0),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    minimumSize: const Size(0, 30),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      profile.marketValue =
+                          (profile.marketValue + delta)
+                              .clamp(1000000.0, 5000000000.0)
+                              .toDouble();
+                    });
+                    _save();
+                  },
+                  child: Text(label, style: const TextStyle(fontSize: 11)),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
         _adminSkillSlider(
           label: 'Genel oyun',
           value: profile.overallRating,
