@@ -29,8 +29,13 @@ class BallPhysics {
 
     final previousHeight = ball.heightMeters;
     ball.heightMeters += ball.verticalVelocity * dt;
+    // A dipping free kick dips less when the shot is powerful: strong
+    // efforts carry over the wall, weak ones still dip into it
+    // (مطلب: التسديدة القوية تعبر الحائط).
+    final dipStrength = 5.30 -
+        2.70 * (ball.shotPower01 / 1.7).clamp(0.0, 1.0);
     final gravity = ball.dippingFreeKick
-        ? GameConstants.gravityMeters * 5.30
+        ? GameConstants.gravityMeters * dipStrength
         : GameConstants.gravityMeters;
     ball.verticalVelocity -= gravity * dt;
 

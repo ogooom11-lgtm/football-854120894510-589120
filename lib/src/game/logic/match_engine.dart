@@ -140,6 +140,10 @@ class MatchEngine {
   TeamId? _cornerManualWaitTeamId;
   double _cornerManualWaitTimer = 0;
   bool _cornerReadyOverride = false;
+  /// How long the current corner restart has been pending — a watchdog
+  /// against the game hanging on a corner that can never settle
+  /// (مطلب: منع تعليق اللعبة أثناء الركنية).
+  double _cornerPendingSeconds = 0;
   bool wallSelectionPending = false;
   TeamId? wallDefendingTeamId;
   final List<PlayerGame> _wallCandidates = [];
@@ -242,6 +246,10 @@ class MatchEngine {
   }
 
   bool isCornerWaitingForManualInputFor(TeamGame team) {
+    if (_cornerPendingSeconds > 6) {
+      // Watchdog: never hang the match on a corner that cannot settle.
+      return false;
+    }
     return restartKind == RestartKind.corner &&
         restartTeamId == team.id &&
         (!isTeamAiControlled(team.id) ||
@@ -261,11 +269,14 @@ class MatchEngine {
   }
 
   bool canAiTakeCornerFor(TeamGame team) =>
-      restartKind == RestartKind.corner &&
-      restartTeamId == team.id &&
-      isTeamAiControlled(team.id) &&
-      _cornerPlayersAreSet() &&
-      _cornerManualWaitTimer <= 0;
+      (restartKind == RestartKind.corner &&
+          restartTeamId == team.id &&
+          isTeamAiControlled(team.id) &&
+          _cornerPlayersAreSet() &&
+          _cornerManualWaitTimer <= 0) ||
+      (restartKind == RestartKind.corner &&
+          restartTeamId == team.id &&
+          _cornerPendingSeconds > 6);
 
   bool _cornerPlayersAreSet() {
     if (restartKind != RestartKind.corner) {
@@ -798,6 +809,10 @@ class MatchEngine {
   /// the game always controls the best player (ball owner when attacking,
   /// the closest chaser when defending). When disabled the player stays on
   /// his chosen man and switches manually (C for blue, Q for red).
+  /// Remembers the last auto-selected player per team so control does not
+  /// flip-flop between two equally close players
+  /// (مطلب: عند تساوي لاعبين يبقى التحكم على نفس اللاعب).
+  final Map<TeamId, String> _autoControlledIds = <TeamId, String>{};
   final Map<TeamId, bool> _autoSwitchEnabled = <TeamId, bool>{
     TeamId.blue: true,
     TeamId.red: true,
@@ -836,7 +851,26 @@ class MatchEngine {
         ball.owner == team.goalkeeper ||
         team.goalkeeper.pos.distanceTo(ball.pos) <
             GameConstants.goalkeeperRadius + GameConstants.ballRadius + 16;
-    return team.closestTo(ball.pos, includeGoalkeeper: includeGoalkeeper);
+    final nearest = team.closestTo(ball.pos, includeGoalkeeper: includeGoalkeeper);
+    // Hysteresis: when two players are about equally close, stay on the
+    // current one instead of flipping control every frame
+    // (مطلب: عند تساوي المسافة يبقى التحكم على نفس اللاعب).
+    final lastId = _autoControlledIds[id];
+    if (lastId != null && lastId != nearest.id) {
+      final matches = team.players.where(
+        (player) => player.id == lastId && !player.isSentOff,
+      );
+      if (matches.isNotEmpty) {
+        final last = matches.first;
+        final dNearest = nearest.pos.distanceTo(ball.pos);
+        final dLast = last.pos.distanceTo(ball.pos);
+        if (dLast <= dNearest + 38) {
+          return last;
+        }
+      }
+    }
+    _autoControlledIds[id] = nearest.id;
+    return nearest;
   }
 
   /// Switches the controlled player of [id] to the NEXT best man: the next
@@ -923,7 +957,8 @@ class MatchEngine {
     }
     if (restartKind == RestartKind.corner &&
         !_cornerPlayersAreSet() &&
-        !_cornerReadyOverride) {
+        !_cornerReadyOverride &&
+        _cornerPendingSeconds <= 6) {
       return;
     }
 
@@ -1507,22 +1542,33 @@ class MatchEngine {
           side *
           ((random.nextDouble() - 0.5) * player.errorFactor * errorScale);
     }
+    // A free-kick shot lifts over the human wall in proportion to its
+    // power — weak efforts stay low and hit the wall
+    // (مطلب: التسديدة تمر من فوق الحائط على حسب شدة التسديد).
+    var kickLoft = loft;
+    if (dippingFreeKick &&
+        type == KickType.shoot &&
+        kickLoft <= 0.2 &&
+        _lockedWallPlayerIds.isNotEmpty) {
+      kickLoft = 1.55 + adjustedPower.clamp(0.55, 1.7) * 0.95;
+    }
     _recordKickStats(
       player,
       team,
       type,
       adjustedDirection,
       power: adjustedPower,
-      loft: loft,
+      loft: kickLoft,
       curve: curve,
     );
     ball.release(
       direction: adjustedDirection,
       power: adjustedPower,
+      shotPower01: type == KickType.shoot ? adjustedPower : 0,
       toucher: player,
       receiver: target,
       kickType: type,
-      loft: loft,
+      loft: kickLoft,
       highPass: type == KickType.highPass,
       dippingFreeKick: dippingFreeKick,
       curve: curve,
@@ -1685,11 +1731,20 @@ class MatchEngine {
   }
 
   void _tickCooldowns(double dt) {
+    if (restartKind == RestartKind.corner) {
+      _cornerPendingSeconds += dt;
+    } else {
+      _cornerPendingSeconds = 0;
+    }
     if (_pauseTimer <= 0) {
       _cornerManualWaitTimer = math.max(0, _cornerManualWaitTimer - dt);
       if (_cornerManualWaitTimer <= 0) {
         _cornerManualWaitTeamId = null;
       }
+      // Baseline fatigue: everyone burns energy as the match progresses so
+      // tired legs are always visible in the movement
+      // (مطلب: منطق التعب والطاقة لازم يبان على اللاعبين).
+      _baselineStaminaDrain(dt);
     }
     _recentKickerGrace = math.max(0, _recentKickerGrace - dt);
     if (_recentKickerGrace <= 0) {
@@ -2075,13 +2130,17 @@ class MatchEngine {
         .toDouble();
     final sideScatter =
         (random.nextDouble() - 0.5) * (1.45 - parryControl * 0.90);
+    // Deflect strongly to the side of the pitch the keeper already covers
+    // (towards the nearer byline) so the rebound never sits at the feet of
+    // the onrushing striker (مطلب: الكرة ترتد بعيدًا عن المهاجم).
+    final outSide = keeper.pos.y < GameConstants.virtualHeight / 2 ? -1.0 : 1.0;
     final reboundDirection = Vec2(
-      team.attackDirection.toDouble(),
-      sideScatter,
-    ).normalized(Vec2(team.attackDirection.toDouble(), 0));
+      team.attackDirection.toDouble() * 0.72,
+      outSide * 0.95 + sideScatter * 0.45,
+    ).normalized(Vec2(team.attackDirection.toDouble(), 0.4));
     final reboundSpeed = math.max(
-          3.2,
-          ball.vel.length * (0.52 + (1 - parryControl) * 0.17),
+          4.6,
+          ball.vel.length * (0.56 + (1 - parryControl) * 0.20),
         ) +
         random.nextDouble() * (1.15 - parryControl * 0.62);
     ball
@@ -2497,6 +2556,7 @@ class MatchEngine {
     _cornerManualWaitTeamId = isCorner ? restartTeam.id : null;
     _cornerManualWaitTimer = isCorner ? 3.0 : 0;
     _cornerReadyOverride = false;
+    _cornerPendingSeconds = 0;
     restartKind = isCorner ? RestartKind.corner : RestartKind.goalKick;
     restartTeamId = restartTeam.id;
     _restartSpot = restartPos.copy();
@@ -3957,6 +4017,28 @@ class MatchEngine {
   /// The stamina ceiling during a match: the player's long-term fitness.
   double playerFitnessCap() => 1.0;
 
+  /// Time-based fatigue: even standing players slowly tire so the match
+  /// always shows visible tired legs and slower sprints late on
+  /// (مطلب ضروري: منطق التعب والطاقة).
+  void _baselineStaminaDrain(double dt) {
+    for (final player in allPlayers) {
+      if (player.isSentOff) {
+        continue;
+      }
+      final load = player.isGoalkeeper
+          ? 0.30
+          : 0.55 + player.movementIntensity.clamp(0.0, 1.2);
+      player.stamina = math.max(
+        0.12,
+        player.stamina -
+            dt *
+                0.0008 *
+                load *
+                (1.18 - player.profile.staminaSkill * 0.46),
+      );
+    }
+  }
+
   /// Pressing costs extra energy through the engine, so it cannot conflict
   /// with the normal movement drain handled above.
   void applyPressingStamina(TeamId id, double dt) {
@@ -4445,12 +4527,33 @@ class MatchEngine {
       return Vec2(goal.x, tacticalY);
     }
     final timeToGoalLine = (goal.x - player.pos.x) / facing.x;
-    final directionalY = (player.pos.y + facing.y * timeToGoalLine)
-        .clamp(top - 48, bottom + 48)
+    // From beside the goal (acute angle) or very close range the aim must
+    // stay INSIDE the posts — shooting outside from there is unacceptable,
+    // and an open net is always attacked (مطلب ضروري).
+    final lateral = (player.pos.y - centerY).abs();
+    final horizontal = (goal.x - player.pos.x).abs();
+    final acuteAngle = lateral > horizontal * 0.85 + 40;
+    final distanceToGoal = math.sqrt(
+      horizontal * horizontal + lateral * lateral,
+    );
+    final closeRange = distanceToGoal < 170;
+    final aimTop = top + 8;
+    final aimBottom = bottom - 8;
+    var directionalY = (player.pos.y + facing.y * timeToGoalLine)
+        .clamp(top - 6, bottom + 6)
         .toDouble();
+    if (acuteAngle || closeRange) {
+      directionalY = directionalY.clamp(aimTop, aimBottom).toDouble();
+    }
+    var correction = 0.18 + player.profile.composureSkill * 0.14;
+    if (openGoal && (acuteAngle || closeRange)) {
+      // Empty net from close range: the shot goes inside the goal, period.
+      final centerBias = (top + bottom) / 2;
+      directionalY = directionalY * 0.35 + centerBias * 0.65;
+      correction = 0.10;
+    }
     // Direction supplies the user's target; composure contributes a limited
     // tactical correction away from the goalkeeper without guaranteeing it.
-    final correction = 0.18 + player.profile.composureSkill * 0.14;
     return Vec2(goal.x, directionalY * (1 - correction) + tacticalY * correction);
   }
 
@@ -5078,11 +5181,11 @@ class MatchEngine {
     final towardGoal = (ownGoal - ball.pos).normalized(
       Vec2(-defending.attackDirection.toDouble(), 0),
     );
-    // The regulation 9.15 m wall distance instead of the old tight 66 px —
-    // the human wall stands clearly farther from the ball
-    // (مطلب: الحائط البشري يكون بعيد أكثر عن الكرة).
-    final lineCenter =
-        ball.pos + towardGoal * GameConstants.freeKickWallDistancePx;
+    // The regulation 9.15 m wall distance plus a small extra step: standing
+    // a little farther back lets a strong shot lift over the wall
+    // (مطلب: الحائط يبعد شوي حتى تعدي التسديدة من فوقه حسب شدتها).
+    final lineCenter = ball.pos +
+        towardGoal * (GameConstants.freeKickWallDistancePx + 13);
     final lateral = Vec2(-towardGoal.y, towardGoal.x);
     for (var index = 0; index < selected.length; index++) {
       final offset = index - (selected.length - 1) / 2;
@@ -5275,20 +5378,34 @@ class MatchEngine {
       return;
     }
 
-    // AI corners wait until every player has reached the set-piece shape.
+    // AI corners wait until every player has reached the set-piece shape —
+    // but never more than a few seconds: a corner that cannot settle must
+    // still be taken so the match can never hang (مطلب منع التعليق).
     if (restartKind == RestartKind.corner && restartTeamId == id) {
       if (!canAiTakeCornerFor(team)) {
         return;
       }
       final candidates = team.players.where(
-        (mate) => mate != controlled && !mate.isGoalkeeper,
+        (mate) => mate != controlled && !mate.isGoalkeeper && !mate.isSentOff,
       );
-      final target = chooseBestPass(
+      var target = chooseBestPass(
         controlled,
         candidates,
         preferForward: false,
       );
-      if (target != null) {
+      if (target == null && candidates.isNotEmpty) {
+        target = candidates.reduce(
+          (a, b) => a.pos.distanceTo(ball.pos) < b.pos.distanceTo(ball.pos)
+              ? a
+              : b,
+        );
+      }
+      if (target == null) {
+        // No one to aim at: clear the restart so play resumes normally.
+        _finishRestartFor(team);
+        return;
+      }
+      {
         final highDelivery = random.nextDouble() < 0.72;
         if (highDelivery) {
           // AI corners use the same aerial delivery: the ball drops into

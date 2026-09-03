@@ -21,6 +21,9 @@ class BallGame {
   bool hasBouncedSinceKick = false;
   bool goalLineMissCommitted = false;
   bool dippingFreeKick = false;
+  /// Normalised shot power (0..~1.7) of the last kick — a stronger free-kick
+  /// shot dips less and can clear the wall (مطلب تعبير الحائط حسب الشدة).
+  double shotPower01 = 0;
   double curve = 0;
   double spin = 0;
   ShotType? shotType;
@@ -67,6 +70,7 @@ class BallGame {
     double loft = 0,
     bool highPass = false,
     bool dippingFreeKick = false,
+    double shotPower01 = 0,
     double curve = 0,
     double spin = 0,
     ShotType? shotType,
@@ -84,6 +88,7 @@ class BallGame {
     hasBouncedSinceKick = false;
     goalLineMissCommitted = false;
     this.dippingFreeKick = dippingFreeKick;
+    this.shotPower01 = shotPower01;
     this.curve = curve;
     this.spin = spin;
     this.shotType = shotType;

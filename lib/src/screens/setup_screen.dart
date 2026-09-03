@@ -1023,21 +1023,22 @@ class _SetupScreenState extends State<SetupScreen> {
               const SizedBox(width: 10),
               FilledButton.icon(
                 onPressed: _startMatch,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Maca basla'),
+                icon: const Icon(Icons.play_arrow, size: 20),
+                label: const Text('ابدأ المباراة'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xff00c896),
                   foregroundColor: const Color(0xff00130c),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 12,
+                    horizontal: 26,
+                    vertical: 14,
                   ),
                   textStyle: const TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 14,
+                    fontSize: 15,
+                    letterSpacing: 0.3,
                   ),
                   shadowColor: const Color(0xff00c896).withValues(alpha: 0.5),
-                  elevation: 4,
+                  elevation: 6,
                 ),
               ),
             ],
@@ -1178,70 +1179,211 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Widget _matchSettings(SavedGameData data) {
+    final blueKit = data.blueTeam.jerseyKits.isEmpty
+        ? const Color(0xff4d9fff)
+        : data.blueTeam.jerseyKits[data.blueTeam.activeKitIndex %
+            data.blueTeam.jerseyKits.length].shirtColor;
+    final redKit = data.redTeam.jerseyKits.isEmpty
+        ? const Color(0xffff5c5c)
+        : data.redTeam.jerseyKits[data.redTeam.activeKitIndex %
+            data.redTeam.jerseyKits.length].shirtColor;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: _panelDecoration(),
       child: ListView(
         children: [
-          const Text(
-            'Mac ayarlari',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          // ---------- Modern VS header ----------
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xff12242c), Color(0xff0d1720)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: const Color(0xffffd34d).withValues(alpha: 0.3),
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: blueKit,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white24, width: 2),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.shield, color: Colors.white70, size: 20),
+                          ),
+                          const SizedBox(height: 6),
+                          DropdownButtonFormField<String>(
+                            value: data.blueTeamId,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'الفريق الأزرق',
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final team in data.activeTeams)
+                                DropdownMenuItem(
+                                  value: team.id,
+                                  child: Text(
+                                    team.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (id) {
+                              if (id == null) return;
+                              final team =
+                                  data.teams.firstWhere((team) => team.id == id);
+                              setState(() {
+                                data.blueTeamId = team.id;
+                                data.bluePlayerIds = team.playerIds;
+                                data.blueFormation = team.formation;
+                                _bluePlayStyle = team.playStyle;
+                                _blueNameController.text = team.name;
+                              });
+                              _save();
+                            },
+                          ),
+                          const SizedBox(height: 6),
+                          TextField(
+                            controller: _blueNameController,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xffffdf6b),
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'الاسم',
+                              isDense: true,
+                            ),
+                            onChanged: (_) => _save(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: const Text(
+                              'VS',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.5,
+                                color: Color(0xffffd34d),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Icon(Icons.sports_soccer, color: Colors.white38),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: redKit,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white24, width: 2),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.shield, color: Colors.white70, size: 20),
+                          ),
+                          const SizedBox(height: 6),
+                          DropdownButtonFormField<String>(
+                            value: data.redTeamId,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'الفريق الأحمر',
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final team in data.activeTeams)
+                                DropdownMenuItem(
+                                  value: team.id,
+                                  child: Text(
+                                    team.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (id) {
+                              if (id == null) return;
+                              final team =
+                                  data.teams.firstWhere((team) => team.id == id);
+                              setState(() {
+                                data.redTeamId = team.id;
+                                data.redPlayerIds = team.playerIds;
+                                data.redFormation = team.formation;
+                                _redPlayStyle = team.playStyle;
+                                _redNameController.text = team.name;
+                              });
+                              _save();
+                            },
+                          ),
+                          const SizedBox(height: 6),
+                          TextField(
+                            controller: _redNameController,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xff7ab8ff),
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'الاسم',
+                              isDense: true,
+                            ),
+                            onChanged: (_) => _save(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 14),
-          _teamDropdown(
-            title: 'Mavi takim',
-            value: data.blueTeamId,
-            onChanged: (id) {
-              final team = data.teams.firstWhere((team) => team.id == id);
-              setState(() {
-                data.blueTeamId = team.id;
-                data.bluePlayerIds = team.playerIds;
-                data.blueFormation = team.formation;
-                _bluePlayStyle = team.playStyle;
-                _blueNameController.text = team.name;
-              });
-              _save();
-            },
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _blueNameController,
-            decoration: const InputDecoration(labelText: 'Mavi takim adi'),
-            onChanged: (_) => _save(),
-          ),
-          const SizedBox(height: 10),
-          _teamDropdown(
-            title: 'Kirmizi takim',
-            value: data.redTeamId,
-            onChanged: (id) {
-              final team = data.teams.firstWhere((team) => team.id == id);
-              setState(() {
-                data.redTeamId = team.id;
-                data.redPlayerIds = team.playerIds;
-                data.redFormation = team.formation;
-                _redPlayStyle = team.playStyle;
-                _redNameController.text = team.name;
-              });
-              _save();
-            },
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _redNameController,
-            decoration: const InputDecoration(labelText: 'Kirmizi takim adi'),
-            onChanged: (_) => _save(),
-          ),
-          const SizedBox(height: 18),
-          const Text('Mac tipi', style: TextStyle(fontWeight: FontWeight.w800)),
+
+          // ---------- Match mode ----------
+          const Text('نوع المباراة',
+              style: TextStyle(fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
           SegmentedButton<MatchMode>(
             segments: [
               ButtonSegment(
                 value: MatchMode.league,
+                icon: const Icon(Icons.calendar_month, size: 17),
                 label: Text(MatchMode.league.title),
               ),
               ButtonSegment(
                 value: MatchMode.knockout,
+                icon: const Icon(Icons.emoji_events, size: 17),
                 label: Text(MatchMode.knockout.title),
               ),
             ],
@@ -1251,37 +1393,52 @@ class _SetupScreenState extends State<SetupScreen> {
               _save();
             },
           ),
-          const SizedBox(height: 8),
-          Text(
-            data.mode.description,
-            style: const TextStyle(color: Colors.white70, height: 1.35),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              data.mode.description,
+              style: const TextStyle(color: Colors.white60, fontSize: 11.5, height: 1.35),
+            ),
           ),
-          const Divider(height: 28),
+          const Divider(height: 24),
+
+          // ---------- Formations ----------
+          const Text('التشكيلات',
+              style: TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
           _formationDropdown(
-            title: 'Mavi dizilis',
+            title: 'تشكيل الفريق الأزرق',
             value: data.blueFormation,
             onChanged: (value) {
               setState(() => data.blueFormation = value);
               _save();
             },
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           _formationDropdown(
-            title: 'Kirmizi dizilis',
+            title: 'تشكيل الفريق الأحمر',
             value: data.redFormation,
             onChanged: (value) {
               setState(() => data.redFormation = value);
               _save();
             },
           ),
-          const Divider(height: 28),
-          const Text(
-            'Yapay zeka ve oyun stili',
-            style: TextStyle(fontWeight: FontWeight.w900),
-          ),
+          const Divider(height: 24),
+
+          // ---------- AI ----------
+          const Text('الذكاء الاصطناعي وأسلوب اللعب',
+              style: TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Mavi takim AI kontrolu'),
+            dense: true,
+            activeColor: const Color(0xffffd34d),
+            title: const Text('تحكم AI للفريق الأزرق', style: TextStyle(fontSize: 13)),
             value: _blueAiControlled,
             onChanged: (value) {
               setState(() => _blueAiControlled = value);
@@ -1290,16 +1447,19 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Kirmizi takim AI kontrolu'),
+            dense: true,
+            activeColor: const Color(0xffffd34d),
+            title: const Text('تحكم AI للفريق الأحمر', style: TextStyle(fontSize: 13)),
             value: _redAiControlled,
             onChanged: (value) {
               setState(() => _redAiControlled = value);
               _save();
             },
           ),
+          const SizedBox(height: 4),
           DropdownButtonFormField<AiDifficulty>(
             value: _aiDifficulty,
-            decoration: const InputDecoration(labelText: 'AI zorlugu'),
+            decoration: const InputDecoration(labelText: 'صعوبة الذكاء الاصطناعي'),
             items: AiDifficulty.values
                 .map(
                   (difficulty) => DropdownMenuItem(
@@ -1317,7 +1477,7 @@ class _SetupScreenState extends State<SetupScreen> {
           const SizedBox(height: 10),
           DropdownButtonFormField<AiPlayStyle>(
             value: _bluePlayStyle,
-            decoration: const InputDecoration(labelText: 'Mavi oyun stili'),
+            decoration: const InputDecoration(labelText: 'أسلوب الفريق الأزرق'),
             items: AiPlayStyle.values
                 .map((style) => DropdownMenuItem(
                       value: style,
@@ -1333,7 +1493,7 @@ class _SetupScreenState extends State<SetupScreen> {
           const SizedBox(height: 10),
           DropdownButtonFormField<AiPlayStyle>(
             value: _redPlayStyle,
-            decoration: const InputDecoration(labelText: 'Kirmizi oyun stili'),
+            decoration: const InputDecoration(labelText: 'أسلوب الفريق الأحمر'),
             items: AiPlayStyle.values
                 .map((style) => DropdownMenuItem(
                       value: style,
@@ -1346,15 +1506,23 @@ class _SetupScreenState extends State<SetupScreen> {
               _save();
             },
           ),
-          const Divider(height: 28),
-          const Text(
-            'Penalti aciklamasi',
-            style: TextStyle(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Eleme macinda skor esit kalirsa oyun 120. dakikaya uzar. Sonra penaltilar otomatik ve akilli sekilde oynanir: sut yonu, yukseklik, kaleci tahmini ve oyuncu boyu sonuca etki eder.',
-            style: TextStyle(color: Colors.white70, height: 1.35),
+          const Divider(height: 24),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text(
+              'شرح ركلات الترجيح',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            children: [
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  'في مباراة الإقصاء، عند التعادل يمتد اللعب إلى الدقيقة 120. بعدها تُنفَّذ ركلات الترجيح تلقائيًا وبذكاء: اتجاه التسديد والارتفاع وتوقع الحارس وطول اللاعب تؤثر كلها في النتيجة.',
+                  style: const TextStyle(
+                      color: Colors.white60, height: 1.4, fontSize: 12),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1566,134 +1734,157 @@ class _SetupScreenState extends State<SetupScreen> {
         query.isEmpty ||
         player.name.toLowerCase().contains(query) ||
         (player.number?.toString().contains(query) ?? false);
-    final goalkeepers = data.players
-        .where((player) => player.isGoalkeeper && matches(player))
-        .toList()
-      ..sort((a, b) => b.effectiveOverall.compareTo(a.effectiveOverall));
-    final fieldPlayers = data.players
-        .where((player) => !player.isGoalkeeper && matches(player))
-        .toList()
-      ..sort((a, b) => b.effectiveOverall.compareTo(a.effectiveOverall));
+    // كل اللاعبين مرتبين من الأفضل للأقل حسب معدل النقاط (puan ortalamasi)
+    // (مطلب: ترتيب اللاعبين حسب معدل النقاط).
+    final ranked = data.players.where(matches).toList()
+      ..sort((a, b) {
+        final aAvg = a.matchesPlayed == 0 ? -1.0 : a.points / a.matchesPlayed;
+        final bAvg = b.matchesPlayed == 0 ? -1.0 : b.points / b.matchesPlayed;
+        final byAvg = bAvg.compareTo(aAvg);
+        if (byAvg != 0) return byAvg;
+        return b.effectiveOverall.compareTo(a.effectiveOverall);
+      });
     return Container(
       decoration: _panelDecoration(),
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
             child: Row(
               children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xff14532d), Color(0xff0d3b22)],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.leaderboard,
+                    color: Color(0xffffd34d),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 const Expanded(
-                  child: Text(
-                    'Kayitli oyuncular',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'اللاعبون — ترتيب حسب معدل النقاط',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'كل لاعب مع فريقه وأهدافه وقيمته ونسبه وتصدياته',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 OutlinedButton.icon(
                   onPressed: _openFreeAgents,
                   icon: const Icon(Icons.person_search, size: 18),
-                  label: const Text('Serbest oyuncular'),
+                  label: const Text('أحرار'),
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Colors.white24),
                   ),
                 ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 240,
-                  child: TextField(
-                    controller: _newPlayerController,
-                    decoration: const InputDecoration(
-                      labelText: 'Oyuncu adi',
-                      isDense: true,
-                    ),
-                    onSubmitted: (_) => _addPlayer(),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FilterChip(
-                  selected: _newIsGoalkeeper,
-                  label: const Text('Kaleci'),
-                  onSelected: (value) =>
-                      setState(() => _newIsGoalkeeper = value),
-                ),
-                const SizedBox(width: 10),
-                FilledButton.icon(
-                  onPressed: _addPlayer,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Ekle'),
-                ),
               ],
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _importPlayersPathController,
-                    decoration: const InputDecoration(
-                      labelText: 'TXT dosya yolu',
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                OutlinedButton.icon(
-                  onPressed: _importPlayersFromTextFile,
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Ice aktar'),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: TextField(
               decoration: const InputDecoration(
                 prefixIcon: Icon(Icons.search),
-                labelText: 'Oyuncu ara (ad veya numara)',
+                labelText: 'ابحث عن لاعب (اسم أو رقم)',
                 isDense: true,
               ),
               onChanged: (value) => setState(() => _playerSearch = value),
             ),
           ),
+          ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            title: const Text(
+              'إضافة واستيراد لاعبين',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _newPlayerController,
+                      decoration: const InputDecoration(
+                        labelText: 'اسم اللاعب',
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) => _addPlayer(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    selected: _newIsGoalkeeper,
+                    label: const Text('حارس'),
+                    onSelected: (value) =>
+                        setState(() => _newIsGoalkeeper = value),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _addPlayer,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('إضافة'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _importPlayersPathController,
+                      decoration: const InputDecoration(
+                        labelText: 'مسار ملف TXT',
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _importPlayersFromTextFile,
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const Text('استيراد'),
+                  ),
+                ],
+              ),
+            ],
+          ),
           const Divider(height: 1),
           Expanded(
-            child: ListView(
-              children: [
-                _playerSection('Saha oyunculari', fieldPlayers, data),
-                const Divider(height: 18),
-                _playerSection('Kaleciler', goalkeepers, data),
-              ],
-            ),
+            child: ranked.isEmpty
+                ? const Center(
+                    child: Text(
+                      'لا يوجد لاعبون',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                    itemCount: ranked.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) =>
+                        _rankedPlayerCard(data, ranked[index], index + 1),
+                  ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _playerSection(
-    String title,
-    List<PlayerProfile> players,
-    SavedGameData data,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-          child: Text(
-            '$title (${players.length})',
-            style: const TextStyle(fontWeight: FontWeight.w900),
-          ),
-        ),
-        if (players.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            child: Text('Kayit yok', style: TextStyle(color: Colors.white54)),
-          ),
-        for (final profile in players) _playerRow(data, profile),
-      ],
     );
   }
 
@@ -1706,98 +1897,225 @@ class _SetupScreenState extends State<SetupScreen> {
     return null;
   }
 
-  Widget _playerRow(SavedGameData data, PlayerProfile profile) {
-    final assignedTeam = _teamForPlayer(data, profile);
-    final canEdit =
-        assignedTeam == null ||
-        assignedTeam.ownerAccountId == data.activeAccountId;
-    final ownedTeams = data.ownedTeams;
-    final currentValue = canEdit ? assignedTeam?.id : null;
+  /// Modern ranked player card: rank medal, team chip, goals, value, pass %,
+  /// shot %, saves, matches and injury/suspension badges
+  /// (مطلب: تصميم أنيق لكل لاعب مع فريقه وإحصائياته).
+  Widget _rankedPlayerCard(
+    SavedGameData data,
+    PlayerProfile profile,
+    int rank,
+  ) {
+    final team = _teamForPlayer(data, profile);
+    final avgPoints = profile.matchesPlayed == 0
+        ? 0.0
+        : profile.points / profile.matchesPlayed;
+    final passPercent = profile.passes == 0
+        ? 0
+        : (profile.successfulPasses / profile.passes * 100).round();
+    final rankColor = switch (rank) {
+      1 => const Color(0xffffd700),
+      2 => const Color(0xffc0c0c0),
+      3 => const Color(0xffcd7f32),
+      _ => const Color(0xff1c3a2d),
+    };
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.07)),
+        gradient: const LinearGradient(
+          begin: Alignment.centerRight,
+          end: Alignment.centerLeft,
+          colors: [Color(0xff123527), Color(0xff0d2119)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: rank <= 3
+              ? rankColor.withValues(alpha: 0.75)
+              : Colors.white.withValues(alpha: 0.07),
+          width: rank <= 3 ? 1.6 : 1,
         ),
       ),
       child: Row(
         children: [
-          Icon(
-            profile.isGoalkeeper ? Icons.back_hand : Icons.directions_run,
-            color: profile.isGoalkeeper
-                ? const Color(0xffffd34d)
-                : Colors.white70,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  profile.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  'Rey:${profile.effectiveOverall.toStringAsFixed(0)} SutGuc:${profile.shotPowerRating.toStringAsFixed(0)} Sut%:${profile.shootingAccuracyPercent} Hiz:${profile.speedRating.toStringAsFixed(0)} Enerji:${profile.staminaRating.toStringAsFixed(0)} Day:${profile.dayaniklilikGucu.toStringAsFixed(0)} Gol:${profile.goals} Pas:${profile.successfulPasses}/${profile.passes} Deger:${profile.marketValueText}${profile.isSuspended ? ' • CEZALI ${profile.suspendedMatchesRemaining} mac' : ''}${profile.isInjured ? ' • SAKAT ${profile.injuredDaysRemaining} gun' : ''}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: Colors.white54),
-                ),
-              ],
+          // Rank badge
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: rankColor.withValues(alpha: 0.16),
+              border: Border.all(color: rankColor, width: rank <= 3 ? 2 : 1),
+            ),
+            child: Text(
+              '$rank',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 15,
+                color: rank <= 3 ? rankColor : Colors.white70,
+              ),
             ),
           ),
-          SizedBox(
-            width: 56,
-            child: Text('${profile.heightMeters.toStringAsFixed(2)} m'),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 190,
-            child: canEdit
-                ? DropdownButtonFormField<String>(
-                    value: ownedTeams.any((team) => team.id == currentValue)
-                        ? currentValue
-                        : null,
-                    isDense: true,
-                    decoration: const InputDecoration(labelText: 'Takim'),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text('Bos'),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        profile.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
                       ),
-                      ...ownedTeams.map(
-                        (team) => DropdownMenuItem<String>(
-                          value: team.id,
-                          child: Text(
-                            team.name,
-                            overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(width: 7),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0xffffd34d).withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'OVR ${profile.effectiveOverall.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xffffd34d),
+                        ),
+                      ),
+                    ),
+                    if (team != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: team.jerseyKits.isEmpty
+                              ? Colors.white38
+                              : team.jerseyKits[team.activeKitIndex %
+                                  team.jerseyKits.length].shirtColor,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white24),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          team.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white60,
                           ),
                         ),
                       ),
                     ],
-                    onChanged: (value) => _assignPlayerToTeam(profile, value),
-                  )
-                : Text(
-                    '${assignedTeam.name} hesabinda',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.orangeAccent),
-                  ),
-          ),
-          IconButton(
-            tooltip: 'Duzenle',
-            onPressed: canEdit ? () => _editPlayerName(profile) : null,
-            icon: const Icon(Icons.edit),
-          ),
-          IconButton(
-            tooltip: 'Sil',
-            onPressed: canEdit ? () => _deletePlayer(profile) : null,
-            icon: const Icon(Icons.delete_outline),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 5,
+                  children: [
+                    _poolStat('معدل', avgPoints.toStringAsFixed(2),
+                        highlight: true),
+                    _poolStat('أهداف', '${profile.goals}'),
+                    _poolStat('صناعة', '${profile.assists}'),
+                    _poolStat('تمرير %', '$passPercent'),
+                    _poolStat('تسديد %', '${profile.shootingAccuracyPercent}'),
+                    _poolStat('تصديات', '${profile.saves}'),
+                    _poolStat('مباريات', '${profile.matchesPlayed}'),
+                    _poolStat('القيمة', profile.marketValueText),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      profile.isGoalkeeper ? Icons.back_hand : Icons.directions_run,
+                      size: 13,
+                      color: profile.isGoalkeeper
+                          ? const Color(0xffffd34d)
+                          : Colors.white38,
+                    ),
+                    const SizedBox(width: 4),
+                    if (profile.isSuspended)
+                      _statusBadge(
+                        'موقوف ${profile.suspendedMatchesRemaining}م',
+                        const Color(0xffffb020),
+                      )
+                    else if (profile.isInjured)
+                      _statusBadge(
+                        'مصاب ${profile.injuredDaysRemaining}ي',
+                        const Color(0xffff6b6b),
+                      )
+                    else
+                      _statusBadge('جاهز', const Color(0xff2ee59d)),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _poolStat(String label, String value, {bool highlight = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: highlight
+            ? const Color(0xffffd34d).withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: highlight
+              ? const Color(0xffffd34d).withValues(alpha: 0.35)
+              : Colors.white10,
+        ),
+      ),
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: highlight ? const Color(0xffffd34d) : const Color(0xff9fe8bd),
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 9, color: Colors.white38),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBadge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
       ),
     );
   }
@@ -3728,9 +4046,26 @@ class _SetupScreenState extends State<SetupScreen> {
       decoration: _panelDecoration(),
       child: ListView(
         children: [
-          const Text(
-            'Mac kadrolari',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xff1d3a5f), Color(0xff0d1f33)],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.groups_2, color: Color(0xffffd34d)),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'كشكول الفريقين — التشكيلة والطقم',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           _summaryBlock(data.blueTeam, data.bluePlayerIds, data),

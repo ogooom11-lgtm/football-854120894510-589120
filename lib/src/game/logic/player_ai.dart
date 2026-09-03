@@ -20,6 +20,7 @@ import 'match_engine.dart';
 enum DefensiveDuty {
   protectGoal,
   pressCarrier,
+  markStriker,
   coverPresser,
   closeLane,
   holdShape,
@@ -30,6 +31,11 @@ class PlayerAi {
 
   final math.Random random;
   final AiDifficulty difficulty;
+
+  /// Sticky presser per team: the same player keeps the pressing job while
+  /// he stays close enough, so the team never looks like everyone chasing
+  /// the carrier (مطلب: واحد فقط يضغط ولا يتغير كل لحظة).
+  final Map<TeamId, String> _stickyPresserIds = <TeamId, String>{};
 
   void update({
     required PlayerGame player,
@@ -124,6 +130,14 @@ class PlayerAi {
         case DefensiveDuty.pressCarrier:
           finalTarget = _pressTarget(player, team, engine, context);
           force += 0.12;
+        case DefensiveDuty.markStriker:
+          final striker = _mostAdvancedOpponentAttacker(opponent, engine);
+          if (striker != null) {
+            finalTarget = _markStrikerTarget(player, team, striker, engine);
+          } else {
+            finalTarget = context.dynamicAnchor(player);
+          }
+          force += 0.06;
         case DefensiveDuty.coverPresser:
           finalTarget = _coverTarget(player, team, opponent, engine, context);
           force += 0.04;
@@ -170,14 +184,24 @@ class PlayerAi {
       // dynamic shape (plan item 6: not everybody runs at the ball).
       if (engine.isCornerAttackActiveFor(team) && !player.isGoalkeeper) {
         finalTarget = _cornerAttackTarget(player, team, engine);
+      } else if (ball.intendedReceiver == player &&
+          ball.lastPasser?.teamId == team.id &&
+          ball.owner == null) {
+        // A pass is travelling to THIS player: he moves onto the ball path
+        // and collects it naturally
+        // (مطلب: اللاعب غير المُتحكَّم به يستلم الكرة بشكل طبيعي).
+        finalTarget = _interceptionPoint(player, engine);
+        force += 0.13;
       } else {
         final chase = _looseBallChaser(team, engine);
-        final dangerLooseBall = engine.isInPenaltyBox(ball.pos, team.id) &&
-            (player.role.isDefender ||
-                player.role == PlayerRole.defensiveMidfielder);
+        final dangerLooseBall = engine.isInPenaltyBox(ball.pos, team.id);
         if (dangerLooseBall &&
-            player.pos.distanceTo(ball.pos) < 170 &&
-            (chase == player || _isSecondChaser(player, chase, team, engine))) {
+            player.pos.distanceTo(ball.pos) < 160 &&
+            !player.isGoalkeeper &&
+            (chase == player ||
+                _isSecondChaser(player, chase, team, engine) ||
+                player.role.isDefender ||
+                player.role == PlayerRole.defensiveMidfielder)) {
           // A ball bouncing around our own box must be smashed away
           // immediately — defenders never dribble there
           // (مطلب: يبعدو كل كرة بتجيهون تلقائي).
@@ -244,6 +268,15 @@ class PlayerAi {
       }
     }
 
+    // 3.5) One centre back always locks onto the most advanced attacker so
+    // the striker is never free (مطلب: حدا يكون مسكر على المهاجم).
+    if (role.group == RoleGroup.centralDefence) {
+      final striker = _mostAdvancedOpponentAttacker(opponent, engine);
+      if (striker != null && _isStrikerMarker(player, team, striker)) {
+        return DefensiveDuty.markStriker;
+      }
+    }
+
     // 4) Close the passing lane toward our hot zones.
     if (context.ballZone.isHot &&
         (role.isMidfield || role.isDefender) &&
@@ -276,11 +309,19 @@ class PlayerAi {
       }
       final stateBias = context.playState.rolePressBias(player.role, context.style);
       final reach = 1.0 - (distance / 430).clamp(0.0, 1.0);
-      final score = stateBias * 1.4 + player.role.pressingPriority + reach * 0.8;
+      var score = stateBias * 1.4 + player.role.pressingPriority + reach * 0.8;
+      // Sticky pressing: the current presser keeps the job unless someone
+      // is clearly better, so control never flickers between players.
+      if (_stickyPresserIds[team.id] == player.id) {
+        score += 0.55;
+      }
       if (score > bestScore) {
         bestScore = score;
         best = player;
       }
+    }
+    if (best != null) {
+      _stickyPresserIds[team.id] = best.id;
     }
     return best;
   }
@@ -294,6 +335,73 @@ class PlayerAi {
   ) {
     final presser = _designatedPresser(team, carrier, context, engine);
     return presser == player;
+  }
+
+  /// The opponent's most advanced attacker (the striker to man-mark).
+  PlayerGame? _mostAdvancedOpponentAttacker(
+    TeamGame opponent,
+    MatchEngine engine,
+  ) {
+    final team = engine.teamById(opponent.id);
+    final d = team.attackDirection;
+    PlayerGame? best;
+    var bestAdvance = -double.infinity;
+    for (final rival in opponent.players) {
+      if (rival.isGoalkeeper ||
+          rival.isSentOff ||
+          !(rival.role.isAttacker || rival.role == PlayerRole.attackingMidfielder)) {
+        continue;
+      }
+      final advance = rival.pos.x * d;
+      if (advance > bestAdvance) {
+        bestAdvance = advance;
+        best = rival;
+      }
+    }
+    return best;
+  }
+
+  /// Our centre back whose job is to mark [striker]: the closest central
+  /// defender to him — one marker only, never two.
+  bool _isStrikerMarker(
+    PlayerGame player,
+    TeamGame team,
+    PlayerGame striker,
+  ) {
+    final defenders = team.players
+        .where((mate) =>
+            !mate.isGoalkeeper &&
+            !mate.isSentOff &&
+            mate.role.group == RoleGroup.centralDefence)
+        .toList();
+    if (defenders.isEmpty) {
+      return false;
+    }
+    defenders.sort(
+      (a, b) => a.pos
+          .distanceTo(striker.pos)
+          .compareTo(b.pos.distanceTo(striker.pos)),
+    );
+    return defenders.first == player;
+  }
+
+  /// Goal-side marking position on the striker.
+  Vec2 _markStrikerTarget(
+    PlayerGame player,
+    TeamGame team,
+    PlayerGame striker,
+    MatchEngine engine,
+  ) {
+    final goalCenter = engine.goalCenterFor(team);
+    final target = striker.pos +
+        (goalCenter - striker.pos).normalized(Vec2(0, 1)) * 15;
+    target.clampTo(
+      GameConstants.leftBound + 30,
+      GameConstants.topBound + 30,
+      GameConstants.rightBound - 30,
+      GameConstants.bottomBound - 30,
+    );
+    return target;
   }
 
   /// The defender who guards the space between the ball and our goal when
@@ -558,6 +666,61 @@ class PlayerAi {
     final carrier = engine.ball.owner!;
     final anchor = context.dynamicAnchor(player);
     final lineX = engine.offsideLineFor(team) - team.attackDirection * 8;
+    final role = player.role;
+
+    // Our keeper holds the ball: nobody crowds him — everyone spreads to
+    // his shape, only the closest defender offers a short wide option just
+    // outside the penalty area
+    // (مطلب: الحارس مرتاح ولا يهاجمه لاعبوه، فقط اقتراب من حد الجزاء).
+    if (carrier.isGoalkeeper) {
+      final teammates = team.players
+          .where((mate) => !mate.isGoalkeeper && !mate.isSentOff)
+          .toList()
+        ..sort(
+          (a, b) => a.pos
+              .distanceTo(carrier.pos)
+              .compareTo(b.pos.distanceTo(carrier.pos)),
+        );
+      if (teammates.isNotEmpty && teammates.first == player) {
+        final sideSign =
+            (player.pos.y >= GameConstants.virtualHeight / 2) ? 1.0 : -1.0;
+        final boxEdgeX = team.attackDirection == 1
+            ? GameConstants.leftBound + 170
+            : GameConstants.rightBound - 170;
+        return Vec2(
+          boxEdgeX,
+          (carrier.pos.y + sideSign * 120).clamp(
+            GameConstants.topBound + 45,
+            GameConstants.bottomBound - 45,
+          ).toDouble(),
+        );
+      }
+      return anchor;
+    }
+
+    // When the carrier drives down the wing in the final third, forward
+    // players MUST attack the penalty area to support him — they never
+    // stand behind offering back-passes
+    // (مطلب: المهاجمون يساندون ويدخلون منطقة الجزاء خصوصًا من الجناح).
+    final wideAdvanced = _carrierWideAndAdvanced(carrier, team);
+    final boxRunner = role == PlayerRole.striker ||
+        role == PlayerRole.leftWing ||
+        role == PlayerRole.rightWing ||
+        role == PlayerRole.attackingMidfielder ||
+        ((role == PlayerRole.midfieldLeft ||
+                role == PlayerRole.midfieldRight) &&
+            _isClosestCentralMid(player, team));
+    if (wideAdvanced && boxRunner) {
+      final boxX = team.attackDirection == 1
+          ? math.min(GameConstants.rightBound - 92, lineX)
+          : math.max(GameConstants.leftBound + 92, lineX);
+      final spread = (player.number ?? 8) % 3;
+      final boxY = GameConstants.virtualHeight / 2 + (spread - 1) * 46;
+      return Vec2(boxX, boxY.clamp(
+        GameConstants.virtualHeight / 2 - 95,
+        GameConstants.virtualHeight / 2 + 95,
+      ).toDouble());
+    }
 
     // Support the carrier: the two nearest team-mates offer a passing angle
     // behind/side of the carrier (plan item 23: support the ball carrier).
@@ -566,7 +729,6 @@ class PlayerAi {
       return supportSpot;
     }
 
-    final role = player.role;
 
     // Striker: threatens the defensive line, drifts to the ball side and
     // attacks the box when the ball is wide and advanced (plan item 20).
@@ -670,12 +832,18 @@ class PlayerAi {
   }
 
   bool _carrierWideAndAdvanced(PlayerGame carrier, TeamGame team) {
-    if (!carrier.role.isWide) {
-      return false;
-    }
-    return team.attackDirection == 1
+    final advanced = team.attackDirection == 1
         ? carrier.pos.x > GameConstants.virtualWidth * 0.62
         : carrier.pos.x < GameConstants.virtualWidth * 0.38;
+    if (!advanced) {
+      return false;
+    }
+    // Wide by ROLE or by actual PITCH POSITION: a striker driving down the
+    // flank also triggers the box runs (مطلب المهاجم الرايح على الجناح).
+    if (carrier.role.isWide) {
+      return true;
+    }
+    return (carrier.pos.y - GameConstants.virtualHeight / 2).abs() > 150;
   }
 
   bool _isClosestCentralMid(PlayerGame player, TeamGame team) {
