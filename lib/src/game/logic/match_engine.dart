@@ -4537,13 +4537,15 @@ class MatchEngine {
       horizontal * horizontal + lateral * lateral,
     );
     final closeRange = distanceToGoal < 170;
-    final aimTop = top + 8;
-    final aimBottom = bottom - 8;
+    // Named insideTop/insideBottom to avoid clashing with the existing
+    // boolean `aimTop` above (IDE error: 'aimTop' is already defined).
+    final insideTop = top + 8;
+    final insideBottom = bottom - 8;
     var directionalY = (player.pos.y + facing.y * timeToGoalLine)
         .clamp(top - 6, bottom + 6)
         .toDouble();
     if (acuteAngle || closeRange) {
-      directionalY = directionalY.clamp(aimTop, aimBottom).toDouble();
+      directionalY = directionalY.clamp(insideTop, insideBottom).toDouble();
     }
     var correction = 0.18 + player.profile.composureSkill * 0.14;
     if (openGoal && (acuteAngle || closeRange)) {
