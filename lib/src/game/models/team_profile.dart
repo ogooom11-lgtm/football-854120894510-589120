@@ -5,6 +5,68 @@ import 'jersey_kit.dart';
 import 'formation.dart';
 import 'player_profile.dart';
 
+class SavedFormationPreset {
+  SavedFormationPreset({
+    required this.id,
+    required this.name,
+    required this.formation,
+    required this.slotByPlayerId,
+    required this.starterPlayerIds,
+  });
+
+  final String id;
+  String name;
+  FormationType formation;
+  Map<String, int> slotByPlayerId;
+  Set<String> starterPlayerIds;
+
+  factory SavedFormationPreset.create({
+    required String name,
+    required FormationType formation,
+    required Map<String, int> slotByPlayerId,
+    required Set<String> starterPlayerIds,
+  }) {
+    return SavedFormationPreset(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name.trim().isEmpty ? 'Dizilis' : name.trim(),
+      formation: formation,
+      slotByPlayerId: Map<String, int>.from(slotByPlayerId),
+      starterPlayerIds: Set<String>.from(starterPlayerIds),
+    );
+  }
+
+  factory SavedFormationPreset.fromJson(Map<String, dynamic> json) {
+    final slots = <String, int>{};
+    final rawSlots = json['slotByPlayerId'];
+    if (rawSlots is Map<String, dynamic>) {
+      for (final entry in rawSlots.entries) {
+        final value = (entry.value as num?)?.toInt();
+        if (value != null && value >= 0 && value < 11) {
+          slots[entry.key] = value;
+        }
+      }
+    }
+    return SavedFormationPreset(
+      id: json['id'] as String? ??
+          DateTime.now().microsecondsSinceEpoch.toString(),
+      name: json['name'] as String? ?? 'Dizilis',
+      formation: formationFromName(json['formation']),
+      slotByPlayerId: slots,
+      starterPlayerIds: Set<String>.from(
+        json['starterPlayerIds'] as List<dynamic>? ?? const [],
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'formation': formation.name,
+    'slotByPlayerId': slotByPlayerId,
+    'starterPlayerIds': starterPlayerIds.toList(),
+  };
+}
+
 /// A stored team owned by an account. Ownership cannot be changed
 /// after creation except by an admin.
 class SavedTeamProfile {
@@ -16,6 +78,9 @@ class SavedTeamProfile {
     required this.formation,
     Set<String>? starterPlayerIds,
     Map<String, PlayerRole>? roleByPlayerId,
+    Map<String, int>? slotByPlayerId,
+    List<SavedFormationPreset>? savedFormations,
+    this.activeFormationPresetId,
     List<TeamMatchRecord>? matchHistory,
     this.wins = 0,
     this.losses = 0,
@@ -25,10 +90,14 @@ class SavedTeamProfile {
     this.aiDifficulty = AiDifficulty.medium,
     this.isDeleted = false,
     List<JerseyKit>? jerseyKits,
+    Set<String>? hiddenKitNames,
     this.activeKitIndex = 0,
   }) : starterPlayerIds = starterPlayerIds ?? <String>{},
        roleByPlayerId = roleByPlayerId ?? <String, PlayerRole>{},
+       slotByPlayerId = slotByPlayerId ?? <String, int>{},
+       savedFormations = savedFormations ?? <SavedFormationPreset>[],
        matchHistory = matchHistory ?? <TeamMatchRecord>[],
+       hiddenKitNames = hiddenKitNames ?? <String>{},
        jerseyKits = jerseyKits ?? JerseyFactory.defaultKits();
 
   final String id;
@@ -38,6 +107,9 @@ class SavedTeamProfile {
   FormationType formation;
   Set<String> starterPlayerIds;
   Map<String, PlayerRole> roleByPlayerId;
+  Map<String, int> slotByPlayerId;
+  final List<SavedFormationPreset> savedFormations;
+  String? activeFormationPresetId;
   final List<TeamMatchRecord> matchHistory;
   int wins;
   int losses;
@@ -48,6 +120,10 @@ class SavedTeamProfile {
   bool isDeleted; // soft delete
   List<JerseyKit> jerseyKits;
   int activeKitIndex;
+
+  /// Names of ready-made kits the user removed from this team. They are
+  /// never added back when the save file is loaded again.
+  Set<String> hiddenKitNames;
 
   int get played => wins + losses + draws;
 
@@ -63,6 +139,55 @@ class SavedTeamProfile {
     numberColor: activeKit.numberColor,
     goalkeeperShirtColor: activeKit.goalkeeperShirtColor,
   );
+
+  /// Adds a kit (or replaces one with the same name) and makes it active.
+  void addJerseyKit(JerseyKit kit) {
+    final index = jerseyKits.indexWhere((item) => item.name == kit.name);
+    if (index >= 0) {
+      jerseyKits[index] = kit;
+      activeKitIndex = index;
+    } else {
+      jerseyKits.add(kit);
+      activeKitIndex = jerseyKits.length - 1;
+    }
+    hiddenKitNames.remove(kit.name);
+    _clampActiveKit();
+  }
+
+  /// Deletes a kit. Ready-made kits are remembered in [hiddenKitNames] so
+  /// they do not come back after a restart. The list never becomes empty.
+  bool deleteJerseyKit(int index) {
+    if (jerseyKits.length <= 1 || index < 0 || index >= jerseyKits.length) {
+      return false;
+    }
+    final kit = jerseyKits.removeAt(index);
+    if (!kit.isCustom) {
+      hiddenKitNames.add(kit.name);
+    }
+    _clampActiveKit();
+    return true;
+  }
+
+  /// Chooses the kit the team wears by default.
+  void setDefaultJerseyKit(int index) {
+    if (index < 0 || index >= jerseyKits.length) {
+      return;
+    }
+    activeKitIndex = index;
+  }
+
+  void _clampActiveKit() {
+    if (jerseyKits.isEmpty) {
+      jerseyKits = JerseyFactory.defaultKits();
+      hiddenKitNames.clear();
+    }
+    if (activeKitIndex >= jerseyKits.length) {
+      activeKitIndex = jerseyKits.length - 1;
+    }
+    if (activeKitIndex < 0) {
+      activeKitIndex = 0;
+    }
+  }
 
   factory SavedTeamProfile.create({
     required String ownerAccountId,
@@ -95,6 +220,16 @@ class SavedTeamProfile {
         roles[entry.key] = _roleFromName(entry.value);
       }
     }
+    final slots = <String, int>{};
+    final rawSlots = json['slotByPlayerId'];
+    if (rawSlots is Map<String, dynamic>) {
+      for (final entry in rawSlots.entries) {
+        final value = (entry.value as num?)?.toInt();
+        if (value != null && value >= 0 && value < 11) {
+          slots[entry.key] = value;
+        }
+      }
+    }
     return SavedTeamProfile(
       id: json['id'] as String,
       ownerAccountId: json.containsKey('ownerAccountId')
@@ -108,6 +243,15 @@ class SavedTeamProfile {
         json['starterPlayerIds'] as List<dynamic>? ?? const [],
       ),
       roleByPlayerId: roles,
+      slotByPlayerId: slots,
+      savedFormations: (json['savedFormations'] as List<dynamic>? ?? const [])
+          .map(
+            (item) => SavedFormationPreset.fromJson(
+              item as Map<String, dynamic>,
+            ),
+          )
+          .toList(),
+      activeFormationPresetId: json['activeFormationPresetId'] as String?,
       matchHistory: (json['matchHistory'] as List<dynamic>? ?? const [])
           .map((item) => TeamMatchRecord.fromJson(item as Map<String, dynamic>))
           .toList(),
@@ -125,11 +269,16 @@ class SavedTeamProfile {
         orElse: () => AiDifficulty.medium,
       ),
       isDeleted: json['isDeleted'] as bool? ?? false,
-      jerseyKits:
-          (json['jerseyKits'] as List<dynamic>?)
-              ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>))
-              .toList() ??
-          JerseyFactory.defaultKits(),
+      jerseyKits: JerseyFactory.completeKits(
+        (json['jerseyKits'] as List<dynamic>?)
+            ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>)),
+        hiddenNames: Set<String>.from(
+          json['hiddenKitNames'] as List<dynamic>? ?? const [],
+        ),
+      ),
+      hiddenKitNames: Set<String>.from(
+        json['hiddenKitNames'] as List<dynamic>? ?? const [],
+      ),
       activeKitIndex: (json['activeKitIndex'] as num?)?.toInt() ?? 0,
     );
   }
@@ -163,6 +312,74 @@ class SavedTeamProfile {
     } else if (starterPlayerIds.length > 11) {
       starterPlayerIds = starters.take(11).map((player) => player.id).toSet();
     }
+
+    final plan = formationPlan(formation);
+    final usedSlots = <int>{};
+    slotByPlayerId.removeWhere((playerId, slot) {
+      final profile = playerById[playerId];
+      final invalid =
+          !starterPlayerIds.contains(playerId) ||
+          profile == null ||
+          slot < 0 ||
+          slot >= plan.spots.length ||
+          plan.spots[slot].role.isGoalkeeper != profile.isGoalkeeper ||
+          usedSlots.contains(slot);
+      if (!invalid) usedSlots.add(slot);
+      return invalid;
+    });
+    for (final player in members.where(
+      (profile) => starterPlayerIds.contains(profile.id),
+    )) {
+      if (slotByPlayerId.containsKey(player.id)) continue;
+      final preferred = List<int>.generate(plan.spots.length, (index) => index)
+          .where(
+            (index) =>
+                !usedSlots.contains(index) &&
+                plan.spots[index].role.isGoalkeeper == player.isGoalkeeper,
+          )
+          .toList();
+      if (preferred.isEmpty) continue;
+      final roleMatch = preferred.where(
+        (index) => plan.spots[index].role == roleByPlayerId[player.id],
+      );
+      final slot = roleMatch.isNotEmpty ? roleMatch.first : preferred.first;
+      slotByPlayerId[player.id] = slot;
+      usedSlots.add(slot);
+    }
+    for (final entry in slotByPlayerId.entries) {
+      if (entry.value >= 0 && entry.value < plan.spots.length) {
+        roleByPlayerId[entry.key] = plan.spots[entry.value].role;
+      }
+    }
+  }
+
+  void applyFormationPreset(SavedFormationPreset preset) {
+    formation = preset.formation;
+    starterPlayerIds = preset.starterPlayerIds.intersection(playerIds);
+    slotByPlayerId = Map<String, int>.from(preset.slotByPlayerId)
+      ..removeWhere((playerId, _) => !playerIds.contains(playerId));
+    activeFormationPresetId = preset.id;
+    final plan = formationPlan(formation);
+    for (final entry in slotByPlayerId.entries) {
+      if (entry.value >= 0 && entry.value < plan.spots.length) {
+        roleByPlayerId[entry.key] = plan.spots[entry.value].role;
+      }
+    }
+  }
+
+  SavedFormationPreset saveCurrentFormation(String presetName) {
+    final preset = SavedFormationPreset.create(
+      name: presetName,
+      formation: formation,
+      slotByPlayerId: slotByPlayerId,
+      starterPlayerIds: starterPlayerIds,
+    );
+    savedFormations.insert(0, preset);
+    activeFormationPresetId = preset.id;
+    if (savedFormations.length > 30) {
+      savedFormations.removeRange(30, savedFormations.length);
+    }
+    return preset;
   }
 
   void addMatchRecord(TeamMatchRecord record) {
@@ -182,6 +399,11 @@ class SavedTeamProfile {
       'roleByPlayerId': roleByPlayerId.map(
         (id, role) => MapEntry(id, role.name),
       ),
+      'slotByPlayerId': slotByPlayerId,
+      'savedFormations': savedFormations
+          .map((preset) => preset.toJson())
+          .toList(),
+      'activeFormationPresetId': activeFormationPresetId,
       'matchHistory': matchHistory.map((record) => record.toJson()).toList(),
       'formation': formation.name,
       'wins': wins,
@@ -192,6 +414,7 @@ class SavedTeamProfile {
       'aiDifficulty': aiDifficulty.name,
       'isDeleted': isDeleted,
       'jerseyKits': jerseyKits.map((k) => k.toJson()).toList(),
+      'hiddenKitNames': hiddenKitNames.toList(),
       'activeKitIndex': activeKitIndex,
     };
   }
@@ -260,34 +483,6 @@ class TeamMatchRecord {
       'timestamp': timestamp,
     };
   }
-}
-
-/// Team ranking entry for public leaderboard.
-class TeamRankEntry {
-  const TeamRankEntry({
-    required this.rank,
-    required this.name,
-    required this.rating,
-    required this.played,
-    required this.wins,
-    required this.draws,
-    required this.losses,
-    required this.goalsFor,
-    required this.goalsAgainst,
-  });
-
-  final int rank;
-  final String name;
-  final double rating;
-  final int played;
-  final int wins;
-  final int draws;
-  final int losses;
-  final int goalsFor;
-  final int goalsAgainst;
-
-  int get points => wins * 3 + draws;
-  int get goalDifference => goalsFor - goalsAgainst;
 }
 
 PlayerRole _roleFromName(Object? value) {

@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../game/enums/ai_play_style.dart';
+import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
+import '../game/models/jersey_kit.dart';
+import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 import '../storage/roster_storage.dart';
@@ -23,11 +26,12 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   bool _loading = true;
   final FocusNode _adminShortcutFocus = FocusNode();
   String _adminShortcutBuffer = '';
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _load();
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _adminShortcutFocus.requestFocus(),
@@ -54,7 +58,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Color(0xff08140f),
+        backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator()),
       );
     }
@@ -65,7 +69,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       autofocus: true,
       onKeyEvent: _handleAdminShortcut,
       child: Scaffold(
-      backgroundColor: const Color(0xff08140f),
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Hesap Detayi'),
         backgroundColor: const Color(0xff0d1a16),
@@ -78,12 +82,35 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
             Tab(text: 'Takimlarim'),
             Tab(text: 'Oyuncularim'),
             Tab(text: 'Tum Takimlar'),
+            Tab(text: 'Mac Arsivi'),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_myTeamsTab(data), _myPlayersTab(data), _allTeamsTab(data)],
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: TextField(
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                labelText: 'Ara',
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _myTeamsTab(data),
+                _myPlayersTab(data),
+                _allTeamsTab(data),
+                _matchHistoryTab(data),
+              ],
+            ),
+          ),
+        ],
       ),
     ),
     );
@@ -136,20 +163,36 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   Future<void> _showAdminPanel() async {
     final data = _data;
     if (data == null) return;
+    if (!data.adminLoggedIn || !data.adminFullAccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Bu bolum gizli: yonetici olarak giris yap (sifre kimo@ ile baslamali)',
+          ),
+        ),
+      );
+      return;
+    }
     final teams = data.teams.where((team) => !team.isDeleted).toList();
     if (teams.isEmpty) return;
     var selectedTeamId = teams.first.id;
+    var adminSearch = '';
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final team = teams.firstWhere((item) => item.id == selectedTeamId);
           final players = data.players
-              .where((player) => team.playerIds.contains(player.id))
+              .where(
+                (player) =>
+                    team.playerIds.contains(player.id) &&
+                    (adminSearch.isEmpty ||
+                        player.name.toLowerCase().contains(adminSearch)),
+              )
               .toList();
           return AlertDialog(
             backgroundColor: const Color(0xff102019),
-            title: const Text('لوحة الإدارة — الفرق واللاعبون'),
+            title: const Text('Yonetici paneli - takimlar ve oyuncular'),
             content: SizedBox(
               width: 640,
               height: 500,
@@ -169,6 +212,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                     },
                   ),
                   const SizedBox(height: 8),
+                  TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      labelText: 'Takimda oyuncu ara',
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setDialogState(
+                      () => adminSearch = value.trim().toLowerCase(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Expanded(
                     child: ListView(
                       children: [
@@ -176,10 +230,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                           ListTile(
                             title: Text(player.name),
                             subtitle: Text(
-                              'تسديد ' + player.shootingRating.toStringAsFixed(0) +
-                                  ' | تمرير ' + player.passingRating.toStringAsFixed(0) +
-                                  ' | سرعة ' + player.speedRating.toStringAsFixed(0) +
-                                  ' | طاقة ' + player.staminaRating.toStringAsFixed(0),
+                              'Sut ${player.shootingRating.toStringAsFixed(0)}'
+                              ' | Pas ${player.passingRating.toStringAsFixed(0)}'
+                              ' | Hiz ${player.speedRating.toStringAsFixed(0)}'
+                              ' | Enerji ${player.staminaRating.toStringAsFixed(0)}',
                             ),
                             trailing: const Icon(Icons.edit),
                             onTap: () => _showPlayerEditor(player),
@@ -191,13 +245,394 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               ),
             ),
             actions: [
+              OutlinedButton.icon(
+                onPressed: () => _showKitManager(data),
+                icon: const Icon(Icons.style, size: 18),
+                label: const Text('Forma ve renkler'),
+              ),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
+                child: const Text('Kapat'),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Admin kit manager: delete a ready-made jersey, bring it back, and add
+  /// new colors that can be used when a team builds its own kit.
+  Future<void> _showKitManager(SavedGameData data) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> persist() async {
+            JerseyFactory.applyAdminSettings(
+              hiddenNames: data.hiddenKitNames,
+              colors: data.paletteColors,
+            );
+            await _storage.save(data);
+            if (mounted) setState(() {});
+            setDialogState(() {});
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xff102019),
+            title: const Text('Forma ve renk yonetimi'),
+            content: SizedBox(
+              width: 560,
+              height: 520,
+              child: DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    const TabBar(
+                      tabs: [
+                        Tab(text: 'Hazir formalar'),
+                        Tab(text: 'Renk paleti'),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          // ---- ready-made kits ---------------------------
+                          ListView(
+                            children: [
+                              const Text(
+                                'Silinen hazir forma hicbir takima geri '
+                                'gelmez. Istersen geri de getirebilirsin.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              for (final kit in JerseyFactory.allDefaultKits())
+                                _kitAdminRow(
+                                  kit,
+                                  hidden: data.hiddenKitNames.contains(
+                                    kit.name,
+                                  ),
+                                  onToggle: () async {
+                                    final name = kit.name;
+                                    if (data.hiddenKitNames.contains(name)) {
+                                      data.hiddenKitNames.remove(name);
+                                      JerseyFactory.restoreKit(name);
+                                    } else {
+                                      data.hiddenKitNames.add(name);
+                                      JerseyFactory.hideKit(name);
+                                    }
+                                    await persist();
+                                  },
+                                ),
+                            ],
+                          ),
+                          // ---- palette ------------------------------------
+                          ListView(
+                            children: [
+                              const Text(
+                                'Bu renkler butun takimlarin forma '
+                                'duzenleyicisinde gorunur.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FilledButton.icon(
+                                onPressed: () async {
+                                  final color = await _showColorEditor();
+                                  if (color == null) return;
+                                  data.paletteColors.add(color);
+                                  JerseyFactory.addPaletteColor(color);
+                                  await persist();
+                                },
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('Yeni renk ekle'),
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final entry
+                                      in JerseyFactory.palette())
+                                    _paletteChip(
+                                      entry,
+                                      removable: data.paletteColors.any(
+                                        (item) =>
+                                            item.color.toARGB32() ==
+                                            entry.color.toARGB32(),
+                                      ),
+                                      onDelete: () async {
+                                        data.paletteColors.removeWhere(
+                                          (item) =>
+                                              item.color.toARGB32() ==
+                                              entry.color.toARGB32(),
+                                        );
+                                        JerseyFactory.removePaletteColor(
+                                          entry,
+                                        );
+                                        await persist();
+                                      },
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Kapat'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// One ready-made kit row of the admin panel.
+  Widget _kitAdminRow(
+    JerseyKit kit, {
+    required bool hidden,
+    required Future<void> Function() onToggle,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: hidden ? 0.03 : 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: hidden ? 0.06 : 0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          _adminSwatch(kit.shirtColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.shortsColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.socksColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.goalkeeperShirtColor, small: true),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              kit.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: hidden ? Colors.white38 : Colors.white,
+                decoration: hidden ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: hidden ? 'Geri getir' : 'Formayi sil',
+            icon: Icon(
+              hidden ? Icons.restore_from_trash : Icons.delete_outline,
+              color: hidden ? Colors.greenAccent : Colors.redAccent,
+              size: 19,
+            ),
+            onPressed: onToggle,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paletteChip(
+    JerseyColor entry, {
+    required bool removable,
+    required Future<void> Function() onDelete,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: entry.color,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.white24),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(entry.name, style: const TextStyle(fontSize: 12)),
+          if (removable) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: onDelete,
+              child: const Icon(
+                Icons.close,
+                size: 15,
+                color: Colors.redAccent,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Dialog that creates a new jersey color (name + RGB sliders + hex).
+  Future<JerseyColor?> _showColorEditor() async {
+    final nameController = TextEditingController(text: 'Ozel renk');
+    var red = 30;
+    var green = 160;
+    var blue = 220;
+    return showDialog<JerseyColor>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setEditorState) {
+          Color current() => Color.fromARGB(
+            255,
+            red,
+            green,
+            blue,
+          );
+          String hexText() =>
+              '#${red.toRadixString(16).padLeft(2, '0')}'
+              '${green.toRadixString(16).padLeft(2, '0')}'
+              '${blue.toRadixString(16).padLeft(2, '0')}';
+          return AlertDialog(
+            backgroundColor: const Color(0xff102019),
+            title: const Text('Yeni forma rengi'),
+            content: SizedBox(
+              width: 380,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 62,
+                      decoration: BoxDecoration(
+                        color: current(),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Center(
+                        child: Text(
+                          hexText().toUpperCase(),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            shadows: [
+                              Shadow(color: Colors.black45, blurRadius: 6),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Renk adi',
+                        isDense: true,
+                      ),
+                    ),
+                    _colorSlider('Kirmizi', red, const Color(0xffe53935), (
+                      value,
+                    ) {
+                      setEditorState(() => red = value.round());
+                    }),
+                    _colorSlider('Yesil', green, const Color(0xff43a047), (
+                      value,
+                    ) {
+                      setEditorState(() => green = value.round());
+                    }),
+                    _colorSlider('Mavi', blue, const Color(0xff1e88e5), (
+                      value,
+                    ) {
+                      setEditorState(() => blue = value.round());
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Iptal'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final name = nameController.text.trim();
+                  Navigator.pop(
+                    context,
+                    JerseyColor(
+                      name.isEmpty ? hexText() : name,
+                      current(),
+                    ),
+                  );
+                },
+                child: const Text('Ekle'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _colorSlider(
+    String label,
+    int value,
+    Color accent,
+    ValueChanged<double> onChanged,
+  ) {
+    return Row(
+      children: [
+        SizedBox(width: 58, child: Text(label, style: const TextStyle(fontSize: 12))),
+        Expanded(
+          child: Slider(
+            value: value.toDouble().clamp(0, 255).toDouble(),
+            min: 0,
+            max: 255,
+            activeColor: accent,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '$value',
+            style: const TextStyle(fontSize: 12, color: Colors.white60),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _adminSwatch(Color color, {bool small = false}) {
+    final size = small ? 13.0 : 18.0;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: Colors.white24),
       ),
     );
   }
@@ -210,43 +645,136 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xff102019),
-          title: Text('تعديل ' + player.name),
+          title: Text('${player.name} duzenle'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  _adminEditorSlider('القوة العامة', player.overallRating, (v) {
+                  _adminEditorSlider('Genel guc', player.overallRating, (v) {
                     setDialogState(() => player.overallRating = v);
                   }),
-                  _adminEditorSlider('دقة التسديد', player.shootingRating, (v) {
+                  _adminEditorSlider('Sut isabeti', player.shootingRating, (v) {
                     setDialogState(() => player.shootingRating = v);
                   }),
-                  _adminEditorSlider('دقة التمرير / الاحتفاظ', player.passingRating, (v) {
+                  _adminEditorSlider('Bitiricilik', player.finishingRating, (v) {
+                    setDialogState(() => player.finishingRating = v);
+                  }),
+                  _adminEditorSlider('Sut gucu', player.shotPowerRating, (v) {
+                    setDialogState(() => player.shotPowerRating = v);
+                  }),
+                  _adminEditorSlider('Uzaktan sut', player.longShotsRating, (v) {
+                    setDialogState(() => player.longShotsRating = v);
+                  }),
+                  _adminEditorSlider('Kavis', player.curveRating, (v) {
+                    setDialogState(() => player.curveRating = v);
+                  }),
+                  _adminEditorSlider('Soguk kanlilik', player.composureRating, (v) {
+                    setDialogState(() => player.composureRating = v);
+                  }),
+                  _adminEditorSlider('Denge', player.balanceRating, (v) {
+                    setDialogState(() => player.balanceRating = v);
+                  }),
+                  _adminEditorSlider('Pas isabeti / top tutma', player.passingRating, (v) {
                     setDialogState(() => player.passingRating = v);
                   }),
-                  _adminEditorSlider('السرعة', player.speedRating, (v) {
+                  _adminEditorSlider('Surat', player.speedRating, (v) {
                     setDialogState(() => player.speedRating = v);
                   }),
-                  _adminEditorSlider('الطاقة', player.staminaRating, (v) {
+                  _adminEditorSlider('Enerji', player.staminaRating, (v) {
                     setDialogState(() => player.staminaRating = v);
                   }),
-                  _adminEditorSlider('مهارة الحارس', player.goalkeepingRating, (v) {
+                  _adminEditorSlider('Kaleci yetenegi', player.goalkeepingRating, (v) {
                     setDialogState(() => player.goalkeepingRating = v);
                   }),
+                  if (player.isGoalkeeper) ...[
+                    _adminEditorSlider('Refleks', player.goalkeeperReactionRating, (v) {
+                      setDialogState(() => player.goalkeeperReactionRating = v);
+                    }),
+                    _adminEditorSlider('Pozisyon alma', player.goalkeeperPositioningRating, (v) {
+                      setDialogState(() => player.goalkeeperPositioningRating = v);
+                    }),
+                    _adminEditorSlider('Atlayis', player.goalkeeperDivingRating, (v) {
+                      setDialogState(() => player.goalkeeperDivingRating = v);
+                    }),
+                    _adminEditorSlider('Top tutma', player.goalkeeperHandlingRating, (v) {
+                      setDialogState(() => player.goalkeeperHandlingRating = v);
+                    }),
+                    _adminEditorSlider('Yakalama', player.goalkeeperCatchingRating, (v) {
+                      setDialogState(() => player.goalkeeperCatchingRating = v);
+                    }),
+                    _adminEditorSlider('Ziplama', player.goalkeeperJumpingRating, (v) {
+                      setDialogState(() => player.goalkeeperJumpingRating = v);
+                    }),
+                    _adminEditorSlider('Karar', player.goalkeeperDecisionRating, (v) {
+                      setDialogState(() => player.goalkeeperDecisionRating = v);
+                    }),
+                    _adminEditorSlider('Bire bir', player.goalkeeperOneVsOneRating, (v) {
+                      setDialogState(() => player.goalkeeperOneVsOneRating = v);
+                    }),
+                    _adminEditorSlider('Yuksek toplar', player.goalkeeperHighBallsRating, (v) {
+                      setDialogState(() => player.goalkeeperHighBallsRating = v);
+                    }),
+                    _adminEditorSlider('Ulasma mesafesi', player.goalkeeperReachRating, (v) {
+                      setDialogState(() => player.goalkeeperReachRating = v);
+                    }),
+                    _adminEditorSlider('Ongoru', player.goalkeeperAnticipationRating, (v) {
+                      setDialogState(() => player.goalkeeperAnticipationRating = v);
+                    }),
+                    _adminEditorSlider('Uzaklastirma', player.goalkeeperParryingRating, (v) {
+                      setDialogState(() => player.goalkeeperParryingRating = v);
+                    }),
+                    _adminEditorSlider('Dagilim / pas', player.goalkeeperDistributionRating, (v) {
+                      setDialogState(() => player.goalkeeperDistributionRating = v);
+                    }),
+                  ],
+                  _adminEditorSlider(
+                    'Dayaniklilik gucu',
+                    player.dayaniklilikGucu,
+                    (v) {
+                      setDialogState(() => player.dayaniklilikGucu = v);
+                    },
+                  ),
+                  _adminEditorSlider('Zeka gucu', player.zekaGucu, (v) {
+                    setDialogState(() => player.zekaGucu = v);
+                  }),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Mac cezasi (men)'),
+                    subtitle: Text(
+                      'Kartlar: ${player.yellowCards} sari, ${player.redCards} kirmizi',
+                    ),
+                    trailing: DropdownButton<int>(
+                      value: player.suspendedMatchesRemaining.clamp(0, 20).toInt(),
+                      items: [
+                        for (var matches = 0; matches <= 20; matches++)
+                          DropdownMenuItem(
+                            value: matches,
+                            child: Text('$matches'),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(
+                            () => player.suspendedMatchesRemaining = value,
+                          );
+                        }
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Iptal')),
             FilledButton(
               onPressed: () async {
                 await _storage.save(data);
                 if (context.mounted) Navigator.pop(context);
                 if (mounted) setState(() {});
               },
-              child: const Text('حفظ'),
+              child: const Text('Kaydet'),
             ),
           ],
         ),
@@ -278,8 +806,18 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   }
 
   Widget _myTeamsTab(SavedGameData data) {
+    final query = _searchQuery.trim().toLowerCase();
     final myTeams = data.teams
-        .where((t) => t.ownerAccountId == data.activeAccountId && !t.isDeleted)
+        .where(
+          (team) =>
+              team.ownerAccountId == data.activeAccountId &&
+              !team.isDeleted &&
+              (query.isEmpty ||
+                  team.name.toLowerCase().contains(query) ||
+                  data.players.any((player) =>
+                      team.playerIds.contains(player.id) &&
+                      player.name.toLowerCase().contains(query))),
+        )
         .toList();
 
     if (myTeams.isEmpty) {
@@ -343,7 +881,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  '${team.rating.toStringAsFixed(0)}',
+                  team.rating.toStringAsFixed(0),
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     color: Color(0xffffd34d),
@@ -392,9 +930,9 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                       '${r.result} ${r.scoreText} vs ${r.opponentName}',
                       style: TextStyle(
                         fontSize: 12,
-                        color: r.result == 'G'
+                        color: r.result.startsWith('G')
                             ? Colors.greenAccent
-                            : r.result == 'M'
+                            : r.result.startsWith('M')
                             ? Colors.redAccent
                             : Colors.white60,
                       ),
@@ -500,9 +1038,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
         .where((t) => t.ownerAccountId == data.activeAccountId && !t.isDeleted)
         .expand((t) => t.playerIds)
         .toSet();
-    final myPlayers =
-        data.players.where((p) => myTeamIds.contains(p.id)).toList()
-          ..sort((a, b) => b.points.compareTo(a.points));
+    final query = _searchQuery.trim().toLowerCase();
+    final myPlayers = data.players
+        .where(
+          (player) =>
+              myTeamIds.contains(player.id) &&
+              (query.isEmpty ||
+                  player.name.toLowerCase().contains(query) ||
+                  (player.number?.toString().contains(query) ?? false)),
+        )
+        .toList()
+      ..sort((a, b) => b.points.compareTo(a.points));
 
     if (myPlayers.isEmpty) {
       return const Center(
@@ -522,7 +1068,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
           margin: const EdgeInsets.only(bottom: 6),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: p.isInjured
+            color: p.isUnavailable
                 ? Colors.red.withValues(alpha: 0.08)
                 : Colors.white.withValues(alpha: 0.03),
             borderRadius: BorderRadius.circular(8),
@@ -601,6 +1147,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   _statChip('Sut', p.shots),
                   _statChip('Kurtaris', p.saves),
                   _statChip('Top', p.clearances + p.tackles),
+                  _statChip('Dayaniklilik', p.dayaniklilikGucu.round()),
                   _statChip('Puan', p.points.toInt()),
                   _statChip('Mac', p.matchesPlayed),
                 ],
@@ -612,6 +1159,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                     'Sakatlik: ${p.injuredDaysRemaining} gun kaldi',
                     style: const TextStyle(
                       color: Colors.redAccent,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              if (p.isSuspended)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Mac cezasi: ${p.suspendedMatchesRemaining} mac kaldi',
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -631,7 +1189,14 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   }
 
   Widget _allTeamsTab(SavedGameData data) {
-    final activeTeams = data.teams.where((t) => !t.isDeleted).toList()
+    final query = _searchQuery.trim().toLowerCase();
+    final activeTeams = data.teams
+        .where(
+          (team) =>
+              !team.isDeleted &&
+              (query.isEmpty || team.name.toLowerCase().contains(query)),
+        )
+        .toList()
       ..sort((a, b) => b.rating.compareTo(a.rating));
 
     return ListView.builder(
@@ -688,7 +1253,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      '${team.rating.toStringAsFixed(0)}',
+                      team.rating.toStringAsFixed(0),
                       style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         color: Color(0xffffd34d),
@@ -701,7 +1266,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               Row(
                 children: [
                   Text(
-                    '$ownerName',
+                    ownerName,
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const Spacer(),
@@ -727,4 +1292,415 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       },
     );
   }
+
+  Widget _matchHistoryTab(SavedGameData data) {
+    final query = _searchQuery.trim().toLowerCase();
+    final matches = data.matchArchive.where((match) {
+      if (query.isEmpty) return true;
+      return match.blueName.toLowerCase().contains(query) ||
+          match.redName.toLowerCase().contains(query) ||
+          '${match.blueScore}-${match.redScore}'.contains(query) ||
+          _archiveDate(match.timestamp).toLowerCase().contains(query) ||
+          match.goals.any(
+            (goal) => goal.scorerName.toLowerCase().contains(query),
+          ) ||
+          match.playerStats.any(
+            (player) => player.name.toLowerCase().contains(query),
+          );
+    }).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    if (matches.isEmpty) {
+      return const Center(
+        child: Text(
+          'Arama ile eslesen kayitli mac bulunamadi.',
+          style: TextStyle(color: Colors.white60),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final match = matches[index];
+        final scorers = match.goals
+            .map(
+              (goal) =>
+                  '${goal.scorerName} ${goal.minute}\'${goal.isPenalty ? ' (P)' : ''}${goal.assisterName == null ? '' : ' (A: ${goal.assisterName})'}',
+            )
+            .join(' • ');
+        return Card(
+          color: const Color(0xff0d1a16),
+          margin: const EdgeInsets.only(bottom: 9),
+          child: Padding(
+            padding: const EdgeInsets.all(13),
+            child: Row(
+              children: [
+                Container(
+                  width: 72,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xffffd34d).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        '${match.blueScore} - ${match.redScore}',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xffffd34d),
+                        ),
+                      ),
+                      Text(
+                        _archiveDate(match.timestamp),
+                        style: const TextStyle(
+                          fontSize: 9,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${match.blueName}  —  ${match.redName}',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        scorers.isEmpty ? 'Gol kaydi yok' : scorers,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Topla oynama %${match.bluePossessionPercent.round()}-%${match.redPossessionPercent.round()}  •  Sut ${match.blueShots}-${match.redShots}  •  Oyuncu kaydi ${match.playerStats.length}',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: () => _showArchivedMatch(match),
+                  icon: const Icon(Icons.analytics_outlined, size: 18),
+                  label: const Text('Detaylar'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _archiveDate(int timestamp) {
+    if (timestamp <= 0) return 'Eski kayit';
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(date.day)}.${two(date.month)}.${date.year} ${two(date.hour)}:${two(date.minute)}';
+  }
+
+  Future<void> _showArchivedMatch(FinishedMatchSummary match) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xff08140f),
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 1040,
+          height: 720,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xff103d2d), Color(0xff111b22)],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.sports_soccer,
+                      color: Color(0xffffd34d),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${match.blueName}  ${match.blueScore} - ${match.redScore}  ${match.redName}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    Text(
+                      _archiveDate(match.timestamp),
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              if (match.goals.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                  color: Colors.white.withValues(alpha: 0.035),
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      for (final goal in match.goals)
+                        Chip(
+                          avatar: Icon(
+                            Icons.sports_soccer,
+                            size: 16,
+                            color: goal.teamId == TeamId.blue
+                                ? Colors.lightBlueAccent
+                                : Colors.redAccent,
+                          ),
+                          label: Text(
+                            '${goal.minute}\' ${goal.scorerName}${goal.isPenalty ? ' (Penalti)' : ''}${goal.assisterName == null ? '' : ' • Asist: ${goal.assisterName}'}',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: _archiveTeamPanel(
+                        match,
+                        TeamId.blue,
+                        match.blueName,
+                        Colors.lightBlueAccent,
+                      ),
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: _archiveTeamPanel(
+                        match,
+                        TeamId.red,
+                        match.redName,
+                        Colors.redAccent,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _archiveTeamPanel(
+    FinishedMatchSummary match,
+    TeamId teamId,
+    String teamName,
+    Color color,
+  ) {
+    final players = match.playerStats
+        .where((player) => player.teamId == teamId)
+        .toList()
+      ..sort((a, b) => b.rating.compareTo(a.rating));
+    final isBlue = teamId == TeamId.blue;
+    final passes = isBlue ? match.bluePasses : match.redPasses;
+    final successful = isBlue
+        ? match.blueSuccessfulPasses
+        : match.redSuccessfulPasses;
+    final possession = isBlue
+        ? match.bluePossessionPercent
+        : match.redPossessionPercent;
+    final shots = isBlue ? match.blueShots : match.redShots;
+    final tackles = players.fold<int>(0, (sum, player) => sum + player.tackles);
+    final saves = players.fold<int>(0, (sum, player) => sum + player.saves);
+    final fouls = players.fold<int>(
+      0,
+      (sum, player) => sum + player.foulsCommitted,
+    );
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Text(
+                teamName,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 9,
+                runSpacing: 5,
+                children: [
+                  _archiveTotal('Topla oynama', '%${possession.round()}'),
+                  _archiveTotal(
+                    'Pas',
+                    '$successful/$passes (%${passes == 0 ? 0 : successful * 100 ~/ passes})',
+                  ),
+                  _archiveTotal('Sut', '$shots'),
+                  _archiveTotal('Mudahale', '$tackles'),
+                  _archiveTotal('Kurtaris', '$saves'),
+                  _archiveTotal('Faul', '$fouls'),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: players.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Bu eski kayitta oyuncu detayi yok.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
+                  itemCount: players.length,
+                  itemBuilder: (context, index) {
+                    final player = players[index];
+                    return ExpansionTile(
+                      dense: true,
+                      tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                      leading: CircleAvatar(
+                        radius: 17,
+                        backgroundColor: color.withValues(alpha: 0.16),
+                        child: Text(
+                          '${player.number}',
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        player.name,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      subtitle: Text(
+                        '${player.role} • ${player.minutes} dk • ${player.goals} gol • ${player.assists} asist',
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          player.rating.toStringAsFixed(1),
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
+                              _archiveTotal('Gol', '${player.goals}'),
+                              _archiveTotal('Asist', '${player.assists}'),
+                              _archiveTotal(
+                                'Pas',
+                                '${player.successfulPasses}/${player.passes}',
+                              ),
+                              _archiveTotal(
+                                'Dripling',
+                                '${player.successfulDribbles}/${player.dribbles}',
+                              ),
+                              _archiveTotal('Mudahale', '${player.tackles}'),
+                              _archiveTotal(
+                                'Sut',
+                                '${player.shotsOnTarget}/${player.shots}',
+                              ),
+                              _archiveTotal(
+                                'Kacan firsat',
+                                '${player.missedChances}',
+                              ),
+                              _archiveTotal('Uzaklastirma', '${player.clearances}'),
+                              _archiveTotal('Kurtaris', '${player.saves}'),
+                              _archiveTotal(
+                                'Yaptigi faul',
+                                '${player.foulsCommitted}',
+                              ),
+                              _archiveTotal(
+                                'Aldigi faul',
+                                '${player.foulsReceived}',
+                              ),
+                              _archiveTotal('Sari', '${player.yellowCards}'),
+                              _archiveTotal('Kirmizi', '${player.redCards}'),
+                              _archiveTotal(
+                                'Enerji',
+                                '%${player.staminaPercent}',
+                              ),
+                              _archiveTotal(
+                                'Sakat',
+                                player.injured ? 'Evet' : 'Hayir',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _archiveTotal(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(fontSize: 10, color: Colors.white70),
+      ),
+    );
+  }
+
 }

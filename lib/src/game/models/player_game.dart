@@ -2,6 +2,7 @@ import '../config/game_constants.dart';
 import '../enums/player_role.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
+import 'goalkeeper.dart';
 import 'player_profile.dart';
 
 class PlayerGame {
@@ -28,15 +29,36 @@ class PlayerGame {
   Vec2 lastDirection = Vec2(1, 0);
   bool controlled = false;
   double aiCooldown = 0;
+  double tackleContactCooldown = 0;
+  double handballReviewCooldown = 0;
   double manualOverride = 0;
+  double movementIntensity = 0;
+  double turningIntensity = 0;
   double catchTimer = 0;
   double jumpBoostMeters = 0;
+  double jumpAnimationTimer = 0;
+  /// Short landing penalty right after a jump: the player cannot sprint
+  /// away immediately after touching the ground again.
+  double jumpLandingTimer = 0;
+  bool isSentOff = false;
+  int yellowCardsThisMatch = 0;
   double stamina = 1.0;
   double minutesThisMatch = 0;
   String keeperState = 'hazir';
+  GoalkeeperState goalkeeperState = GoalkeeperState.idle;
+  GoalkeeperAction goalkeeperAction = GoalkeeperAction.stay;
+  final GoalkeeperDebugData goalkeeperDebug = GoalkeeperDebugData();
+  Vec2 goalkeeperVelocity = Vec2.zero();
+  Vec2? goalkeeperDecisionTarget;
+  GoalkeeperPrediction? goalkeeperPrediction;
+  int goalkeeperObservedTrajectoryId = -1;
+  double goalkeeperReactionTimer = 0;
+  double goalkeeperLastReactionTime = 0;
+  double goalkeeperDecisionLockTimer = 0;
   double keeperGroundTimer = 0;
   double keeperDiveCooldown = 0;
   double keeperParryCooldown = 0;
+  double keeperRehandleCooldown = 0;
 
   // Per-match stats
   int matchGoals = 0;
@@ -53,16 +75,33 @@ class PlayerGame {
   int matchSaves = 0;
   int matchFoulsCommitted = 0;
   int matchFoulsReceived = 0;
+  int matchYellowCards = 0;
+  int matchRedCards = 0;
 
   /// Set to true when player gets injured during this match.
   bool isInjuredInMatch = false;
 
   bool get isGoalkeeper => role.isGoalkeeper;
 
+  /// Speed multiplier while the player is in the air or just landed. A
+  /// jumping player keeps his momentum but cannot accelerate or sprint.
+  double get jumpMovementFactor {
+    if (jumpAnimationTimer > 0) {
+      return 0.46;
+    }
+    if (jumpLandingTimer > 0) {
+      return 0.72;
+    }
+    return 1.0;
+  }
+
+  /// Maximum height at which this player can deliberately touch the ball.
+  /// Outfield players reach roughly 10–15 cm over their standing height,
+  /// while a goalkeeper can use both hands up to about 65 cm above it.
   double get bodyReachMeters =>
-      profile.heightMeters * (keeperGroundTimer > 0 ? 0.36 : 1.0) +
+      profile.heightMeters * (keeperGroundTimer > 0 ? 0.50 : 1.0) +
       jumpBoostMeters +
-      (isGoalkeeper ? 0.28 : 0.02);
+      (isGoalkeeper ? 0.40 + profile.goalkeeperStats.reach * 0.24 : 0.02);
 
   double get radius => isGoalkeeper
       ? GameConstants.goalkeeperRadius
@@ -74,10 +113,20 @@ class PlayerGame {
     final staminaFactor = 0.58 + stamina * 0.42;
     final speedFactor = 0.74 + profile.speedSkill * 0.52;
     if (role == PlayerRole.goalkeeper) {
-      return 2.48 *
-          speedFactor *
-          staminaFactor *
-          (keeperGroundTimer > 0 ? 0.33 : 1.0);
+      const realisticKeeperBaseSpeed = 2.18;
+      if (keeperGroundTimer > 0) {
+        final stillDiving =
+            jumpAnimationTimer > 0.10 && keeperState == 'atlayis';
+        // Lateral travel only happens during the actual dive animation. Once
+        // the keeper lands, he is locked to the ground until recovery ends.
+        return stillDiving
+            ? realisticKeeperBaseSpeed *
+                  speedFactor *
+                  staminaFactor *
+                  0.72
+            : 0;
+      }
+      return realisticKeeperBaseSpeed * speedFactor * staminaFactor;
     }
     if (role.isWide) {
       return 3.38 * speedFactor * staminaFactor;
@@ -85,7 +134,9 @@ class PlayerGame {
     if (role == PlayerRole.striker) {
       return 3.28 * speedFactor * staminaFactor;
     }
-    if (role == PlayerRole.midfieldLeft || role == PlayerRole.midfieldRight) {
+    if (role == PlayerRole.midfieldLeft ||
+        role == PlayerRole.midfieldRight ||
+        role == PlayerRole.attackingMidfielder) {
       return 3.08 * speedFactor * staminaFactor;
     }
     return 2.92 * speedFactor * staminaFactor;

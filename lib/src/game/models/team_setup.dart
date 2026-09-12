@@ -15,6 +15,7 @@ class TeamSetup {
     required this.players,
     this.starterPlayerIds = const {},
     this.roleByPlayerId = const {},
+    this.slotByPlayerId = const {},
     this.storageTeamId,
     this.rating = 50,
     this.jerseyKit,
@@ -27,6 +28,7 @@ class TeamSetup {
   final List<PlayerProfile> players;
   final Set<String> starterPlayerIds;
   final Map<String, PlayerRole> roleByPlayerId;
+  final Map<String, int> slotByPlayerId;
   final String? storageTeamId;
   final double rating;
   final JerseyKit? jerseyKit;

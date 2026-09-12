@@ -121,4 +121,29 @@ extension AiPlayStyleInfo on AiPlayStyle {
         AiPlayStyle.aggressive => 1.25,
         AiPlayStyle.balanced => 1.0,
       };
+
+  /// Block tightness bias (plan item 5): >1.0 keeps the team compact as a
+  /// block, <1.0 lets it stretch.
+  double get compactnessBias => switch (this) {
+        AiPlayStyle.tikiTaka => 1.12,
+        AiPlayStyle.direct => 0.92,
+        AiPlayStyle.counter => 1.05,
+        AiPlayStyle.possession => 0.96,
+        AiPlayStyle.defensive => 1.20,
+        AiPlayStyle.aggressive => 1.08,
+        AiPlayStyle.balanced => 1.0,
+      };
+
+  /// How long and hard the team counter-presses right after losing the ball
+  /// (plan item 16): 0.0 = straight back into the block, 1.0 = aggressive
+  /// gegenpressing.
+  double get counterPressIntensity => switch (this) {
+        AiPlayStyle.tikiTaka => 0.78,
+        AiPlayStyle.direct => 0.62,
+        AiPlayStyle.counter => 0.55,
+        AiPlayStyle.possession => 0.68,
+        AiPlayStyle.defensive => 0.25,
+        AiPlayStyle.aggressive => 0.95,
+        AiPlayStyle.balanced => 0.55,
+      };
 }

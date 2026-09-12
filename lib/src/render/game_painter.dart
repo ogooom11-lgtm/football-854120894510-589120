@@ -4,13 +4,20 @@ import 'package:flutter/material.dart';
 
 import '../game/config/game_constants.dart';
 import '../game/logic/match_engine.dart';
+import '../game/models/player_game.dart';
 import 'field_painter.dart';
 import 'player_painter.dart';
 
 class GamePainter extends CustomPainter {
-  GamePainter(this.engine);
+  GamePainter(
+    this.engine, {
+    this.replayZoom = 1.0,
+    this.showGoalkeeperDebug = false,
+  });
 
   final MatchEngine engine;
+  final double replayZoom;
+  final bool showGoalkeeperDebug;
   final FieldPainter _fieldPainter = const FieldPainter();
   final PlayerPainter _playerPainter = const PlayerPainter();
 
@@ -26,10 +33,21 @@ class GamePainter extends CustomPainter {
     canvas.translate(dx, dy);
     canvas.scale(scale);
 
+    final replay = engine.currentReplayFrame;
+    canvas.save();
+    if (replay != null && replayZoom > 1.0) {
+      canvas.translate(
+        GameConstants.virtualWidth / 2,
+        GameConstants.virtualHeight / 2,
+      );
+      canvas.scale(replayZoom);
+      canvas.translate(-replay.ballX, -replay.ballY);
+    }
+
     _fieldPainter.paint(canvas);
     _drawOffside(canvas);
-    final replay = engine.currentReplayFrame;
     for (final player in engine.blueTeam.players) {
+      if (player.isSentOff) continue;
       final frame = replay?.players.where((item) => item.id == player.id);
       _playerPainter.paint(
         canvas,
@@ -44,6 +62,7 @@ class GamePainter extends CustomPainter {
       );
     }
     for (final player in engine.redTeam.players) {
+      if (player.isSentOff) continue;
       final frame = replay?.players.where((item) => item.id == player.id);
       _playerPainter.paint(
         canvas,
@@ -58,12 +77,54 @@ class GamePainter extends CustomPainter {
       );
     }
     _drawBall(canvas);
+    if (showGoalkeeperDebug && replay == null) {
+      _drawGoalkeeperDebug(canvas, engine.blueTeam.goalkeeper);
+      _drawGoalkeeperDebug(canvas, engine.redTeam.goalkeeper);
+    }
+    canvas.restore();
+
     _drawHeader(canvas);
     if (replay != null) {
       _drawReplayStamp(canvas, replay.minute);
     }
 
     canvas.restore();
+  }
+
+  void _drawGoalkeeperDebug(Canvas canvas, PlayerGame keeper) {
+    final debug = keeper.goalkeeperDebug;
+    final impact = debug.predictedImpact;
+    canvas.drawCircle(
+      keeper.pos.toOffset(),
+      debug.reachRadius,
+      Paint()
+        ..color = const Color(0xff40c4ff).withValues(alpha: 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    if (impact == null) return;
+    canvas.drawLine(
+      engine.ball.pos.toOffset(),
+      impact.toOffset(),
+      Paint()
+        ..color = const Color(0xffffab40).withValues(alpha: 0.80)
+        ..strokeWidth = 1.5,
+    );
+    canvas.drawLine(
+      keeper.pos.toOffset(),
+      impact.toOffset(),
+      Paint()
+        ..color = const Color(0xff40c4ff).withValues(alpha: 0.90)
+        ..strokeWidth = 2,
+    );
+    canvas.drawCircle(
+      impact.toOffset(),
+      7,
+      Paint()
+        ..color = const Color(0xffffab40)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
   }
 
   void _drawHeader(Canvas canvas) {

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../game/models/jersey_kit.dart';
@@ -28,7 +30,16 @@ class PlayerPainter {
       ..color = Colors.black
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4;
-    final center = position ?? player.pos.toOffset();
+    final rawCenter = position ?? player.pos.toOffset();
+    final jumpDuration = player.isGoalkeeper ? 0.62 : 0.48;
+    final jumpPhase = player.jumpAnimationTimer <= 0
+        ? 0.0
+        : math.sin(
+            (1 -
+                    (player.jumpAnimationTimer / jumpDuration).clamp(0.0, 1.0)) *
+                math.pi,
+          );
+    final center = rawCenter.translate(0, -jumpPhase * (player.isGoalkeeper ? 13 : 9));
     if (player.isGoalkeeper && player.keeperGroundTimer > 0) {
       final rect = Rect.fromCenter(
         center: center,
@@ -37,6 +48,30 @@ class PlayerPainter {
       );
       canvas.drawOval(rect, body);
       canvas.drawOval(rect, border);
+    } else if (player.isGoalkeeper && jumpPhase > 0.02) {
+      // While diving/jumping the keeper stretches vertically — a narrow,
+      // tall body shape — instead of staying a plain circle.
+      final stretch = 0.55 + jumpPhase * 0.45;
+      final rect = Rect.fromCenter(
+        center: center.translate(0, -player.radius * 0.55),
+        width: player.radius * (2.1 - jumpPhase * 0.5),
+        height: player.radius * (2.05 + jumpPhase * 1.1),
+      );
+      canvas.drawOval(rect, body);
+      canvas.drawOval(rect, border);
+      if (stretch > 0.85) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: center.translate(0, player.radius * 1.05),
+              width: player.radius * 1.1,
+              height: player.radius * 0.45,
+            ),
+            const Radius.circular(2),
+          ),
+          Paint()..color = shortsColor,
+        );
+      }
     } else {
       canvas.drawCircle(center, player.radius, body);
       canvas.drawRRect(
@@ -56,6 +91,18 @@ class PlayerPainter {
       _keeperCue(canvas, player, center);
     }
     _fatigueCue(canvas, player, center);
+    if (player.yellowCardsThisMatch > 0) {
+      final cardRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(
+          center.dx - player.radius - 7,
+          center.dy - player.radius - 13,
+          7,
+          10,
+        ),
+        const Radius.circular(1.5),
+      );
+      canvas.drawRRect(cardRect, Paint()..color = const Color(0xffffd34d));
+    }
     if (player.jumpBoostMeters > 0) {
       canvas.drawCircle(
         center,
@@ -140,23 +187,44 @@ class PlayerPainter {
 
   void _keeperCue(Canvas canvas, PlayerGame player, Offset center) {
     if (player.keeperGroundTimer > 0) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: player.radius + 8),
-        -0.7,
-        1.4,
-        false,
-        Paint()
-          ..color = const Color(0xff8bd3ff)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.2,
+      // On the ground: no text above the keeper — just two short lines on
+      // both sides of the body to show he is lying down.
+      final sidePaint = Paint()
+        ..color = const Color(0xff8bd3ff)
+        ..strokeWidth = 2.6
+        ..strokeCap = StrokeCap.round;
+      final bodyW = player.radius * 1.45;
+      final lineY = center.dy - 2;
+      canvas.drawLine(
+        Offset(center.dx - bodyW - 7, lineY),
+        Offset(center.dx - bodyW - 16, lineY),
+        sidePaint,
+      );
+      canvas.drawLine(
+        Offset(center.dx + bodyW + 7, lineY),
+        Offset(center.dx + bodyW + 16, lineY),
+        sidePaint,
       );
       return;
     }
     if (player.keeperState == 'top elde') {
+      final heldBall = center.translate(0, -player.radius - 5);
+      canvas.drawCircle(heldBall, 4.2, Paint()..color = Colors.white);
       canvas.drawCircle(
-        center.translate(0, -player.radius - 4),
-        3.2,
-        Paint()..color = Colors.white,
+        heldBall,
+        4.2,
+        Paint()
+          ..color = Colors.black
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      _text(
+        canvas,
+        'TOP ELDE',
+        center.translate(0, -27),
+        8,
+        const Color(0xffbde8ff),
+        FontWeight.w900,
       );
     }
   }

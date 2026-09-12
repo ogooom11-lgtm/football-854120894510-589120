@@ -6,11 +6,30 @@ import '../enums/player_role.dart';
 import '../enums/team_id.dart';
 import '../math/vec2.dart';
 import 'formation.dart';
+import 'goalkeeper.dart';
 import 'jersey_kit.dart';
 import 'match_event.dart';
 import 'player_game.dart';
 import 'player_profile.dart';
 import 'team_setup.dart';
+
+/// A completed substitution, kept so it can be undone and so the game can
+/// show who left the pitch.
+class SubstitutionRecord {
+  SubstitutionRecord({
+    required this.outIndex,
+    required this.outgoing,
+    required this.incoming,
+    required this.benchIndex,
+    required this.minute,
+  });
+
+  final int outIndex;
+  final PlayerGame outgoing;
+  final PlayerGame incoming;
+  final int benchIndex;
+  final double minute;
+}
 
 class TeamGame {
   TeamGame({
@@ -37,8 +56,11 @@ class TeamGame {
   List<PlayerGame> players;
   final List<PlayerGame> bench;
   final List<PlayerGame> substitutedOut = [];
+  final List<SubstitutionRecord> substitutionLog = [];
   int score = 0;
   int substitutionsUsed = 0;
+  int bonusSubstitutions = 0;
+  int get substitutionLimit => 5 + bonusSubstitutions;
   final List<GoalEvent> goals = [];
 
   factory TeamGame.fromSetup({
@@ -50,7 +72,7 @@ class TeamGame {
     final rng = random ?? math.Random();
     final plan = formationPlan(setup.formation);
     final selected = [
-      ...setup.players.where((profile) => !profile.isInjured),
+      ...setup.players.where((profile) => !profile.isUnavailable),
     ];
     final selectedById = {for (final profile in selected) profile.id: profile};
     final starterProfiles = <PlayerProfile>[
@@ -79,10 +101,18 @@ class TeamGame {
         );
 
     final players = <PlayerGame>[];
-    for (final spot in plan.spots) {
+    for (var spotIndex = 0; spotIndex < plan.spots.length; spotIndex++) {
+      final spot = plan.spots[spotIndex];
+      final assignedProfile = _takeProfileOrNull(
+        starters,
+        (profile) =>
+            !profile.isGoalkeeper &&
+            setup.slotByPlayerId[profile.id] == spotIndex,
+      );
       final profile = spot.role.isGoalkeeper
           ? keeperProfile
-          : _takeProfileOrNull(
+          : assignedProfile ??
+                _takeProfileOrNull(
                   starters,
                   (profile) =>
                       !profile.isGoalkeeper &&
@@ -175,19 +205,55 @@ class TeamGame {
     return null;
   }
 
+  /// Closest player to [point]. Returns null when nobody is available so a
+  /// match can never freeze because a team ran out of outfield players.
+  PlayerGame? closestToOrNull(Vec2 point, {bool includeGoalkeeper = false}) {
+    PlayerGame? best;
+    var bestDistance = double.infinity;
+    for (final player in players) {
+      if (player.isSentOff) {
+        continue;
+      }
+      if (!includeGoalkeeper && player.isGoalkeeper) {
+        continue;
+      }
+      final distance = player.pos.distanceTo(point);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = player;
+      }
+    }
+    return best;
+  }
+
   PlayerGame closestTo(Vec2 point, {bool includeGoalkeeper = false}) {
-    final candidates = includeGoalkeeper
-        ? players
-        : players.where((player) => !player.isGoalkeeper);
-    return candidates.reduce(
-      (a, b) => a.pos.distanceTo(point) <= b.pos.distanceTo(point) ? a : b,
+    final found = closestToOrNull(
+      point,
+      includeGoalkeeper: includeGoalkeeper,
     );
+    if (found != null) {
+      return found;
+    }
+    // Fall back to any player on the roster before giving up completely.
+    for (final player in players) {
+      if (!includeGoalkeeper && player.isGoalkeeper) {
+        continue;
+      }
+      return player;
+    }
+    return players.first;
   }
 
   void resetPositions() {
     final plan = formationPlan(formation);
     for (var i = 0; i < players.length; i++) {
       final spot = plan.spots[i];
+      if (players[i].isSentOff) {
+        players[i]
+          ..pos = Vec2(-100, -100)
+          ..controlled = false;
+        continue;
+      }
       players[i]
         ..role = spot.role
         ..number = spot.number
@@ -195,9 +261,21 @@ class TeamGame {
         ..pos.setFrom(pitchPoint(spot.x, spot.y, side))
         ..aiCooldown = 0
         ..manualOverride = 0
+        ..movementIntensity = 0
+        ..turningIntensity = 0
         ..jumpBoostMeters = 0
         ..keeperGroundTimer = 0
         ..keeperDiveCooldown = 0
+        ..keeperParryCooldown = 0
+        ..keeperRehandleCooldown = 0
+        ..goalkeeperState = GoalkeeperState.idle
+        ..goalkeeperAction = GoalkeeperAction.stay
+        ..goalkeeperVelocity = Vec2.zero()
+        ..goalkeeperDecisionTarget = null
+        ..goalkeeperPrediction = null
+        ..goalkeeperObservedTrajectoryId = -1
+        ..goalkeeperReactionTimer = 0
+        ..goalkeeperDecisionLockTimer = 0
         ..keeperState = 'hazir';
     }
     resetDirections();
@@ -227,8 +305,48 @@ class TeamGame {
     }
   }
 
-  bool substitute(int outIndex, int benchIndex) {
-    if (substitutionsUsed >= 5 ||
+  bool swapPlayerPositions(int firstIndex, int secondIndex) {
+    if (firstIndex < 0 ||
+        secondIndex < 0 ||
+        firstIndex >= players.length ||
+        secondIndex >= players.length) {
+      return false;
+    }
+    if (firstIndex == secondIndex) return true;
+    final first = players[firstIndex];
+    final second = players[secondIndex];
+    if (first.isSentOff ||
+        second.isSentOff ||
+        first.isGoalkeeper != second.isGoalkeeper) {
+      return false;
+    }
+    players[firstIndex] = second;
+    players[secondIndex] = first;
+    final plan = formationPlan(formation);
+    players[firstIndex]
+      ..role = plan.spots[firstIndex].role
+      ..homePos = pitchPoint(
+        plan.spots[firstIndex].x,
+        plan.spots[firstIndex].y,
+        side,
+      );
+    players[secondIndex]
+      ..role = plan.spots[secondIndex].role
+      ..homePos = pitchPoint(
+        plan.spots[secondIndex].x,
+        plan.spots[secondIndex].y,
+        side,
+      );
+    resetDirections();
+    return true;
+  }
+
+  bool substitute(
+    int outIndex,
+    int benchIndex, {
+    double minute = 0,
+  }) {
+    if (substitutionsUsed >= substitutionLimit ||
         outIndex < 0 ||
         outIndex >= players.length ||
         benchIndex < 0 ||
@@ -254,11 +372,40 @@ class TeamGame {
           )
           ..homePos = home
           ..lastDirection = Vec2(attackDirection.toDouble(), 0)
-          ..stamina = 1.0;
+          ..stamina = incoming.stamina;
     players[outIndex] = replacement;
     substitutedOut.add(outgoing);
+    substitutionLog.add(
+      SubstitutionRecord(
+        outIndex: outIndex,
+        outgoing: outgoing,
+        incoming: replacement,
+        benchIndex: benchIndex,
+        minute: minute,
+      ),
+    );
     bench.removeAt(benchIndex);
     substitutionsUsed += 1;
+    resetDirections();
+    return true;
+  }
+
+  /// Reverts the most recent substitution: the outgoing player returns to
+  /// his slot and the substitute goes back to the bench.
+  bool undoLastSubstitution() {
+    if (substitutionLog.isEmpty) {
+      return false;
+    }
+    final record = substitutionLog.removeLast();
+    if (record.outIndex < 0 || record.outIndex >= players.length) {
+      substitutionLog.insert(0, record);
+      return false;
+    }
+    players[record.outIndex] = record.outgoing;
+    final benchIndex = record.benchIndex.clamp(0, bench.length).toInt();
+    bench.insert(benchIndex, record.incoming);
+    substitutionsUsed = math.max(0, substitutionsUsed - 1);
+    substitutedOut.remove(record.outgoing);
     resetDirections();
     return true;
   }

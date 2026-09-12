@@ -5,8 +5,9 @@ import 'dart:math' as math;
 import '../game/enums/match_mode.dart';
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
-import '../game/models/league.dart';
 import '../game/models/formation.dart';
+import '../game/models/jersey_kit.dart';
+import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
 
@@ -16,7 +17,6 @@ class SavedAccountProfile {
     required this.username,
     required this.passwordHash,
   });
-
   final String id;
   String username;
   String passwordHash;
@@ -57,6 +57,62 @@ class SavedAccountProfile {
   };
 }
 
+/// A transfer request: an account asks to move a free player into one of
+/// its teams. The admin must approve or reject it from the admin page.
+class TransferRequest {
+  TransferRequest({
+    required this.id,
+    required this.playerId,
+    required this.targetTeamId,
+    required this.requesterAccountId,
+    required this.createdAt,
+    this.status = 'pending',
+  });
+
+  final String id;
+  final String playerId;
+  final String targetTeamId;
+  final String requesterAccountId;
+  final int createdAt;
+  String status; // pending | accepted | rejected
+
+  bool get isPending => status == 'pending';
+
+  factory TransferRequest.create({
+    required String playerId,
+    required String targetTeamId,
+    required String requesterAccountId,
+  }) {
+    return TransferRequest(
+      id: 'tr-${DateTime.now().microsecondsSinceEpoch}',
+      playerId: playerId,
+      targetTeamId: targetTeamId,
+      requesterAccountId: requesterAccountId,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  factory TransferRequest.fromJson(Map<String, dynamic> json) {
+    return TransferRequest(
+      id: json['id'] as String? ?? 'tr-${json.hashCode}',
+      playerId: json['playerId'] as String? ?? '',
+      targetTeamId: json['targetTeamId'] as String? ?? '',
+      requesterAccountId: json['requesterAccountId'] as String? ?? '',
+      createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+      status: json['status'] as String? ?? 'pending',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'playerId': playerId,
+    'targetTeamId': targetTeamId,
+    'requesterAccountId': requesterAccountId,
+    'createdAt': createdAt,
+    'status': status,
+  };
+}
+
 class SavedGameData {
   SavedGameData({
     required this.accounts,
@@ -64,6 +120,7 @@ class SavedGameData {
     required this.loggedInAccountIds,
     required this.adminPasswordHash,
     this.adminLoggedIn = false,
+    this.adminFullAccess = false,
     required this.players,
     required this.teams,
     required this.blueTeamId,
@@ -80,13 +137,27 @@ class SavedGameData {
     this.aiDifficulty = AiDifficulty.medium,
     this.bluePlayStyle = AiPlayStyle.balanced,
     this.redPlayStyle = AiPlayStyle.balanced,
-  });
+    List<FinishedMatchSummary>? matchArchive,
+    List<TransferRequest>? transferRequests,
+    Set<String>? hiddenKitNames,
+    Iterable<JerseyColor>? paletteColors,
+  }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[],
+       transferRequests = transferRequests ?? <TransferRequest>[],
+       hiddenKitNames = hiddenKitNames ?? <String>{},
+       paletteColors = paletteColors?.toList() ?? <JerseyColor>[] {
+    // Keep the jersey factory in sync with the admin settings of this save.
+    JerseyFactory.applyAdminSettings(
+      hiddenNames: this.hiddenKitNames,
+      colors: this.paletteColors,
+    );
+  }
 
   final List<SavedAccountProfile> accounts;
   String activeAccountId;
   Set<String> loggedInAccountIds;
   String adminPasswordHash;
   bool adminLoggedIn;
+  bool adminFullAccess;
   final List<PlayerProfile> players;
   final List<SavedTeamProfile> teams;
   String blueTeamId;
@@ -103,7 +174,35 @@ class SavedGameData {
   AiDifficulty aiDifficulty;
   AiPlayStyle bluePlayStyle;
   AiPlayStyle redPlayStyle;
-  LeagueSeason? leagueSeason;
+  final List<FinishedMatchSummary> matchArchive;
+  final List<TransferRequest> transferRequests;
+
+  /// Ready-made kits the admin removed for every team.
+  final Set<String> hiddenKitNames;
+
+  /// Extra jersey colors the admin added to the palette.
+  final List<JerseyColor> paletteColors;
+
+  List<TransferRequest> get pendingTransfers =>
+      transferRequests.where((request) => request.isPending).toList();
+
+  /// The pending transfer request touching [playerId], if any.
+  TransferRequest? transferRequestFor(String playerId) {
+    for (final request in transferRequests) {
+      if (request.isPending && request.playerId == playerId) {
+        return request;
+      }
+    }
+    return null;
+  }
+
+  void archiveMatch(FinishedMatchSummary summary) {
+    matchArchive.removeWhere((match) => match.matchId == summary.matchId);
+    matchArchive.insert(0, summary);
+    if (matchArchive.length > 200) {
+      matchArchive.removeRange(200, matchArchive.length);
+    }
+  }
 
   SavedAccountProfile get activeAccount => accounts.firstWhere(
     (account) => account.id == activeAccountId,
@@ -111,8 +210,13 @@ class SavedGameData {
   );
 
   List<SavedTeamProfile> get ownedTeams => teams
-      .where((team) => team.ownerAccountId == activeAccountId)
+      .where(
+        (team) => team.ownerAccountId == activeAccountId && !team.isDeleted,
+      )
       .toList(growable: false);
+
+  List<SavedTeamProfile> get activeTeams =>
+      teams.where((team) => !team.isDeleted).toList(growable: false);
 
   bool isAccountLoggedIn(String id) => loggedInAccountIds.contains(id);
 
@@ -229,6 +333,12 @@ class SavedGameData {
       loggedInAccountIds.add(activeAccountId);
     }
 
+    final hiddenKitNames = Set<String>.from(
+      json['hiddenKitNames'] as List<dynamic>? ?? const [],
+    );
+    final paletteColors = (json['paletteColors'] as List<dynamic>? ?? const [])
+        .map((item) => JerseyColor.fromJson(item as Map<String, dynamic>))
+        .toList();
     final players = (json['players'] as List<dynamic>? ?? [])
         .map((item) => PlayerProfile.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -271,7 +381,18 @@ class SavedGameData {
       team.ensureLineupDefaults(players);
     }
 
-    final playableTeams = teams;
+    final activeTeams = teams.where((team) => !team.isDeleted).toList();
+    if (activeTeams.isEmpty) {
+      final replacement = SavedTeamProfile.create(
+        ownerAccountId: activeAccountId,
+        name: 'Yeni Takim',
+        playerIds: players.take(11).map((player) => player.id),
+      );
+      replacement.ensureLineupDefaults(players);
+      teams.add(replacement);
+      activeTeams.add(replacement);
+    }
+    final playableTeams = activeTeams;
     final blueTeamId = json['blueTeamId'] as String? ?? playableTeams.first.id;
     final redTeamId =
         json['redTeamId'] as String? ??
@@ -292,7 +413,9 @@ class SavedGameData {
         activeAccountId: activeAccountId,
         loggedInAccountIds: loggedInAccountIds,
         adminPasswordHash: json['adminPasswordHash'] as String? ?? '',
-        adminLoggedIn: json['adminLoggedIn'] as bool? ?? false,
+        // Administrator sessions are intentionally not restored after restart.
+        adminLoggedIn: false,
+        adminFullAccess: false,
         players: players,
         teams: teams,
         blueTeamId: blueTeam.id,
@@ -325,25 +448,40 @@ class SavedGameData {
           (s) => s.name == json['redPlayStyle'],
           orElse: () => AiPlayStyle.balanced,
         ),
-      )
-      ..leagueSeason = json['leagueSeason'] != null
-          ? LeagueSeason.fromJson(json['leagueSeason'] as Map<String, dynamic>)
-          : null;
+        matchArchive: (json['matchArchive'] as List<dynamic>? ?? const [])
+            .map(
+              (item) => FinishedMatchSummary.fromJson(
+                item as Map<String, dynamic>,
+              ),
+            )
+            .take(200)
+            .toList(),
+        transferRequests:
+            (json['transferRequests'] as List<dynamic>? ?? const [])
+                .map(
+                  (item) => TransferRequest.fromJson(
+                    item as Map<String, dynamic>,
+                  ),
+                )
+                .toList(),
+        hiddenKitNames: hiddenKitNames,
+        paletteColors: paletteColors,
+      );
   }
 
   SavedTeamProfile get blueTeam => teams.firstWhere(
-    (team) => team.id == blueTeamId,
-    orElse: () => ownedTeams.isNotEmpty ? ownedTeams.first : teams.first,
+    (team) => team.id == blueTeamId && !team.isDeleted,
+    orElse: () => ownedTeams.isNotEmpty ? ownedTeams.first : activeTeams.first,
   );
 
   SavedTeamProfile get redTeam => teams.firstWhere(
-    (team) => team.id == redTeamId,
+    (team) => team.id == redTeamId && !team.isDeleted,
     orElse: () {
       final owned = ownedTeams;
       if (owned.length > 1) {
         return owned[1];
       }
-      return teams.length > 1 ? teams[1] : teams.first;
+      return activeTeams.length > 1 ? activeTeams[1] : activeTeams.first;
     },
   );
 
@@ -372,6 +510,7 @@ class SavedGameData {
       'loggedInAccountIds': loggedInAccountIds.toList(),
       'adminPasswordHash': adminPasswordHash,
       'adminLoggedIn': adminLoggedIn,
+      'adminFullAccess': adminFullAccess,
       'players': players.map((player) => player.toJson()).toList(),
       'teams': teams.map((team) => team.toJson()).toList(),
       'blueTeamId': blueTeamId,
@@ -388,7 +527,12 @@ class SavedGameData {
       'aiDifficulty': aiDifficulty.name,
       'bluePlayStyle': bluePlayStyle.name,
       'redPlayStyle': redPlayStyle.name,
-      'leagueSeason': leagueSeason?.toJson(),
+      'matchArchive': matchArchive.map((match) => match.toJson()).toList(),
+      'transferRequests': transferRequests
+          .map((request) => request.toJson())
+          .toList(),
+      'hiddenKitNames': hiddenKitNames.toList(),
+      'paletteColors': paletteColors.map((color) => color.toJson()).toList(),
     };
   }
 }
@@ -418,6 +562,21 @@ class RosterStorage {
       if (data.players.isEmpty) {
         return SavedGameData.defaults();
       }
+      // Daily recovery: injured players lose one injury day per real day
+      // that passed since the last time the game was opened, and fitness
+      // keeps recovering. Persisted only when something actually changed.
+      final now = DateTime.now();
+      var needsSave = false;
+      for (final player in data.players) {
+        if (player.fitness < 1.0 || player.injuredDaysRemaining > 0) {
+          needsSave = true;
+        }
+        player.recoverFitness(now);
+        player.recoverInjuryDays(now);
+      }
+      if (needsSave) {
+        await save(data);
+      }
       return data;
     } catch (_) {
       return SavedGameData.defaults();
@@ -435,7 +594,7 @@ class RosterStorage {
 
 String localPasswordHash(String password) {
   var hash = 0x811c9dc5;
-  final text = 'bomban-v2:\${password.trim()}';
+  final text = 'bomban-v2:${password.trim()}';
   for (final unit in text.codeUnits) {
     hash ^= unit;
     hash = (hash * 0x01000193) & 0xffffffff;
