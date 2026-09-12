@@ -58,7 +58,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Color(0xff08140f),
+        backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator()),
       );
     }
@@ -69,7 +69,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       autofocus: true,
       onKeyEvent: _handleAdminShortcut,
       child: Scaffold(
-      backgroundColor: const Color(0xff08140f),
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Hesap Detayi'),
         backgroundColor: const Color(0xff0d1a16),

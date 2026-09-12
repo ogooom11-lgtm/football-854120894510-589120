@@ -3,6 +3,59 @@ import 'package:flutter/services.dart';
 
 import '../screens/setup_screen.dart';
 
+/// Soft stadium-night gradient painted behind the whole app.
+class AppBackdrop extends StatelessWidget {
+  const AppBackdrop({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xff061812), Color(0xff040b09), Color(0xff03080a)],
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            top: -180,
+            left: -120,
+            child: _glow(const Color(0xff00c896), 420),
+          ),
+          Positioned(
+            bottom: -220,
+            right: -140,
+            child: _glow(const Color(0xffd4af37), 380),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _glow(Color color, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            color.withValues(alpha: 0.10),
+            color.withValues(alpha: 0.03),
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class BombanFutbolApp extends StatelessWidget {
   const BombanFutbolApp({super.key});
 
@@ -56,23 +109,27 @@ class BombanFutbolApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Bomban Futbol',
-      // Keep very large / very small system font settings usable.
+      // Gradient backdrop behind every screen (scaffolds are transparent)
+      // plus a sane limit for very large / very small system fonts.
       builder: (context, child) {
         final media = MediaQuery.of(context);
-        return MediaQuery(
-          data: media.copyWith(
-            textScaler: media.textScaler.clamp(
-              minScaleFactor: 0.85,
-              maxScaleFactor: 1.15,
+        return AppBackdrop(
+          child: MediaQuery(
+            data: media.copyWith(
+              textScaler: media.textScaler.clamp(
+                minScaleFactor: 0.85,
+                maxScaleFactor: 1.15,
+              ),
             ),
+            child: child ?? const SizedBox.shrink(),
           ),
-          child: child ?? const SizedBox.shrink(),
         );
       },
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: background,
+        // Transparent so the app-wide gradient shows through every screen.
+        scaffoldBackgroundColor: Colors.transparent,
         useMaterial3: true,
         fontFamily: 'Segoe UI',
         appBarTheme: AppBarTheme(

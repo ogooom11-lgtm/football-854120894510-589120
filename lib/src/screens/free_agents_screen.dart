@@ -120,7 +120,7 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Color(0xff08140f),
+        backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator()),
       );
     }
@@ -131,7 +131,7 @@ class _FreeAgentsScreenState extends State<FreeAgentsScreen> {
     final account = data.activeAccount;
     final ownTeams = _ownTeams(data);
     return Scaffold(
-      backgroundColor: const Color(0xff08140f),
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Serbest Oyuncular'),
         backgroundColor: const Color(0xff0d1a16),

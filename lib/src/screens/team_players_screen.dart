@@ -76,14 +76,14 @@ class _TeamPlayersScreenState extends State<TeamPlayersScreen> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
-        backgroundColor: Color(0xff08140f),
+        backgroundColor: Colors.transparent,
         body: Center(child: CircularProgressIndicator()),
       );
     }
     final data = _data!;
     final team = _selectedTeam;
     return Scaffold(
-      backgroundColor: const Color(0xff08140f),
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Takim Oyuncuları'),
         actions: [
