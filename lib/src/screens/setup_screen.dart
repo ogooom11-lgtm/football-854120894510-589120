@@ -3355,6 +3355,7 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
           const SizedBox(height: 12),
           _summaryBlock(data.blueTeam, data.bluePlayerIds, data),
+          _unavailableWarning(data.blueTeam, data),
           const SizedBox(height: 6),
           _jerseySelector(data.blueTeam, _blueKitIndex, (i) {
             setState(() => _blueKitIndex = i);
@@ -3364,6 +3365,7 @@ class _SetupScreenState extends State<SetupScreen> {
           _lineupEditor(data.blueTeam, data),
           const Divider(height: 26),
           _summaryBlock(data.redTeam, data.redPlayerIds, data),
+          _unavailableWarning(data.redTeam, data),
           const SizedBox(height: 6),
           _jerseySelector(data.redTeam, _redKitIndex, (i) {
             setState(() => _redKitIndex = i);
@@ -3387,45 +3389,391 @@ class _SetupScreenState extends State<SetupScreen> {
     ValueChanged<int> onChanged,
     String label,
   ) {
-    final kits = team.jerseyKits.isEmpty
-        ? JerseyFactory.defaultKits()
-        : team.jerseyKits;
+    if (team.jerseyKits.isEmpty) {
+      team.jerseyKits = JerseyFactory.defaultKits();
+    }
+    final kits = team.jerseyKits;
     final value = selectedIndex.clamp(0, kits.length - 1).toInt();
-    return DropdownButtonFormField<int>(
-      value: value,
-      isDense: true,
-      decoration: InputDecoration(labelText: '$label forma'),
-      items: [
-        for (var i = 0; i < kits.length; i++)
-          DropdownMenuItem<int>(
-            value: i,
-            child: Row(
-              children: [
-                _kitSwatch(kits[i].shirtColor),
-                const SizedBox(width: 6),
-                _kitSwatch(kits[i].shortsColor),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(kits[i].name, overflow: TextOverflow.ellipsis),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<int>(
+            value: value,
+            isDense: true,
+            decoration: InputDecoration(labelText: '$label forma'),
+            items: [
+              for (var i = 0; i < kits.length; i++)
+                DropdownMenuItem<int>(
+                  value: i,
+                  child: Row(
+                    children: [
+                      _kitSwatch(kits[i].shirtColor),
+                      const SizedBox(width: 6),
+                      _kitSwatch(kits[i].shortsColor),
+                      const SizedBox(width: 4),
+                      _kitSwatch(kits[i].goalkeeperShirtColor, small: true),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          kits[i].name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            onChanged: (index) {
+              if (index == null) {
+                return;
+              }
+              team.setDefaultJerseyKit(index);
+              onChanged(index);
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: OutlinedButton.icon(
+            onPressed: () => _openKitManager(team, label, onChanged),
+            icon: const Icon(Icons.style, size: 17),
+            label: const Text('Forma yonetimi'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Kit manager: create a kit from new colors, delete a kit (even a
+  /// ready-made one) and pick the default kit of the team.
+  Future<void> _openKitManager(
+    SavedTeamProfile team,
+    String label,
+    ValueChanged<int> onChanged,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('$label forma yonetimi'),
+              content: SizedBox(
+                width: 560,
+                height: 470,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Forma ekle, sil veya varsayilan olarak sec. '
+                      'Hazir formayi silersen bu takima geri gelmez.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: team.jerseyKits.isEmpty
+                          ? const Center(child: Text('Forma yok'))
+                          : ListView.builder(
+                              itemCount: team.jerseyKits.length,
+                              itemBuilder: (context, index) {
+                                final kit = team.jerseyKits[index];
+                                final isDefault =
+                                    index == team.activeKitIndex;
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isDefault
+                                        ? Colors.white.withValues(alpha: 0.08)
+                                        : Colors.white.withValues(alpha: 0.03),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isDefault
+                                          ? Colors.amber.withValues(
+                                              alpha: 0.55,
+                                            )
+                                          : Colors.white.withValues(
+                                              alpha: 0.07,
+                                            ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      _kitSwatch(kit.shirtColor),
+                                      const SizedBox(width: 5),
+                                      _kitSwatch(kit.shortsColor),
+                                      const SizedBox(width: 5),
+                                      _kitSwatch(kit.socksColor),
+                                      const SizedBox(width: 5),
+                                      _kitSwatch(
+                                        kit.goalkeeperShirtColor,
+                                        small: true,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              kit.name,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            Text(
+                                              kit.isCustom
+                                                  ? 'Ozel forma'
+                                                  : 'Hazir forma',
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Varsayilan yap',
+                                        icon: Icon(
+                                          isDefault
+                                              ? Icons.star
+                                              : Icons.star_border,
+                                          color: isDefault
+                                              ? Colors.amber
+                                              : Colors.white60,
+                                          size: 19,
+                                        ),
+                                        onPressed: () {
+                                          setState(() {
+                                            team.setDefaultJerseyKit(index);
+                                            onChanged(index);
+                                          });
+                                          setDialogState(() {});
+                                          _save();
+                                        },
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Formayi sil',
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.redAccent,
+                                          size: 19,
+                                        ),
+                                        onPressed: () {
+                                          if (team.jerseyKits.length <= 1) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'En az bir forma kalmalı',
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          setState(() {
+                                            team.deleteJerseyKit(index);
+                                            onChanged(team.activeKitIndex);
+                                          });
+                                          setDialogState(() {});
+                                          _save();
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          final created = await _openKitEditor(
+                            dialogContext,
+                            label,
+                          );
+                          if (created == null) {
+                            return;
+                          }
+                          setState(() {
+                            team.addJerseyKit(created);
+                            onChanged(team.activeKitIndex);
+                          });
+                          setDialogState(() {});
+                          await _save();
+                        },
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Yeni forma olustur'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Kapat'),
                 ),
               ],
-            ),
-          ),
-      ],
-      onChanged: (index) {
-        if (index == null) {
-          return;
-        }
-        team.activeKitIndex = index;
-        onChanged(index);
+            );
+          },
+        );
       },
     );
   }
 
-  Widget _kitSwatch(Color color) {
+  /// Creates a brand new kit from the color palette.
+  Future<JerseyKit?> _openKitEditor(
+    BuildContext dialogContext,
+    String label,
+  ) async {
+    final nameController = TextEditingController(text: '$label ozel');
+    var shirt = const Color(0xff1a237e);
+    var shorts = const Color(0xffffffff);
+    var socks = const Color(0xff1a237e);
+    var numbers = const Color(0xffffffff);
+    var keeper = const Color(0xff00c853);
+    return showDialog<JerseyKit>(
+      context: dialogContext,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setEditorState) {
+            return AlertDialog(
+              title: const Text('Yeni forma'),
+              content: SizedBox(
+                width: 430,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Forma adi',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _kitColorPicker(
+                        'Forma rengi',
+                        shirt,
+                        (color) => setEditorState(() => shirt = color),
+                      ),
+                      _kitColorPicker(
+                        'Sort rengi',
+                        shorts,
+                        (color) => setEditorState(() => shorts = color),
+                      ),
+                      _kitColorPicker(
+                        'Corap rengi',
+                        socks,
+                        (color) => setEditorState(() => socks = color),
+                      ),
+                      _kitColorPicker(
+                        'Numara rengi',
+                        numbers,
+                        (color) => setEditorState(() => numbers = color),
+                      ),
+                      _kitColorPicker(
+                        'Kaleci formasi',
+                        keeper,
+                        (color) => setEditorState(() => keeper = color),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Iptal'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    Navigator.of(context).pop(
+                      JerseyKit(
+                        name: name.isEmpty ? 'Ozel forma' : name,
+                        shirtColor: shirt,
+                        shortsColor: shorts,
+                        socksColor: socks,
+                        numberColor: numbers,
+                        goalkeeperShirtColor: keeper,
+                        isCustom: true,
+                      ),
+                    );
+                  },
+                  child: const Text('Kaydet'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _kitColorPicker(
+    String label,
+    Color selected,
+    ValueChanged<Color> onChanged,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+          const SizedBox(height: 5),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final option in JerseyFactory.palette())
+                GestureDetector(
+                  onTap: () => onChanged(option.color),
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: option.color,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(
+                        color: option.color == selected
+                            ? Colors.amber
+                            : Colors.white24,
+                        width: option.color == selected ? 2.4 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kitSwatch(Color color, {bool small = false}) {
+    final size = small ? 13.0 : 18.0;
     return Container(
-      width: 18,
-      height: 18,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(4),
@@ -3502,6 +3850,99 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ],
     );
+  }
+
+  /// Red warning card: injured and suspended players of a team, shown
+  /// before the match so the lineup can be fixed in time.
+  Widget _unavailableWarning(SavedTeamProfile team, SavedGameData data) {
+    final unavailable = data.players
+        .where(
+          (player) =>
+              team.playerIds.contains(player.id) && player.isUnavailable,
+        )
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    if (unavailable.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final injured = unavailable.where((player) => player.isInjured).length;
+    final banned = unavailable.length - injured;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.redAccent.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.medical_information,
+                color: Colors.redAccent,
+                size: 17,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  '${team.name}: $injured sakat, $banned cezali oyuncu var',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xffff8f8f),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final player in unavailable.take(5))
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                _unavailableDetail(player),
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ),
+          if (unavailable.length > 5)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                '+${unavailable.length - 5} oyuncu daha',
+                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// "Baslangic: 12.04.2026 • Bitis: 16.04.2026" style injury dates.
+  String _injuryDateText(PlayerProfile player) {
+    String format(DateTime date) =>
+        '${date.day.toString().padLeft(2, '0')}.'
+        '${date.month.toString().padLeft(2, '0')}.${date.year}';
+    final start = player.injuryStartDate;
+    final end = player.injuryEndDate;
+    final startText = start == null ? '-' : format(start);
+    final endText = end == null ? '-' : format(end);
+    return 'Baslangic: $startText  •  Tahmini bitis: $endText';
+  }
+
+  String _unavailableDetail(PlayerProfile player) {
+    if (player.isSuspended) {
+      return '${player.name} • ${player.suspendedMatchesRemaining} mac cezali';
+    }
+    final end = player.injuryEndDate;
+    final endText = end == null
+        ? ''
+        : ' • donus: ${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}';
+    return '${player.name} • ${player.injuredDaysRemaining} gun sakat$endText';
   }
 
   Future<void> _openVisualFormationEditor(
@@ -4301,13 +4742,21 @@ class _SetupScreenState extends State<SetupScreen> {
             const SizedBox(height: 8),
             Text(
               player.isInjured
-                  ? 'SAKAT: ${player.injuredDaysRemaining} gun'
+                  ? 'SAKAT: ${player.injuredDaysRemaining} / '
+                      '${player.injuryTotalDays} gun'
                   : 'CEZALI: ${player.suspendedMatchesRemaining} mac',
               style: const TextStyle(
                 color: Colors.redAccent,
                 fontWeight: FontWeight.w900,
               ),
             ),
+            if (player.isInjured) ...[
+              const SizedBox(height: 3),
+              Text(
+                _injuryDateText(player),
+                style: const TextStyle(fontSize: 11, color: Colors.white60),
+              ),
+            ],
           ],
         ],
       ),
@@ -4411,13 +4860,36 @@ class _SetupScreenState extends State<SetupScreen> {
                           allowedRoles.contains(team.roleByPlayerId[profile.id])
                           ? team.roleByPlayerId[profile.id]!
                           : allowedRoles.first;
-                      return SizedBox(
+                      final unavailable = profile.isUnavailable;
+                      final statusText = profile.isSuspended
+                          ? 'CEZALI ${profile.suspendedMatchesRemaining} mac'
+                          : profile.isInjured
+                          ? 'SAKAT ${profile.injuredDaysRemaining} gun'
+                          : null;
+                      return Container(
                         height: 44,
+                        decoration: BoxDecoration(
+                          color: unavailable
+                              ? Colors.redAccent.withValues(alpha: 0.18)
+                              : isStarter
+                              ? Colors.white.withValues(alpha: 0.04)
+                              : Colors.transparent,
+                          border: unavailable
+                              ? Border(
+                                  left: BorderSide(
+                                    color: Colors.redAccent.withValues(
+                                      alpha: 0.85,
+                                    ),
+                                    width: 3,
+                                  ),
+                                )
+                              : null,
+                        ),
                         child: Row(
                           children: [
                             Checkbox(
                               value: isStarter,
-                              onChanged: canEdit
+                              onChanged: canEdit && !unavailable
                                   ? (value) {
                                       setState(() {
                                         if (value == true) {
@@ -4454,13 +4926,27 @@ class _SetupScreenState extends State<SetupScreen> {
                                     profile.name,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: unavailable
+                                          ? const Color(0xffff6b6b)
+                                          : null,
+                                      fontWeight: unavailable
+                                          ? FontWeight.w800
+                                          : null,
+                                    ),
                                   ),
                                   Text(
-                                    'OVR:${profile.overallRating.toStringAsFixed(0)} DY:${profile.dayaniklilikGucu.toStringAsFixed(0)} ZK:${profile.zekaGucu.toStringAsFixed(0)}',
-                                    style: const TextStyle(
+                                    'OVR:${profile.overallRating.toStringAsFixed(0)} DY:${profile.dayaniklilikGucu.toStringAsFixed(0)} ZK:${profile.zekaGucu.toStringAsFixed(0)}'
+                                    '${statusText == null ? '' : ' • $statusText'}',
+                                    style: TextStyle(
                                       fontSize: 9,
-                                      color: Colors.white38,
+                                      color: statusText == null
+                                          ? Colors.white38
+                                          : const Color(0xffff8f8f),
+                                      fontWeight: statusText == null
+                                          ? null
+                                          : FontWeight.w700,
                                     ),
                                   ),
                                 ],

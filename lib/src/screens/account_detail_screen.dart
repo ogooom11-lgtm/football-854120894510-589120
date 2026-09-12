@@ -166,7 +166,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'هذا القسم مخفي: سجّل دخول المدير بكلمة المرور مع kimo@ في البداية',
+            'Bu bolum gizli: yonetici olarak giris yap (sifre kimo@ ile baslamali)',
           ),
         ),
       );
@@ -191,7 +191,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               .toList();
           return AlertDialog(
             backgroundColor: const Color(0xff102019),
-            title: const Text('لوحة الإدارة — الفرق واللاعبون'),
+            title: const Text('Yonetici paneli - takimlar ve oyuncular'),
             content: SizedBox(
               width: 640,
               height: 500,
@@ -214,7 +214,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                   TextField(
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      labelText: 'ابحث عن لاعب في الفريق',
+                      labelText: 'Takimda oyuncu ara',
                       isDense: true,
                     ),
                     onChanged: (value) => setDialogState(
@@ -229,10 +229,10 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
                           ListTile(
                             title: Text(player.name),
                             subtitle: Text(
-                              'تسديد ${player.shootingRating.toStringAsFixed(0)}'
-                              ' | تمرير ${player.passingRating.toStringAsFixed(0)}'
-                              ' | سرعة ${player.speedRating.toStringAsFixed(0)}'
-                              ' | طاقة ${player.staminaRating.toStringAsFixed(0)}',
+                              'Sut ${player.shootingRating.toStringAsFixed(0)}'
+                              ' | Pas ${player.passingRating.toStringAsFixed(0)}'
+                              ' | Hiz ${player.speedRating.toStringAsFixed(0)}'
+                              ' | Enerji ${player.staminaRating.toStringAsFixed(0)}',
                             ),
                             trailing: const Icon(Icons.edit),
                             onTap: () => _showPlayerEditor(player),
@@ -246,7 +246,7 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
+                child: const Text('Kapat'),
               ),
             ],
           );
@@ -263,104 +263,104 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xff102019),
-          title: Text('تعديل ${player.name}'),
+          title: Text('${player.name} duzenle'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  _adminEditorSlider('القوة العامة', player.overallRating, (v) {
+                  _adminEditorSlider('Genel guc', player.overallRating, (v) {
                     setDialogState(() => player.overallRating = v);
                   }),
-                  _adminEditorSlider('دقة التسديد', player.shootingRating, (v) {
+                  _adminEditorSlider('Sut isabeti', player.shootingRating, (v) {
                     setDialogState(() => player.shootingRating = v);
                   }),
-                  _adminEditorSlider('إنهاء الهجمة', player.finishingRating, (v) {
+                  _adminEditorSlider('Bitiricilik', player.finishingRating, (v) {
                     setDialogState(() => player.finishingRating = v);
                   }),
-                  _adminEditorSlider('قوة التسديد', player.shotPowerRating, (v) {
+                  _adminEditorSlider('Sut gucu', player.shotPowerRating, (v) {
                     setDialogState(() => player.shotPowerRating = v);
                   }),
-                  _adminEditorSlider('التسديد البعيد', player.longShotsRating, (v) {
+                  _adminEditorSlider('Uzaktan sut', player.longShotsRating, (v) {
                     setDialogState(() => player.longShotsRating = v);
                   }),
-                  _adminEditorSlider('الانحناء', player.curveRating, (v) {
+                  _adminEditorSlider('Kavis', player.curveRating, (v) {
                     setDialogState(() => player.curveRating = v);
                   }),
-                  _adminEditorSlider('الهدوء', player.composureRating, (v) {
+                  _adminEditorSlider('Soguk kanlilik', player.composureRating, (v) {
                     setDialogState(() => player.composureRating = v);
                   }),
-                  _adminEditorSlider('التوازن', player.balanceRating, (v) {
+                  _adminEditorSlider('Denge', player.balanceRating, (v) {
                     setDialogState(() => player.balanceRating = v);
                   }),
-                  _adminEditorSlider('دقة التمرير / الاحتفاظ', player.passingRating, (v) {
+                  _adminEditorSlider('Pas isabeti / top tutma', player.passingRating, (v) {
                     setDialogState(() => player.passingRating = v);
                   }),
-                  _adminEditorSlider('السرعة', player.speedRating, (v) {
+                  _adminEditorSlider('Surat', player.speedRating, (v) {
                     setDialogState(() => player.speedRating = v);
                   }),
-                  _adminEditorSlider('الطاقة', player.staminaRating, (v) {
+                  _adminEditorSlider('Enerji', player.staminaRating, (v) {
                     setDialogState(() => player.staminaRating = v);
                   }),
-                  _adminEditorSlider('مهارة الحارس', player.goalkeepingRating, (v) {
+                  _adminEditorSlider('Kaleci yetenegi', player.goalkeepingRating, (v) {
                     setDialogState(() => player.goalkeepingRating = v);
                   }),
                   if (player.isGoalkeeper) ...[
-                    _adminEditorSlider('رد الفعل', player.goalkeeperReactionRating, (v) {
+                    _adminEditorSlider('Refleks', player.goalkeeperReactionRating, (v) {
                       setDialogState(() => player.goalkeeperReactionRating = v);
                     }),
-                    _adminEditorSlider('التمركز', player.goalkeeperPositioningRating, (v) {
+                    _adminEditorSlider('Pozisyon alma', player.goalkeeperPositioningRating, (v) {
                       setDialogState(() => player.goalkeeperPositioningRating = v);
                     }),
-                    _adminEditorSlider('الارتماء', player.goalkeeperDivingRating, (v) {
+                    _adminEditorSlider('Atlayis', player.goalkeeperDivingRating, (v) {
                       setDialogState(() => player.goalkeeperDivingRating = v);
                     }),
-                    _adminEditorSlider('التعامل', player.goalkeeperHandlingRating, (v) {
+                    _adminEditorSlider('Top tutma', player.goalkeeperHandlingRating, (v) {
                       setDialogState(() => player.goalkeeperHandlingRating = v);
                     }),
-                    _adminEditorSlider('الإمساك', player.goalkeeperCatchingRating, (v) {
+                    _adminEditorSlider('Yakalama', player.goalkeeperCatchingRating, (v) {
                       setDialogState(() => player.goalkeeperCatchingRating = v);
                     }),
-                    _adminEditorSlider('القفز', player.goalkeeperJumpingRating, (v) {
+                    _adminEditorSlider('Ziplama', player.goalkeeperJumpingRating, (v) {
                       setDialogState(() => player.goalkeeperJumpingRating = v);
                     }),
-                    _adminEditorSlider('القرار', player.goalkeeperDecisionRating, (v) {
+                    _adminEditorSlider('Karar', player.goalkeeperDecisionRating, (v) {
                       setDialogState(() => player.goalkeeperDecisionRating = v);
                     }),
-                    _adminEditorSlider('واحد ضد واحد', player.goalkeeperOneVsOneRating, (v) {
+                    _adminEditorSlider('Bire bir', player.goalkeeperOneVsOneRating, (v) {
                       setDialogState(() => player.goalkeeperOneVsOneRating = v);
                     }),
-                    _adminEditorSlider('الكرات العالية', player.goalkeeperHighBallsRating, (v) {
+                    _adminEditorSlider('Yuksek toplar', player.goalkeeperHighBallsRating, (v) {
                       setDialogState(() => player.goalkeeperHighBallsRating = v);
                     }),
-                    _adminEditorSlider('مدى الوصول', player.goalkeeperReachRating, (v) {
+                    _adminEditorSlider('Ulasma mesafesi', player.goalkeeperReachRating, (v) {
                       setDialogState(() => player.goalkeeperReachRating = v);
                     }),
-                    _adminEditorSlider('التوقع', player.goalkeeperAnticipationRating, (v) {
+                    _adminEditorSlider('Ongoru', player.goalkeeperAnticipationRating, (v) {
                       setDialogState(() => player.goalkeeperAnticipationRating = v);
                     }),
-                    _adminEditorSlider('الإبعاد', player.goalkeeperParryingRating, (v) {
+                    _adminEditorSlider('Uzaklastirma', player.goalkeeperParryingRating, (v) {
                       setDialogState(() => player.goalkeeperParryingRating = v);
                     }),
-                    _adminEditorSlider('التوزيع', player.goalkeeperDistributionRating, (v) {
+                    _adminEditorSlider('Dagilim / pas', player.goalkeeperDistributionRating, (v) {
                       setDialogState(() => player.goalkeeperDistributionRating = v);
                     }),
                   ],
                   _adminEditorSlider(
-                    'قوة التحمّل Dayaniklilik',
+                    'Dayaniklilik gucu',
                     player.dayaniklilikGucu,
                     (v) {
                       setDialogState(() => player.dayaniklilikGucu = v);
                     },
                   ),
-                  _adminEditorSlider('قوة الذكاء', player.zekaGucu, (v) {
+                  _adminEditorSlider('Zeka gucu', player.zekaGucu, (v) {
                     setDialogState(() => player.zekaGucu = v);
                   }),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('عقوبة إيقاف بالمباريات'),
+                    title: const Text('Mac cezasi (men)'),
                     subtitle: Text(
-                      'بطاقات: ${player.yellowCards} صفراء، ${player.redCards} حمراء',
+                      'Kartlar: ${player.yellowCards} sari, ${player.redCards} kirmizi',
                     ),
                     trailing: DropdownButton<int>(
                       value: player.suspendedMatchesRemaining.clamp(0, 20).toInt(),
@@ -385,14 +385,14 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Iptal')),
             FilledButton(
               onPressed: () async {
                 await _storage.save(data);
                 if (context.mounted) Navigator.pop(context);
                 if (mounted) setState(() {});
               },
-              child: const Text('حفظ'),
+              child: const Text('Kaydet'),
             ),
           ],
         ),

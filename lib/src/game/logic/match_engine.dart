@@ -26,6 +26,10 @@ import 'shot_calculator.dart';
 
 enum TeamMode { attack, defense, press }
 
+/// Job a player gets while the opponent is on the ball. Only one man presses
+/// and a single team-mate covers, everybody else keeps his zone.
+enum DefensiveAssignment { none, presser, cover, support }
+
 enum MatchPeriod {
   firstHalf,
   secondHalf,
@@ -157,6 +161,9 @@ class MatchEngine {
   final List<PlayerGame> _forcedSubs = [];
   final Set<String> _injuryBonusAwardedPlayerIds = <String>{};
   double _replayAccumulator = 0;
+  /// Safety lock so a corner can only produce one jostling review: the
+  /// packed box used to trigger review after review and freeze the match.
+  double _cornerJostleFoulLock = 0;
 
   TeamGame get teamInPossession {
     if (ball.owner != null) {
@@ -376,8 +383,13 @@ class MatchEngine {
   }
 
   bool shouldAttackersDrop(TeamGame team) {
+    // The "cift defans" (double defence) order also sends the attackers
+    // back, on top of the automatic danger/late-game rules.
+    final override =
+        team.id == TeamId.blue ? blueTacticalOverride : redTacticalOverride;
     return teamUnderDanger(team) ||
-        (lateCloseGamePressure && teamMode(team) == TeamMode.defense);
+        (lateCloseGamePressure && teamMode(team) == TeamMode.defense) ||
+        override == TeamMode.defense;
   }
 
   bool counterOpportunityFor(TeamGame team, PlayerGame player) {
@@ -400,6 +412,7 @@ class MatchEngine {
 
   void tick(double dt) {
     if (replayMode) {
+      _recoverStaminaWhilePaused(dt);
       _tickReplay(dt);
       return;
     }
@@ -407,12 +420,14 @@ class MatchEngine {
       return;
     }
     if (substitutionPaused) {
+      _recoverStaminaWhilePaused(dt);
       return;
     }
     _tickCooldowns(dt);
 
     if (_pauseTimer > 0) {
       _pauseTimer -= dt;
+      _recoverStaminaWhilePaused(dt);
       _recordReplay(dt);
       if (_pauseTimer <= 0) {
         final callback = _afterPause;
@@ -474,6 +489,9 @@ class MatchEngine {
     _checkPeriodEnd();
     _tickAiAutoControl(dt);
 
+    final positionsBefore = <PlayerGame, Vec2>{
+      for (final player in allPlayers) player: player.pos.copy(),
+    };
     for (final team in [blueTeam, redTeam]) {
       final opponent = opponentOf(team);
       for (final player in team.players) {
@@ -498,6 +516,16 @@ class MatchEngine {
           );
         }
       }
+    }
+
+    // Fatigue bookkeeping: players who did not sprint slowly get their
+    // breath back, everybody else keeps draining.
+    for (final player in allPlayers) {
+      final before = positionsBefore[player];
+      if (before == null) {
+        continue;
+      }
+      _recoverStamina(player, player.pos.distanceTo(before), dt);
     }
 
     _ballPhysics.update(ball, dt);
@@ -548,6 +576,7 @@ class MatchEngine {
     final step =
         direction.normalized() *
         controlled.speed *
+        controlled.jumpMovementFactor *
         _teamStrengthFactor(team) *
         dt *
         60;
@@ -818,19 +847,19 @@ class MatchEngine {
       loft = 1.5 + clampedPower * 0.6;
       finalPower = 0.52 + clampedPower * 0.20;
     } else {
+      // A keeper never plays to the nearest man: he plays to the team-mate
+      // standing in the direction he is facing.
       target = player.isGoalkeeper
-          ? chooseBestPass(
-              player,
-              team.players.where(
-                (mate) =>
-                    mate != player && !mate.isGoalkeeper && !mate.isSentOff,
-              ),
-              preferForward: true,
-            )
+          ? (keeperDistributionTarget(
+                  player,
+                  high: type == KickType.highPass,
+                  goalKick: restartKind == RestartKind.goalKick,
+                ) ??
+                _targetInDirection(team, player, direction))
           : _targetInDirection(team, player, direction);
       kickDirection = target == null
           ? (player.isGoalkeeper
-                ? Vec2(team.attackDirection.toDouble(), 0)
+                ? player.lastDirection.normalized(direction)
                 : direction)
           : target.pos - ball.pos;
       if (type == KickType.highPass) {
@@ -1017,6 +1046,107 @@ class MatchEngine {
     return vacancy?.homePos.copy();
   }
 
+  /// True when the ball is in the half this team attacks.
+  bool isBallInOpponentHalf(TeamGame team) {
+    final centerX = GameConstants.virtualWidth / 2;
+    return team.attackDirection == 1
+        ? ball.pos.x > centerX + 8
+        : ball.pos.x < centerX - 8;
+  }
+
+  /// How far a defender is allowed to step up while the ball is still in his
+  /// own half (rest defence). He never crosses the half-way line there.
+  double restDefenceLine(TeamGame team, PlayerGame player) {
+    final d = team.attackDirection;
+    final centerX = GameConstants.virtualWidth / 2;
+    final stepped = player.homePos.x + d * 48;
+    return d == 1
+        ? math.min(stepped, centerX - 28)
+        : math.max(stepped, centerX + 28);
+  }
+
+  /// No player of [team] may stand ahead of this line while the opponent
+  /// carries the ball: the carrier must never be behind the last defender.
+  double defensiveLineLimit(TeamGame team) {
+    final d = team.attackDirection;
+    final reference = ball.owner != null ? ball.owner!.pos.x : ball.pos.x;
+    return reference - d * 15;
+  }
+
+  /// The single player of [team] who is allowed to chase a loose ball.
+  /// Every other player holds his position, so the team never swarms.
+  PlayerGame? ballChaserFor(TeamGame team) {
+    PlayerGame? best;
+    var bestScore = double.infinity;
+    for (final player in team.players) {
+      if (player.isSentOff) {
+        continue;
+      }
+      if (player.isGoalkeeper && !isInPenaltyBox(ball.pos, team.id)) {
+        continue;
+      }
+      final distance = player.pos.distanceTo(ball.pos);
+      final aerial = ball.heightMeters > 1.0;
+      final ability = aerial
+          ? (0.60 +
+                  (player.profile.heightMeters - 1.72) * 1.25 +
+                  (player.role.isDefender ? 0.16 : 0.0))
+              .clamp(0.35, 1.55)
+              .toDouble()
+          : 1.0;
+      final score = distance / math.max(0.4, player.speed * ability);
+      if (score < bestScore) {
+        bestScore = score;
+        best = player;
+      }
+    }
+    return best;
+  }
+
+  /// One presser + one covering team-mate. Used so the whole team stops
+  /// running at the ball carrier and the defensive line stays intact.
+  DefensiveAssignment defensiveAssignmentFor(TeamGame team, PlayerGame player) {
+    if (player.isGoalkeeper || player.isSentOff) {
+      return DefensiveAssignment.none;
+    }
+    final carrier = ball.owner;
+    if (carrier == null || carrier.teamId == team.id) {
+      return DefensiveAssignment.none;
+    }
+    final candidates = team.players
+        .where((mate) => !mate.isGoalkeeper && !mate.isSentOff)
+        .toList()
+      ..sort(
+        (a, b) => a.pos
+            .distanceTo(carrier.pos)
+            .compareTo(b.pos.distanceTo(carrier.pos)),
+      );
+    if (candidates.isEmpty) {
+      return DefensiveAssignment.none;
+    }
+    if (candidates.first == player) {
+      return DefensiveAssignment.presser;
+    }
+    if (candidates.length < 2 || candidates[1] != player) {
+      return DefensiveAssignment.none;
+    }
+    final pressMode = effectiveTeamMode(team) == TeamMode.press;
+    final goalCenter = goalCenterFor(team);
+    final danger = carrier.pos.distanceTo(goalCenter) < 320;
+    final closeEnough = candidates[1].pos.distanceTo(carrier.pos) < 240;
+    if ((pressMode || danger) && closeEnough) {
+      return DefensiveAssignment.cover;
+    }
+    // The double press adds a third man who shuts the next passing lane.
+    if (pressMode &&
+        candidates.length > 2 &&
+        candidates[2] == player &&
+        candidates[2].pos.distanceTo(carrier.pos) < 300) {
+      return DefensiveAssignment.support;
+    }
+    return DefensiveAssignment.none;
+  }
+
   void moveTowards(PlayerGame player, Vec2 target, double force, double dt) {
     final diff = target - player.pos;
     if (diff.lengthSquared <= 1) {
@@ -1025,6 +1155,7 @@ class MatchEngine {
     var step =
         diff.normalized() *
         player.speed *
+        player.jumpMovementFactor *
         _teamStrengthFactor(teamById(player.teamId)) *
         force *
         dt *
@@ -1051,6 +1182,79 @@ class MatchEngine {
     }
     player.keepInsideField();
     _clampRestartPosition(player);
+  }
+
+  /// The team-mate who offers himself for the short pass when the keeper
+  /// has the ball (normally a defender standing beside the six-yard area).
+  PlayerGame? keeperPassOptionFor(TeamGame team, PlayerGame keeper) {
+    return _goalKickReceiver(team, keeper);
+  }
+
+  /// Where that team-mate waits: close to the keeper, never on top of him.
+  Vec2 keeperSupportSpot(TeamGame team, PlayerGame keeper) {
+    return _goalKickSupportSpot(team, keeper);
+  }
+
+  /// Chooses who the keeper passes to. The ball always travels towards the
+  /// side the keeper is facing/turning to: the game never snaps the pass to
+  /// the nearest team-mate standing behind his back.
+  PlayerGame? keeperDistributionTarget(
+    PlayerGame keeper, {
+    required bool high,
+    required bool goalKick,
+  }) {
+    final team = teamById(keeper.teamId);
+    final facing = keeper.lastDirection.normalized(
+      Vec2(team.attackDirection.toDouble(), 0),
+    );
+    final opponents =
+        opponentOf(team).players.where((player) => !player.isSentOff).toList();
+    PlayerGame? best;
+    var bestScore = -9999.0;
+    PlayerGame? fallback;
+    var fallbackAlignment = -9999.0;
+    for (final mate in team.players) {
+      if (mate == keeper || mate.isGoalkeeper || mate.isSentOff) {
+        continue;
+      }
+      final toMate = mate.pos - keeper.pos;
+      final distance = toMate.length;
+      if (distance < 26) {
+        continue;
+      }
+      final alignment = facing.dot(toMate.normalized(facing));
+      if (alignment > fallbackAlignment) {
+        fallbackAlignment = alignment;
+        fallback = mate;
+      }
+      if (alignment <= 0.05) {
+        continue; // behind the keeper: not a realistic option
+      }
+      double nearestOpponent = 999.0;
+      for (final opponent in opponents) {
+        final gap = opponent.pos.distanceTo(mate.pos);
+        if (gap < nearestOpponent) {
+          nearestOpponent = gap;
+        }
+      }
+      final openBonus = (nearestOpponent / 58).clamp(0.0, 1.7).toDouble();
+      final forwardBonus =
+          (((mate.pos.x - keeper.pos.x) * team.attackDirection) / 240)
+              .clamp(-0.7, 1.25)
+              .toDouble();
+      final rangeBonus = high
+          ? (goalKick ? (distance / 700).clamp(0.0, 1.0).toDouble() : 0.0)
+          : (1.0 - (distance / 900).clamp(0.0, 1.0).toDouble());
+      final score = alignment * 2.4 +
+          openBonus * 1.45 +
+          forwardBonus * (high ? 1.05 : 0.40) +
+          rangeBonus * 0.85;
+      if (score > bestScore) {
+        bestScore = score;
+        best = mate;
+      }
+    }
+    return best ?? fallback;
   }
 
   bool distributeFromGoalkeeper(
@@ -1099,25 +1303,32 @@ class MatchEngine {
         nearestCapped = mate;
       }
     }
-    final target =
-        // Short distribution: pass to the nearest OPEN teammate (the one
-        // with no opponent marking him). If everyone is marked, fall back
-        // to the nearest candidate.
-        high
-        ? (chooseBestPass(
+    final directionTarget = keeperDistributionTarget(
+      keeper,
+      high: high,
+      goalKick: goalKick,
+    );
+    final PlayerGame? target =
+        // Distribution always looks for a team-mate in the direction the
+        // keeper is facing before it falls back to the nearest option.
+        directionTarget ??
+        (high
+            ? (chooseBestPass(
+                    keeper,
+                    preferred.isEmpty ? capped : preferred.where(capped.contains),
+                    preferForward: true,
+                  ) ??
+                  nearestCapped ??
+                  team.closestTo(keeper.homePos, includeGoalkeeper: false))
+            : _nearestOpenTeammate(
                 keeper,
-                preferred.isEmpty ? capped : preferred.where(capped.contains),
-                preferForward: true,
-              ) ??
-              nearestCapped ??
-              team.closestTo(keeper.homePos, includeGoalkeeper: false))
-        : _nearestOpenTeammate(
-            keeper,
-            preferred.isEmpty ? capped : preferred,
-            opponent,
-            team,
-          );
+                preferred.isEmpty ? capped : preferred,
+                opponent,
+                team,
+              ));
     final forward = Vec2(team.attackDirection.toDouble(), 0);
+    // The keeper plays the ball where he is actually looking.
+    final facingDirection = keeper.lastDirection.normalized(forward);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
     final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
@@ -1130,7 +1341,7 @@ class MatchEngine {
         .toDouble();
     releaseFromPlayer(
       keeper,
-      target.pos - ball.pos,
+      target == null ? facingDirection : target.pos - ball.pos,
       kickPower,
       type: high ? KickType.highPass : KickType.pass,
       target: target,
@@ -1391,6 +1602,7 @@ class MatchEngine {
         _cornerManualWaitTeamId = null;
       }
     }
+    _cornerJostleFoulLock = math.max(0, _cornerJostleFoulLock - dt);
     _recentKickerGrace = math.max(0, _recentKickerGrace - dt);
     if (_recentKickerGrace <= 0) {
       _recentKicker = null;
@@ -1424,7 +1636,14 @@ class MatchEngine {
         0,
         player.keeperRehandleCooldown - dt,
       );
+      final wasInTheAir = player.jumpAnimationTimer > 0;
       player.jumpAnimationTimer = math.max(0, player.jumpAnimationTimer - dt);
+      if (wasInTheAir && player.jumpAnimationTimer <= 0) {
+        // Landing costs a moment: the player straightens up before he can
+        // run at full speed again.
+        player.jumpLandingTimer = player.isGoalkeeper ? 0.36 : 0.30;
+      }
+      player.jumpLandingTimer = math.max(0, player.jumpLandingTimer - dt);
       if (player.isGoalkeeper) {
         if (player.keeperGroundTimer <= 0) {
           player.keeperState = ball.owner == player ? 'top elde' : 'hazir';
@@ -1462,9 +1681,6 @@ class MatchEngine {
           }
           final defendingTeam = teamById(defender.teamId);
           final cautious = defender.yellowCardsThisMatch > 0;
-          final tackleChance =
-              (defender.role.isDefender ? 0.34 : 0.22) *
-              (cautious ? 0.72 : 1.0);
           final lateContact =
               (owner.pos.x - defender.pos.x) *
                   teamById(owner.teamId).attackDirection >
@@ -1484,6 +1700,11 @@ class MatchEngine {
           if (contactSeverity >= 1.30) {
             _checkInjury(owner, violent: true, reckless: true);
           }
+          final tackleChance = tackleDuel(
+            defender,
+            owner,
+            lateContact: lateContact,
+          ) * (cautious ? 0.72 : 1.0);
           var foulChance =
               0.006 +
               (lateContact ? 0.035 : 0) +
@@ -1646,8 +1867,11 @@ class MatchEngine {
         return;
       }
 
-      final controlChance =
-          (player.isGoalkeeper ? 0.82 : 0.94) - player.errorFactor * 0.18;
+      // The first touch is a skill check: a heavy touch or a bad bounce and
+      // the ball simply rebounds off the player and stays live.
+      final controlChance = player.isGoalkeeper
+          ? math.max(controlQuality(player), 0.80)
+          : controlQuality(player);
       if (random.nextDouble() < controlChance) {
         _recordReception(player);
         if (player.isGoalkeeper && ball.lastKickType == KickType.shoot) {
@@ -1661,6 +1885,73 @@ class MatchEngine {
       }
       return;
     }
+  }
+
+  /// How much pressure (0-1) the closest opponent puts on [player].
+  double _pressureAround(PlayerGame player) {
+    var pressure = 0.0;
+    for (final opponent in opponentOf(teamById(player.teamId)).players) {
+      if (opponent.isSentOff) {
+        continue;
+      }
+      final distance = opponent.pos.distanceTo(player.pos);
+      if (distance > 46) {
+        continue;
+      }
+      final value = (1 - distance / 46).clamp(0.0, 1.0).toDouble();
+      if (value > pressure) {
+        pressure = value;
+      }
+    }
+    return pressure;
+  }
+
+  /// Quality of the first touch. Reading the bounce (zeka gucu), balance and
+  /// composure decide whether the ball sticks or simply rebounds off the
+  /// player and stays live for the opponent.
+  double controlQuality(PlayerGame player) {
+    final profile = player.profile;
+    final base = 0.50 +
+        profile.zekaSkill * 0.17 +
+        profile.balanceSkill * 0.14 +
+        profile.composureSkill * 0.11 +
+        profile.passSkill * 0.08;
+    final speedPenalty = math.max(0.0, ball.vel.length - 4.0) * 0.035;
+    final heightPenalty = math.max(0.0, ball.heightMeters - 0.6) * 0.10;
+    final fatiguePenalty = (1 - player.stamina) * 0.12;
+    final pressurePenalty = _pressureAround(player) * 0.12;
+    return (base -
+            speedPenalty -
+            heightPenalty -
+            fatiguePenalty -
+            pressurePenalty)
+        .clamp(0.06, 0.985)
+        .toDouble();
+  }
+
+  /// Duel between the tackler and the carrier: reading of the game (zeka
+  /// gucu), physical strength (dayaniklilik gucu) and balance decide who
+  /// keeps the ball.
+  double tackleDuel(
+    PlayerGame tackler,
+    PlayerGame carrier, {
+    required bool lateContact,
+  }) {
+    final read = tackler.profile.zekaSkill * 0.30 +
+        tackler.profile.staminaSkill * 0.10;
+    final strength = tackler.profile.dayaniklilikSkill * 0.22 +
+        tackler.profile.balanceSkill * 0.12;
+    final roleBonus = tackler.role.isDefender ? 0.12 : 0.0;
+    final freshness = 0.5 + tackler.stamina * 0.5;
+    final attackerHold = carrier.profile.balanceSkill * 0.24 +
+        carrier.profile.zekaSkill * 0.16 +
+        carrier.profile.dayaniklilikSkill * 0.14 +
+        (carrier.role.isAttacker || carrier.role.isWide ? 0.08 : 0.0);
+    final carrierFreshness = 0.5 + carrier.stamina * 0.5;
+    final score = (0.10 + read + strength + roleBonus) * freshness -
+        attackerHold * carrierFreshness -
+        (lateContact ? 0.06 : 0.0);
+    return score.clamp(0.06, 0.62).toDouble();
   }
 
   bool _canReachBall(PlayerGame player) {
@@ -1894,7 +2185,11 @@ class MatchEngine {
 
         // About 10% of corners end in a foul from the box wrestling:
         // ~0.35% per touching pair per second, over roughly 30 contact
-        // pair-seconds per corner => ~10% per corner.
+        // pair-seconds per corner => ~10% per corner. A corner can only
+        // produce one such review and never more than one at a time.
+        if (_cornerJostleFoulLock > 0 || varReviewActive || _pauseTimer > 0) {
+          continue;
+        }
         final foulChance = 0.0035 * dt;
         if (random.nextDouble() >= foulChance) {
           continue;
@@ -1907,6 +2202,7 @@ class MatchEngine {
         final foulSpot = victim.pos.copy();
         final inBox = isInPenaltyBox(foulSpot, fouler.teamId);
         fouler.tackleContactCooldown = 1.4;
+        _cornerJostleFoulLock = 14.0;
         _startVarDecision(
           title: inBox ? 'VAR PENALTI KONTROLU' : 'VAR FAUL KONTROLU',
           reason:
@@ -1943,8 +2239,16 @@ class MatchEngine {
         final diff = b.pos - a.pos;
         final distance = diff.length;
         final minDistance = a.radius + b.radius + minExtra;
-        if (distance > 0 && distance < minDistance) {
-          final direction = diff.normalized();
+        if (distance < minDistance) {
+          // Two players can land on exactly the same pixel after a jump.
+          // Without a deterministic fallback direction they would stay
+          // stacked forever and the match would appear to be frozen.
+          final direction = distance > 0.001
+              ? diff.normalized()
+              : Vec2(
+                  (a.teamId == b.teamId ? 1 : -1) * (a.number.isEven ? 1.0 : -1.0),
+                  a.number.isEven ? 0.35 : -0.35,
+                ).normalized();
           final overlap = minDistance - distance;
           a.pos = a.pos - direction * (overlap / 2);
           b.pos = b.pos + direction * (overlap / 2);
@@ -2836,6 +3140,12 @@ class MatchEngine {
     required List<String> options,
     required void Function(String decision) resolve,
   }) {
+    // Never stack a second review on top of a running one: the first
+    // decision callback would be dropped and the match would stay paused
+    // forever.
+    if (varReviewActive || _pauseTimer > 0 || _varDecisionResolver != null) {
+      return;
+    }
     final reviewTimelineEvent = _recordTimelineEvent(
       kind: 'var',
       title: title,
@@ -2865,11 +3175,27 @@ class MatchEngine {
     );
   }
 
+  /// Turkish label of a VAR decision, shared by the engine banners and the
+  /// VAR panel in the UI.
+  static String varDecisionLabel(String decision) => switch (decision) {
+        'playOn' => 'Devam / karar yok',
+        'foul' => 'Faul, kart yok',
+        'yellow' => 'Sari kart',
+        'red' => 'Kirmizi kart',
+        'handball' => 'El, kart yok',
+        'onside' => 'Ofsayt yok',
+        'offside' => 'Ofsayt',
+        'confirm' => 'Karari onayla',
+        'cancel' => 'Karari iptal et',
+        _ => decision,
+      };
+
   void resolveVarDecision(String decision) {
     if (!varReviewActive || !varDecisionOptions.contains(decision)) {
       return;
     }
     final resolver = _varDecisionResolver;
+    final reason = varReason;
     _pauseTimer = 0;
     _afterPause = null;
     banner = null;
@@ -2881,6 +3207,17 @@ class MatchEngine {
     _varDecisionResolver = null;
     currentOffside = null;
     resolver?.call(decision);
+    // The match restarts exactly one second after leaving the VAR screen,
+    // whether the decision was confirmed or cancelled.
+    if (!finished && _pauseTimer <= 0 && !replayMode) {
+      _startPause(
+        'VAR KARARI: ${varDecisionLabel(decision)}',
+        reason ?? '',
+        1.0,
+        null,
+        kind: 'var',
+      );
+    }
   }
 
   MatchTimelineEvent _recordTimelineEvent({
@@ -3550,14 +3887,60 @@ class MatchEngine {
         : player.role.isWide || player.role.isAttacker
         ? 1.12
         : 0.92;
+    // Sprinting and sharp turns cost noticeably more than jogging.
+    final intensity = 1.0 +
+        player.movementIntensity * 0.35 +
+        player.turningIntensity * 0.14;
     player.stamina = math.max(
       0.12,
       player.stamina -
           pixelDistance *
-              0.000014 *
+              0.0000125 *
               roleLoad *
+              intensity *
               (1.20 - player.profile.staminaSkill * 0.52),
     );
+  }
+
+  /// In-match recovery. Fatigue only eases when a player is not sprinting:
+  /// standing or walking gives back 1-2% per MATCH MINUTE at most, so a
+  /// short break such as a VAR review changes almost nothing.
+  void _recoverStamina(PlayerGame player, double movedPixels, double dt) {
+    if (dt <= 0 || player.stamina >= 1.0) {
+      return;
+    }
+    final frames = math.max(0.0001, dt * 60);
+    final pixelsPerFrame = movedPixels / frames;
+    final double perMinute;
+    if (pixelsPerFrame > 2.1) {
+      return; // sprinting: no recovery at all
+    } else if (pixelsPerFrame > 0.9) {
+      perMinute = 0.004 + player.profile.staminaSkill * 0.004;
+    } else {
+      perMinute = 0.010 + player.profile.staminaSkill * 0.010;
+    }
+    final gameMinutes = dt / GameConstants.realSecondsPerGameMinute;
+    player.stamina = math.min(
+      1.0,
+      player.stamina + gameMinutes * perMinute,
+    );
+  }
+
+  /// Recovery while the match is stopped (VAR, goal, half time, replay).
+  /// Deliberately tiny: at most 1% per match minute, so a review lasting a
+  /// few seconds gives back a fraction of a percent instead of refilling
+  /// the bar.
+  void _recoverStaminaWhilePaused(double dt) {
+    if (dt <= 0) {
+      return;
+    }
+    final gameMinutes = dt / GameConstants.realSecondsPerGameMinute;
+    for (final player in allPlayers) {
+      if (player.stamina >= 1.0) {
+        continue;
+      }
+      player.stamina = math.min(1.0, player.stamina + gameMinutes * 0.008);
+    }
   }
 
   /// Pressing costs extra energy through the engine, so it cannot conflict
@@ -3573,7 +3956,7 @@ class MatchEngine {
       final endurance = 1.18 - player.profile.staminaSkill * 0.42;
       player.stamina = math.max(
         0.12,
-        player.stamina - dt * 0.0024 * endurance,
+        player.stamina - dt * 0.0075 * endurance,
       );
     }
   }
@@ -3605,7 +3988,8 @@ class MatchEngine {
       return;
     }
     final team = teamById(player.teamId);
-    final step = direction * player.speed * _teamStrengthFactor(team) * dt * 60;
+    final step =
+        direction * player.speed * player.jumpMovementFactor * _teamStrengthFactor(team) * dt * 60;
     player.pos = player.pos + step;
     _drainStamina(player, step.length);
     final movementDirection = direction.normalized();
@@ -4052,18 +4436,117 @@ class MatchEngine {
     );
   }
 
+  /// Goal-kick shape:
+  ///  * the team taking the kick keeps its natural shape — nobody runs
+  ///    towards the half-way line and nobody crowds his own keeper;
+  ///  * one team-mate (normally a defender) offers a short option beside
+  ///    the keeper so the ball can always be played out safely;
+  ///  * the opponents have to leave the penalty area and retreat.
+  void _shapeGoalKickPlayers(TeamGame restartTeam, TeamGame defending) {
+    for (final player in allPlayers) {
+      player.restartTarget = null;
+    }
+    final keeper = ball.owner;
+    if (keeper == null) {
+      return;
+    }
+    for (final player in restartTeam.players) {
+      if (player == keeper || player.isSentOff) {
+        continue;
+      }
+      player.restartTarget = _goalKickHoldSpot(player);
+    }
+    final receiver = _goalKickReceiver(restartTeam, keeper);
+    if (receiver != null) {
+      receiver.restartTarget = _goalKickSupportSpot(restartTeam, keeper);
+    }
+    for (final player in defending.players) {
+      if (player.isSentOff) {
+        continue;
+      }
+      player.restartTarget = _goalKickRetreatSpot(restartTeam, player);
+    }
+  }
+
+  /// The player's own formation spot: he simply keeps his natural place.
+  Vec2 _goalKickHoldSpot(PlayerGame player) {
+    final spot = player.homePos.copy();
+    spot.clampTo(
+      GameConstants.leftBound + 40,
+      GameConstants.topBound + 34,
+      GameConstants.rightBound - 40,
+      GameConstants.bottomBound - 34,
+    );
+    return spot;
+  }
+
+  /// The team-mate who comes close to the keeper for the short pass. A
+  /// defender is preferred — exactly like a real goal kick.
+  PlayerGame? _goalKickReceiver(TeamGame team, PlayerGame keeper) {
+    PlayerGame? best;
+    var bestScore = double.infinity;
+    for (final player in team.players) {
+      if (player == keeper || player.isGoalkeeper || player.isSentOff) {
+        continue;
+      }
+      final roleBonus = player.role.isDefender ? 90.0 : 0.0;
+      final score = player.pos.distanceTo(keeper.pos) - roleBonus;
+      if (score < bestScore) {
+        bestScore = score;
+        best = player;
+      }
+    }
+    return best;
+  }
+
+  /// Next to the keeper, but outside the six-yard area: he offers himself
+  /// for the pass without ever attacking his own keeper.
+  Vec2 _goalKickSupportSpot(TeamGame team, PlayerGame keeper) {
+    final d = team.attackDirection;
+    final centerY = GameConstants.virtualHeight / 2;
+    final side = keeper.pos.y <= centerY ? -1.0 : 1.0;
+    final spot = Vec2(
+      keeper.pos.x + d * 78,
+      keeper.pos.y + side * 72,
+    );
+    spot.clampTo(
+      GameConstants.leftBound + 52,
+      GameConstants.topBound + 52,
+      GameConstants.rightBound - 52,
+      GameConstants.bottomBound - 52,
+    );
+    return spot;
+  }
+
+  /// Opponents must leave the penalty area and step back. Players who are
+  /// already outside simply hold their position.
+  Vec2? _goalKickRetreatSpot(TeamGame restartTeam, PlayerGame player) {
+    final outsideX = restartTeam.side == TeamSide.left
+        ? GameConstants.leftBound + 152 + 42
+        : GameConstants.rightBound - 152 - 42;
+    final alreadyOut = restartTeam.side == TeamSide.left
+        ? player.pos.x >= outsideX
+        : player.pos.x <= outsideX;
+    if (alreadyOut) {
+      return null;
+    }
+    final spot = Vec2(outsideX, player.pos.y);
+    spot.clampTo(
+      GameConstants.leftBound + 40,
+      GameConstants.topBound + 34,
+      GameConstants.rightBound - 40,
+      GameConstants.bottomBound - 34,
+    );
+    return spot;
+  }
+
   void _shapeRestartPlayers(
     TeamGame restartTeam,
     TeamGame defending, {
     required bool isCorner,
   }) {
     if (!isCorner) {
-      // Goal kick: every player keeps his current position — nobody is
-      // sent back to the halfway line. The restart position clamps only
-      // push opponents out of the penalty area.
-      for (final player in allPlayers) {
-        player.restartTarget = null;
-      }
+      _shapeGoalKickPlayers(restartTeam, defending);
       return;
     }
     final targetBoxX = defending.side == TeamSide.left
@@ -4467,10 +4950,9 @@ class MatchEngine {
       final rawDays = minimum + random.nextInt(spread);
       final durationFactor = (1.34 - resistance * 0.72).clamp(0.62, 1.30);
       final days = (rawDays * durationFactor).round().clamp(4, 90).toInt();
-      victim.profile.injuredDaysRemaining = days;
-      // The recovery clock starts now: every real day reduces the injury
-      // by one day.
-      victim.profile.injuryUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+      // The recovery clock starts now: the injury date, its length and the
+      // expected end date are all stored on the player.
+      victim.profile.applyInjury(days, DateTime.now());
       victim.isInjuredInMatch = true;
       injuryEvents.add(
         InjuryEvent(
@@ -4736,33 +5218,45 @@ class MatchEngine {
       return Vec2(supportX, supportY);
     }
 
-    // If opponent has the ball, defend
+    // If opponent has the ball, defend. The same "one presser + one cover"
+    // rule as the rest of the team applies, so the line stays goal-side of
+    // the carrier instead of everybody chasing the ball.
     if (ball.owner != null && ball.owner!.teamId != team.id) {
       final carrier = ball.owner!;
-      final distToCarrier = controlled.pos.distanceTo(carrier.pos);
-      final pressRange =
-          140 * difficulty.aggressionFactor * style.pressingIntensity;
-      if (distToCarrier < pressRange || controlled.role.isDefender) {
-        // Pressure the ball carrier
-        return carrier.pos - Vec2(team.attackDirection * 16, 0);
+      final goalCenter = goalCenterFor(team);
+      final toGoal = (goalCenter - carrier.pos).normalized(Vec2(0, 1));
+      final assignment = defensiveAssignmentFor(team, controlled);
+      if (assignment == DefensiveAssignment.presser) {
+        return carrier.pos + toGoal * 9;
       }
-      // Defensive positioning - affected by defensive line
+      if (assignment == DefensiveAssignment.cover) {
+        return carrier.pos + toGoal * 62;
+      }
+      if (assignment == DefensiveAssignment.support) {
+        return carrier.pos + toGoal * 122;
+      }
+      // Defensive positioning - affected by defensive line and always
+      // goal-side of the ball carrier.
       final defensiveDepth = 80 * style.defensiveLineFactor;
-      final defendX = team.side == TeamSide.left
-          ? carrier.pos.x - defensiveDepth
-          : carrier.pos.x + defensiveDepth;
+      final defendX = carrier.pos.x - team.attackDirection * defensiveDepth;
+      final defendY = carrier.pos.y +
+          (controlled.homePos.y - carrier.pos.y) * 0.45;
       return Vec2(
         defendX
             .clamp(GameConstants.leftBound + 40, GameConstants.rightBound - 40)
             .toDouble(),
-        carrier.pos.y
+        defendY
             .clamp(GameConstants.topBound + 40, GameConstants.bottomBound - 40)
             .toDouble(),
       );
     }
 
-    // Loose ball - go get it
-    return ballPos;
+    // Loose ball - only the best placed man goes for it, the others keep
+    // their shape.
+    if (ballChaserFor(team) == controlled) {
+      return ballPos;
+    }
+    return controlled.homePos.copy();
   }
 
   void _tickAiKickDecision(TeamId id, PlayerGame controlled, double dt) {

@@ -47,6 +47,14 @@ class _GameScreenState extends State<GameScreen>
   bool _redPressing = false;
   bool _blueDefending = false;
   bool _redDefending = false;
+  /// After the engine hands control to another player (for example the
+  /// keeper who just caught the ball) the new player only reacts once the
+  /// movement keys have been released — exactly like a real gamepad stick.
+  final Map<TeamId, bool> _stickLocked = <TeamId, bool>{
+    TeamId.blue: false,
+    TeamId.red: false,
+  };
+  final Map<TeamId, String> _lastControlledIds = <TeamId, String>{};
   bool _injurySubActive = false;
   PlayerGame? _injuryVictim;
   final Set<String> _wallPlayerIds = {};
@@ -98,22 +106,8 @@ class _GameScreenState extends State<GameScreen>
     if (_engine.activePenalty != null) {
       return;
     }
-    final blue = _engine.blueAiControlled
-        ? Vec2.zero()
-        : Vec2(
-            (_isPressed(LogicalKeyboardKey.arrowRight) ? 1 : 0) -
-                (_isPressed(LogicalKeyboardKey.arrowLeft) ? 1 : 0),
-            (_isPressed(LogicalKeyboardKey.arrowDown) ? 1 : 0) -
-                (_isPressed(LogicalKeyboardKey.arrowUp) ? 1 : 0),
-          );
-    final red = _engine.redAiControlled
-        ? Vec2.zero()
-        : Vec2(
-            (_isPressed(LogicalKeyboardKey.keyD) ? 1 : 0) -
-                (_isPressed(LogicalKeyboardKey.keyA) ? 1 : 0),
-            (_isPressed(LogicalKeyboardKey.keyS) ? 1 : 0) -
-                (_isPressed(LogicalKeyboardKey.keyW) ? 1 : 0),
-          );
+    final blue = _movementVector(TeamId.blue);
+    final red = _movementVector(TeamId.red);
     _engine.moveControlledTeam(TeamId.blue, blue, dt);
     _engine.moveControlledTeam(TeamId.red, red, dt);
     if (!blue.isZero) {
@@ -126,6 +120,59 @@ class _GameScreenState extends State<GameScreen>
     // Extra stamina drain when pressing
     if (_bluePressing) _drainPressStamina(TeamId.blue, dt);
     if (_redPressing) _drainPressStamina(TeamId.red, dt);
+  }
+
+  /// True when [playerId] belongs to the goalkeeper of [id].
+  bool _isGoalkeeperId(TeamId id, String playerId) {
+    for (final player in _engine.teamById(id).players) {
+      if (player.id == playerId) {
+        return player.isGoalkeeper;
+      }
+    }
+    return false;
+  }
+
+  /// Reads the movement keys of [id] and applies the stick-release rule:
+  /// whenever the engine switches the controlled player, the new player
+  /// does not move until the keys are let go and pressed again.
+  Vec2 _movementVector(TeamId id) {
+    if (_engine.isTeamAiControlled(id)) {
+      return Vec2.zero();
+    }
+    final blue = id == TeamId.blue;
+    final left = blue ? LogicalKeyboardKey.arrowLeft : LogicalKeyboardKey.keyA;
+    final right = blue ? LogicalKeyboardKey.arrowRight : LogicalKeyboardKey.keyD;
+    final up = blue ? LogicalKeyboardKey.arrowUp : LogicalKeyboardKey.keyW;
+    final down = blue ? LogicalKeyboardKey.arrowDown : LogicalKeyboardKey.keyS;
+    final anyPressed =
+        _isPressed(left) || _isPressed(right) || _isPressed(up) || _isPressed(down);
+
+    final controlled = _engine.controlledPlayer(id);
+    final previous = _lastControlledIds[id];
+    if (previous != null && previous != controlled.id) {
+      // Control moved to another player. When the keeper is involved (he
+      // just caught the ball, or the ball leaves his hands) the new player
+      // waits for a clean key release: the user has to take his fingers off
+      // the keys before he can run off with him.
+      final previousKeeper = _isGoalkeeperId(id, previous);
+      final nowKeeper = controlled.isGoalkeeper;
+      if (previousKeeper || nowKeeper) {
+        _stickLocked[id] = true;
+      }
+    }
+    _lastControlledIds[id] = controlled.id;
+
+    if (_stickLocked[id] ?? false) {
+      if (anyPressed) {
+        // The player still has to lift his fingers off the keys.
+        return Vec2.zero();
+      }
+      _stickLocked[id] = false;
+    }
+    return Vec2(
+      (_isPressed(right) ? 1 : 0) - (_isPressed(left) ? 1 : 0),
+      (_isPressed(down) ? 1 : 0) - (_isPressed(up) ? 1 : 0),
+    );
   }
 
   Future<void> _confirmExitMatch() async {
@@ -144,13 +191,13 @@ class _GameScreenState extends State<GameScreen>
           size: 36,
         ),
         title: const Text(
-          'هل تريد الخروج من المباراة؟',
+          'Mactan cikmak istiyor musun?',
           textAlign: TextAlign.center,
         ),
         content: Text(
           _engine.finished
-              ? 'سيتم الرجوع إلى القائمة مع حفظ نتيجة المباراة.'
-              : 'المباراة لم تنتهِ بعد. إذا خرجت الآن فلن تُحفظ نتيجة هذه المباراة.',
+              ? 'Mac sonucu kaydedilerek listeye donulecek.'
+              : 'Mac henuz bitmedi. Simdi cikarsan bu macin sonucu kaydedilmez.',
           textAlign: TextAlign.center,
           style: const TextStyle(color: Colors.white70, height: 1.4),
         ),
@@ -159,7 +206,7 @@ class _GameScreenState extends State<GameScreen>
           OutlinedButton.icon(
             onPressed: () => Navigator.of(dialogContext).pop(false),
             icon: const Icon(Icons.sports_soccer),
-            label: const Text('لا، متابعة المباراة'),
+            label: const Text('Hayir, macta kal'),
           ),
           FilledButton.icon(
             style: FilledButton.styleFrom(
@@ -167,7 +214,7 @@ class _GameScreenState extends State<GameScreen>
             ),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             icon: const Icon(Icons.exit_to_app),
-            label: const Text('نعم، خروج'),
+            label: const Text('Evet, cik'),
           ),
         ],
       ),
@@ -241,50 +288,55 @@ class _GameScreenState extends State<GameScreen>
         setState(() {});
         return;
       }
-      // Tactical override keys
-      if (key == LogicalKeyboardKey.numpad0 && !_engine.blueAiControlled) {
-        setState(() {
-          _bluePressing = !_bluePressing;
-          _blueDefending = false;
-          _engine.setTacticalOverride(
-            TeamId.blue,
-            _bluePressing ? TeamMode.press : null,
-          );
-        });
-        return;
-      }
-      if (key == LogicalKeyboardKey.numpadDecimal &&
+      // Tactical override keys: letters, easy to reach while playing.
+      //   Blue: F = cift pres, G = cift defans
+      //   Red:  H = cift pres, J = cift defans
+      if ((key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.keyG) &&
           !_engine.blueAiControlled) {
         setState(() {
-          _blueDefending = !_blueDefending;
-          _bluePressing = false;
+          final press = key == LogicalKeyboardKey.keyF;
+          _bluePressing = press ? !_bluePressing : false;
+          _blueDefending = press ? false : !_blueDefending;
           _engine.setTacticalOverride(
             TeamId.blue,
-            _blueDefending ? TeamMode.defense : null,
+            _bluePressing
+                ? TeamMode.press
+                : _blueDefending
+                ? TeamMode.defense
+                : null,
           );
         });
+        _showSwitchHint(
+          _bluePressing
+              ? 'Mavi: CIFT PRES acik (F)'
+              : _blueDefending
+              ? 'Mavi: CIFT DEFANS acik (G)'
+              : 'Mavi: taktik kapatildi',
+        );
         return;
       }
-      if (key == LogicalKeyboardKey.digit0 && !_engine.redAiControlled) {
+      if ((key == LogicalKeyboardKey.keyH || key == LogicalKeyboardKey.keyJ) &&
+          !_engine.redAiControlled) {
         setState(() {
-          _redPressing = !_redPressing;
-          _redDefending = false;
+          final press = key == LogicalKeyboardKey.keyH;
+          _redPressing = press ? !_redPressing : false;
+          _redDefending = press ? false : !_redDefending;
           _engine.setTacticalOverride(
             TeamId.red,
-            _redPressing ? TeamMode.press : null,
+            _redPressing
+                ? TeamMode.press
+                : _redDefending
+                ? TeamMode.defense
+                : null,
           );
         });
-        return;
-      }
-      if (key == LogicalKeyboardKey.backquote && !_engine.redAiControlled) {
-        setState(() {
-          _redDefending = !_redDefending;
-          _redPressing = false;
-          _engine.setTacticalOverride(
-            TeamId.red,
-            _redDefending ? TeamMode.defense : null,
-          );
-        });
+        _showSwitchHint(
+          _redPressing
+              ? 'Kirmizi: CIFT PRES acik (H)'
+              : _redDefending
+              ? 'Kirmizi: CIFT DEFANS acik (J)'
+              : 'Kirmizi: taktik kapatildi',
+        );
         return;
       }
       if (_engine.activePenalty != null &&
@@ -1098,13 +1150,13 @@ class _GameScreenState extends State<GameScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'ركلة حرة قريبة — هل تريد حائطاً بشرياً؟',
+              'Yakin serbest vurus — duvar kurulsun mu?',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 8),
             const Text(
-              'اختر حتى خمسة لاعبين. يظهر طول كل لاعب لمساعدتك في الاختيار.',
+              'En fazla bes oyuncu sec. Secime yardimci olmasi icin boylari da yazilir.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white70),
             ),
@@ -1142,7 +1194,7 @@ class _GameScreenState extends State<GameScreen>
                     _engine.declineFreeKickWall();
                     setState(() {});
                   },
-                  child: const Text('لا، بدون حائط'),
+                  child: const Text('Hayir, duvar yok'),
                 ),
                 const SizedBox(width: 12),
                 FilledButton(
@@ -1151,7 +1203,7 @@ class _GameScreenState extends State<GameScreen>
                     _wallPlayerIds.clear();
                     setState(() {});
                   },
-                  child: Text('تأكيد الحائط (${_wallPlayerIds.length})'),
+                  child: Text('Duvarı onayla (${_wallPlayerIds.length})'),
                 ),
               ],
             ),
@@ -1352,7 +1404,7 @@ class _GameScreenState extends State<GameScreen>
             const SizedBox(height: 4),
             if (!_engine.blueAiControlled)
               Text(
-                'Mavi: Numpad 0=Pres  . =Defans',
+                'Mavi: F=Cift pres   G=Cift defans',
                 style: TextStyle(
                   color: _bluePressing
                       ? Colors.orangeAccent
@@ -1364,7 +1416,7 @@ class _GameScreenState extends State<GameScreen>
               ),
             if (!_engine.redAiControlled)
               Text(
-                'Kirmizi: 0=Pres  `=Defans',
+                'Kirmizi: H=Cift pres   J=Cift defans',
                 style: TextStyle(
                   color: _redPressing
                       ? Colors.orangeAccent
@@ -2684,7 +2736,7 @@ class _GameScreenState extends State<GameScreen>
                 FilledButton.icon(
                   onPressed: _showPlayerStatistics,
                   icon: const Icon(Icons.analytics_outlined),
-                  label: const Text('تفاصيل وإحصائيات جميع اللاعبين'),
+                  label: const Text('Tum oyuncularin detayi ve istatistikleri'),
                 ),
                 FilledButton.tonalIcon(
                   onPressed: () {
@@ -2696,7 +2748,7 @@ class _GameScreenState extends State<GameScreen>
                     });
                   },
                   icon: const Icon(Icons.video_settings),
-                  label: const Text('فتح مركز تحكم VAR'),
+                  label: const Text('VAR kontrol merkezini ac'),
                 ),
               ],
             ),
@@ -2736,7 +2788,7 @@ class _GameScreenState extends State<GameScreen>
               children: [
                 Icon(Icons.analytics, color: Color(0xffffd34d)),
                 SizedBox(width: 10),
-                Text('إحصائيات اللاعبين الكاملة'),
+                Text('Tum oyuncu istatistikleri'),
               ],
             ),
             content: SizedBox(
@@ -2748,7 +2800,7 @@ class _GameScreenState extends State<GameScreen>
                     controller: searchController,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      labelText: 'ابحث عن لاعب',
+                      labelText: 'Oyuncu ara',
                       isDense: true,
                     ),
                     onChanged: (value) => setDialogState(
@@ -2858,7 +2910,7 @@ class _GameScreenState extends State<GameScreen>
             actions: [
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('إغلاق'),
+                child: const Text('Kapat'),
               ),
             ],
           );
@@ -2876,7 +2928,9 @@ class _GameScreenState extends State<GameScreen>
         key == LogicalKeyboardKey.numpad1 ||
         key == LogicalKeyboardKey.numpad2 ||
         key == LogicalKeyboardKey.numpad3 ||
-        key == LogicalKeyboardKey.keyV;
+        key == LogicalKeyboardKey.keyV ||
+        key == LogicalKeyboardKey.keyF ||
+        key == LogicalKeyboardKey.keyG;
   }
 
   void _drainPressStamina(TeamId id, double dt) {
@@ -2891,7 +2945,9 @@ class _GameScreenState extends State<GameScreen>
         key == LogicalKeyboardKey.digit1 ||
         key == LogicalKeyboardKey.digit2 ||
         key == LogicalKeyboardKey.digit3 ||
-        key == LogicalKeyboardKey.keyK;
+        key == LogicalKeyboardKey.keyK ||
+        key == LogicalKeyboardKey.keyH ||
+        key == LogicalKeyboardKey.keyJ;
   }
 
   Widget _goalList(String title, List goals) {

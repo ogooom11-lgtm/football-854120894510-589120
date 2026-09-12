@@ -182,41 +182,59 @@ class PenaltyLogic {
     final shotLane = _laneWithHeight(shotDirection, height);
     final guessed = _sameSide(shotLane, keeperDirection);
     final keeperStats = keeper.profile.goalkeeperStats;
-    final saveSkill = keeperStats.reaction * 0.36 +
-        keeperStats.diving * 0.28 +
-        keeperStats.oneVsOne * 0.24 +
-        keeperStats.positioning * 0.12;
-    final highRisk = height > 1.65;
-    final tooHigh = height > 2.44;
+    final saveSkill = keeperStats.reaction * 0.34 +
+        keeperStats.diving * 0.30 +
+        keeperStats.oneVsOne * 0.22 +
+        keeperStats.positioning * 0.14;
+
+    // Everything below is driven by the shooter's attributes and by the
+    // power he chose — a penalty is never a guaranteed goal.
+    final finishing = shooter.profile.finishingSkill; // bitiricilik
+    final composure = shooter.profile.composureSkill; // soguk kanlilik
+    final shotTechnique = shooter.profile.shotSkill;
+
+    // Power cuts both ways: a soft penalty is easy to reach, a blasted one
+    // sails over the bar. Both extremes are punished.
+    final powerFromIdeal = (clampedPower - 1.08).abs() / 0.62;
+    final powerRisk = powerFromIdeal.clamp(0.0, 1.0).toDouble();
+    final highRisk = height > 1.85;
+    final overTheBar = height > 2.44;
     final tooWeak = clampedPower < 0.72;
-    // A good finisher very rarely misses the frame — the miss chance is
-    // small and scales strongly with skill.
-    final missChance =
-        (tooHigh ? 0.30 : 0.02) +
-        (highRisk ? 0.05 : 0) +
-        (tooWeak ? 0.03 : 0) +
-        (1 - shooter.profile.finishingSkill) * 0.07 +
-        (1 - shooter.profile.composureSkill) * 0.08;
+
+    final missChance = 0.028 + // woodwork / pure bad luck
+        powerRisk * 0.095 + // badly struck
+        (1 - finishing) * 0.105 + // bitiricilik
+        (1 - shotTechnique) * 0.045 + // sut teknigi
+        (1 - composure) * 0.055 + // baski altinda
+        (highRisk ? 0.035 : 0.0) + // aiming high is risky
+        (overTheBar ? 0.55 : 0.0) + // blazed over the bar
+        (tooWeak ? 0.02 : 0.0);
+
+    // Reaching the ball: high shots are harder to get to, hard shots leave
+    // the keeper less time to react.
+    final reachBonus = height > 1.90
+        ? -0.14
+        : height > 1.55
+        ? -0.04
+        : 0.05;
+    final shotSpeedBonus = (clampedPower - 0.90) * 0.16;
     final saveChance = guessed
-        ? (height > 1.55 ? 0.24 : 0.20) + saveSkill * 0.14
+        ? (0.26 +
+                saveSkill * 0.22 +
+                reachBonus -
+                shotSpeedBonus -
+                (finishing - 0.5) * 0.10)
+            .clamp(0.07, 0.66)
+            .toDouble()
         : (keeperDirection == PenaltyLane.center &&
-                  shotLane == PenaltyLane.center
-              ? 0.16 + saveSkill * 0.10
-              : 0.03 + saveSkill * 0.05);
-    final shooterBonus =
-        (shooter.profile.heightMeters - 1.70) * 0.32 +
-        shooter.profile.finishingSkill * 0.16 +
-        shooter.profile.composureSkill * 0.14 +
-        shooter.profile.shotSkill * 0.07 +
-        (shooter.role.isAttacker ? 0.05 : 0);
-    final keeperBonus =
-        (keeper.profile.heightMeters - 1.70) * 0.16 + saveSkill * 0.08;
+                    shotLane == PenaltyLane.center
+                ? (0.34 + saveSkill * 0.30 - shotSpeedBonus)
+                    .clamp(0.12, 0.72)
+                    .toDouble()
+                : (0.02 + saveSkill * 0.05).clamp(0.01, 0.12).toDouble());
+
     final scored =
-        random.nextDouble() >
-        (missChance + saveChance + keeperBonus - shooterBonus).clamp(
-          0.03,
-          0.72,
-        );
+        random.nextDouble() > (missChance + saveChance).clamp(0.04, 0.90);
 
     return PenaltyKickResult(
       teamId: shootingTeam.id,

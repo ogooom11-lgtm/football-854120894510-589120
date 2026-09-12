@@ -283,11 +283,18 @@ class GoalkeeperAi {
       return;
     }
 
-    if (action == GoalkeeperAction.diveLeft ||
-        action == GoalkeeperAction.diveRight) {
+    // A keeper must not throw himself early: he keeps tracking the ball
+    // and only commits to the dive/jump in the final moment before the
+    // ball arrives (and never before his reaction time has elapsed).
+    final commitWindow = 0.30 + stats.anticipation * 0.10;
+    final canCommit = keeper.goalkeeperReactionTimer <= 0.02 &&
+        prediction.timeToImpact <= commitWindow;
+    if ((action == GoalkeeperAction.diveLeft ||
+            action == GoalkeeperAction.diveRight) &&
+        canCommit) {
       _startDive(keeper, stats, action);
       _moveWithAcceleration(keeper, target, stats, dt, diving: true);
-    } else if (action == GoalkeeperAction.jump) {
+    } else if (action == GoalkeeperAction.jump && canCommit) {
       _startJump(keeper, stats);
       _moveWithAcceleration(keeper, target, stats, dt, diving: true);
     } else {
@@ -349,7 +356,12 @@ class GoalkeeperAi {
         stats.decision * 0.24 +
         stats.reach * 0.16 -
         context.numberOfAttackers * 0.035;
-    if (distance < 7.5 && crossScore > 0.58) {
+    // He only leaves his line when the ball really travels to him. A cross
+    // that is drifting away, or a corner that is still out on the flank,
+    // must not pull the keeper off his goal.
+    final ballComingToGoal = _movingTowardGoal(engine.ball.vel, team) ||
+        engine.ball.vel.length < 0.6;
+    if (distance < 6.4 && crossScore > 0.58 && ballComingToGoal) {
       final high = engine.ball.heightMeters > keeper.profile.heightMeters * 0.70;
       if (high) {
         _startJump(keeper, stats);

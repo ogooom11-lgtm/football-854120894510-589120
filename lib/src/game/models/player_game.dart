@@ -37,6 +37,9 @@ class PlayerGame {
   double catchTimer = 0;
   double jumpBoostMeters = 0;
   double jumpAnimationTimer = 0;
+  /// Short landing penalty right after a jump: the player cannot sprint
+  /// away immediately after touching the ground again.
+  double jumpLandingTimer = 0;
   bool isSentOff = false;
   int yellowCardsThisMatch = 0;
   double stamina = 1.0;
@@ -79,6 +82,18 @@ class PlayerGame {
   bool isInjuredInMatch = false;
 
   bool get isGoalkeeper => role.isGoalkeeper;
+
+  /// Speed multiplier while the player is in the air or just landed. A
+  /// jumping player keeps his momentum but cannot accelerate or sprint.
+  double get jumpMovementFactor {
+    if (jumpAnimationTimer > 0) {
+      return 0.46;
+    }
+    if (jumpLandingTimer > 0) {
+      return 0.72;
+    }
+    return 1.0;
+  }
 
   /// Maximum height at which this player can deliberately touch the ball.
   /// Outfield players reach roughly 10–15 cm over their standing height,

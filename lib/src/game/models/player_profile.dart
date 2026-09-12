@@ -169,6 +169,9 @@ class PlayerProfile {
     this.matchesPlayed = 0,
     this.points = 0,
     this.injuredDaysRemaining = 0,
+    this.injuryTotalDays = 0,
+    this.injuryStartedAt = 0,
+    this.injuryEndsAt = 0,
     this.fitness = 1.0,
     this.fitnessUpdatedAt = 0,
     this.marketValue = 1000000000,
@@ -259,6 +262,16 @@ class PlayerProfile {
   /// Injury: number of days remaining before recovery. 0 = fit.
   int injuredDaysRemaining;
 
+  /// Total length of the current injury in days (0 when fit). Kept so the
+  /// UI can show "12 gun sakatlik" instead of only the remaining days.
+  int injuryTotalDays;
+
+  /// Timestamp (ms) of the day the injury happened.
+  int injuryStartedAt;
+
+  /// Timestamp (ms) when the injury is expected to end. 0 when fit.
+  int injuryEndsAt;
+
   /// Persistent match fitness. It recovers outside matches based on stamina.
   double fitness;
   int fitnessUpdatedAt;
@@ -278,12 +291,72 @@ class PlayerProfile {
   bool get isSuspended => suspendedMatchesRemaining > 0;
   bool get isUnavailable => isInjured || isSuspended;
 
+  /// One real calendar day that passes counts as this many injury days for
+  /// a normal player. A player with a strong "dayaniklilik gucu" heals even
+  /// faster and uses [injuryFastRecoveryDaysPerRealDay] instead.
+  static const int injuryDaysPerRealDay = 3;
+  static const int injuryFastRecoveryDaysPerRealDay = 5;
+
+  /// How many injury days a single real day removes for this player.
+  int get injuryRecoveryDaysPerRealDay =>
+      dayaniklilikSkill >= 0.70 ? injuryFastRecoveryDaysPerRealDay : injuryDaysPerRealDay;
+
+  /// Day the injury started (null when fit).
+  DateTime? get injuryStartDate =>
+      injuryStartedAt <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(injuryStartedAt);
+
+  /// Expected recovery date (null when fit).
+  DateTime? get injuryEndDate {
+    if (!isInjured || injuryEndsAt <= 0) {
+      return null;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(injuryEndsAt);
+  }
+
+  /// Short text for the UI: "12 gun (3 gun kaldi)".
+  String get injurySummaryText {
+    if (!isInjured) {
+      return 'Saglikli';
+    }
+    final end = injuryEndDate;
+    final endText = end == null
+        ? ''
+        : ' • bitis ${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}';
+    return '$injuredDaysRemaining gun sakat$endText';
+  }
+
+  /// Registers a new injury: date, total length and expected end date are
+  /// all stored so the player card can show them later.
+  void applyInjury(int days, DateTime now) {
+    final safeDays = days.clamp(1, 365).toInt();
+    final nowMs = now.millisecondsSinceEpoch;
+    injuredDaysRemaining = safeDays;
+    injuryTotalDays = safeDays;
+    injuryStartedAt = nowMs;
+    injuryUpdatedAt = nowMs;
+    final msPerInjuryDay =
+        Duration.millisecondsPerDay / injuryRecoveryDaysPerRealDay;
+    injuryEndsAt =
+        nowMs + (safeDays * msPerInjuryDay).round();
+  }
+
+  /// Removes the injury completely (used by the admin tools).
+  void clearInjury() {
+    injuredDaysRemaining = 0;
+    injuryTotalDays = 0;
+    injuryStartedAt = 0;
+    injuryEndsAt = 0;
+    injuryUpdatedAt = 0;
+  }
+
   /// Isabetli sut yuzdesi: shots on target / total shots.
   int get shootingAccuracyPercent => shots == 0
       ? 0
       : (shotsOnTarget * 100 / shots).round().clamp(0, 100).toInt();
 
   /// Advances injury recovery and disciplinary suspension by one team match.
+  /// The expected end date is recalculated afterwards so it always matches
+  /// the remaining days.
   void advanceUnavailableStatusAfterTeamMatch() {
     if (injuredDaysRemaining > 0) {
       final recoveryDays = (5 + dayaniklilikSkill * 5).round();
@@ -291,6 +364,18 @@ class PlayerProfile {
         0,
         injuredDaysRemaining - recoveryDays,
       ).toInt();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (injuredDaysRemaining <= 0) {
+        clearInjury();
+      } else {
+        injuryUpdatedAt = now;
+        injuryEndsAt =
+            now +
+            (injuredDaysRemaining *
+                    Duration.millisecondsPerDay /
+                    injuryRecoveryDaysPerRealDay)
+                .round();
+      }
     }
     if (suspendedMatchesRemaining > 0) {
       suspendedMatchesRemaining -= 1;
@@ -314,28 +399,52 @@ class PlayerProfile {
     fitnessUpdatedAt = now.millisecondsSinceEpoch;
   }
 
-  /// Every real day that passes removes one injury day. Returns true when
-  /// the remaining injury days actually changed (so the caller can save).
+  /// Injury recovery over real time. Every real calendar day that passes
+  /// removes [injuryRecoveryDaysPerRealDay] injury days (3 normally, 5 for
+  /// players with a high dayaniklilik gucu), so a career does not stall for
+  /// months on a long injury. Returns true when the remaining days changed.
   bool recoverInjuryDays(DateTime now) {
     final nowMs = now.millisecondsSinceEpoch;
     if (injuredDaysRemaining <= 0) {
       injuryUpdatedAt = nowMs;
+      if (injuryEndsAt != 0 || injuryTotalDays != 0) {
+        injuryTotalDays = 0;
+        injuryStartedAt = 0;
+        injuryEndsAt = 0;
+        return true;
+      }
       return false;
     }
     if (injuryUpdatedAt <= 0) {
       injuryUpdatedAt = nowMs;
+      if (injuryStartedAt <= 0) {
+        injuryStartedAt = nowMs;
+      }
       return false;
     }
-    final elapsedDays =
-        ((nowMs - injuryUpdatedAt) / Duration.millisecondsPerDay).floor();
-    if (elapsedDays <= 0) {
+    final msPerInjuryDay =
+        Duration.millisecondsPerDay / injuryRecoveryDaysPerRealDay;
+    final healedDays =
+        ((nowMs - injuryUpdatedAt) / msPerInjuryDay).floor();
+    if (healedDays <= 0) {
       return false;
     }
     injuredDaysRemaining = math.max(
       0,
-      injuredDaysRemaining - elapsedDays,
+      injuredDaysRemaining - healedDays,
     ).toInt();
-    injuryUpdatedAt = nowMs;
+    // Keep the "last healed" stamp aligned with the days actually removed so
+    // the remaining part of a day is not thrown away.
+    injuryUpdatedAt =
+        injuryUpdatedAt + (healedDays * msPerInjuryDay).round();
+    if (injuredDaysRemaining <= 0) {
+      clearInjury();
+    } else {
+      final msPerRemainingDay =
+          Duration.millisecondsPerDay / injuryRecoveryDaysPerRealDay;
+      injuryEndsAt =
+          injuryUpdatedAt + (injuredDaysRemaining * msPerRemainingDay).round();
+    }
     return true;
   }
 
@@ -679,6 +788,9 @@ class PlayerProfile {
       matchesPlayed: (json['matchesPlayed'] as num?)?.toInt() ?? 0,
       points: (json['points'] as num?)?.toDouble() ?? 0,
       injuredDaysRemaining: (json['injuredDaysRemaining'] as num?)?.toInt() ?? 0,
+      injuryTotalDays: (json['injuryTotalDays'] as num?)?.toInt() ?? 0,
+      injuryStartedAt: (json['injuryStartedAt'] as num?)?.toInt() ?? 0,
+      injuryEndsAt: (json['injuryEndsAt'] as num?)?.toInt() ?? 0,
       fitness: (json['fitness'] as num?)?.toDouble() ?? 1.0,
       fitnessUpdatedAt: (json['fitnessUpdatedAt'] as num?)?.toInt() ?? 0,
       marketValue: (json['marketValue'] as num?)?.toDouble() ?? 1000000000,
@@ -772,6 +884,9 @@ class PlayerProfile {
         'matchesPlayed': matchesPlayed,
         'points': double.parse(points.toStringAsFixed(1)),
         'injuredDaysRemaining': injuredDaysRemaining,
+        'injuryTotalDays': injuryTotalDays,
+        'injuryStartedAt': injuryStartedAt,
+        'injuryEndsAt': injuryEndsAt,
         'fitness': double.parse(fitness.toStringAsFixed(3)),
         'fitnessUpdatedAt': fitnessUpdatedAt,
         'marketValue': marketValue.round(),

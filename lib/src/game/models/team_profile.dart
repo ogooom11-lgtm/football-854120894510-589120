@@ -90,12 +90,14 @@ class SavedTeamProfile {
     this.aiDifficulty = AiDifficulty.medium,
     this.isDeleted = false,
     List<JerseyKit>? jerseyKits,
+    Set<String>? hiddenKitNames,
     this.activeKitIndex = 0,
   }) : starterPlayerIds = starterPlayerIds ?? <String>{},
        roleByPlayerId = roleByPlayerId ?? <String, PlayerRole>{},
        slotByPlayerId = slotByPlayerId ?? <String, int>{},
        savedFormations = savedFormations ?? <SavedFormationPreset>[],
        matchHistory = matchHistory ?? <TeamMatchRecord>[],
+       hiddenKitNames = hiddenKitNames ?? <String>{},
        jerseyKits = jerseyKits ?? JerseyFactory.defaultKits();
 
   final String id;
@@ -119,6 +121,10 @@ class SavedTeamProfile {
   List<JerseyKit> jerseyKits;
   int activeKitIndex;
 
+  /// Names of ready-made kits the user removed from this team. They are
+  /// never added back when the save file is loaded again.
+  Set<String> hiddenKitNames;
+
   int get played => wins + losses + draws;
 
   JerseyKit get activeKit => activeKitIndex < jerseyKits.length
@@ -133,6 +139,55 @@ class SavedTeamProfile {
     numberColor: activeKit.numberColor,
     goalkeeperShirtColor: activeKit.goalkeeperShirtColor,
   );
+
+  /// Adds a kit (or replaces one with the same name) and makes it active.
+  void addJerseyKit(JerseyKit kit) {
+    final index = jerseyKits.indexWhere((item) => item.name == kit.name);
+    if (index >= 0) {
+      jerseyKits[index] = kit;
+      activeKitIndex = index;
+    } else {
+      jerseyKits.add(kit);
+      activeKitIndex = jerseyKits.length - 1;
+    }
+    hiddenKitNames.remove(kit.name);
+    _clampActiveKit();
+  }
+
+  /// Deletes a kit. Ready-made kits are remembered in [hiddenKitNames] so
+  /// they do not come back after a restart. The list never becomes empty.
+  bool deleteJerseyKit(int index) {
+    if (jerseyKits.length <= 1 || index < 0 || index >= jerseyKits.length) {
+      return false;
+    }
+    final kit = jerseyKits.removeAt(index);
+    if (!kit.isCustom) {
+      hiddenKitNames.add(kit.name);
+    }
+    _clampActiveKit();
+    return true;
+  }
+
+  /// Chooses the kit the team wears by default.
+  void setDefaultJerseyKit(int index) {
+    if (index < 0 || index >= jerseyKits.length) {
+      return;
+    }
+    activeKitIndex = index;
+  }
+
+  void _clampActiveKit() {
+    if (jerseyKits.isEmpty) {
+      jerseyKits = JerseyFactory.defaultKits();
+      hiddenKitNames.clear();
+    }
+    if (activeKitIndex >= jerseyKits.length) {
+      activeKitIndex = jerseyKits.length - 1;
+    }
+    if (activeKitIndex < 0) {
+      activeKitIndex = 0;
+    }
+  }
 
   factory SavedTeamProfile.create({
     required String ownerAccountId,
@@ -217,6 +272,12 @@ class SavedTeamProfile {
       jerseyKits: JerseyFactory.completeKits(
         (json['jerseyKits'] as List<dynamic>?)
             ?.map((k) => JerseyKit.fromJson(k as Map<String, dynamic>)),
+        hiddenNames: Set<String>.from(
+          json['hiddenKitNames'] as List<dynamic>? ?? const [],
+        ),
+      ),
+      hiddenKitNames: Set<String>.from(
+        json['hiddenKitNames'] as List<dynamic>? ?? const [],
       ),
       activeKitIndex: (json['activeKitIndex'] as num?)?.toInt() ?? 0,
     );
@@ -353,6 +414,7 @@ class SavedTeamProfile {
       'aiDifficulty': aiDifficulty.name,
       'isDeleted': isDeleted,
       'jerseyKits': jerseyKits.map((k) => k.toJson()).toList(),
+      'hiddenKitNames': hiddenKitNames.toList(),
       'activeKitIndex': activeKitIndex,
     };
   }

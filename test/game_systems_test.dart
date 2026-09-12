@@ -786,19 +786,60 @@ void main() {
   });
 
   group('daily injury recovery', () {
-    test('injury days decrease one per real day', () {
-      final player = PlayerProfile.generated(name: 'Hasta', isGoalkeeper: false);
+    test('one real day counts as three injury days', () {
+      final player = PlayerProfile.generated(name: 'Hasta', isGoalkeeper: false)
+        ..dayaniklilikGucu = 60;
+      expect(player.injuryRecoveryDaysPerRealDay, 3);
       final now = DateTime.now();
       player
         ..injuredDaysRemaining = 10
         ..injuryUpdatedAt = now
-            .subtract(const Duration(days: 3))
+            .subtract(const Duration(days: 1))
             .millisecondsSinceEpoch;
       expect(player.recoverInjuryDays(now), isTrue);
       expect(player.injuredDaysRemaining, 7);
-      // Same day again: no double recovery.
+      // Same moment again: no double recovery.
       expect(player.recoverInjuryDays(now), isFalse);
       expect(player.injuredDaysRemaining, 7);
+    });
+
+    test('a strong player heals five injury days per real day', () {
+      final player = PlayerProfile.generated(name: 'Dayanikli', isGoalkeeper: false)
+        ..dayaniklilikGucu = 90;
+      expect(player.injuryRecoveryDaysPerRealDay, 5);
+      final now = DateTime.now();
+      player
+        ..injuredDaysRemaining = 20
+        ..injuryUpdatedAt = now
+            .subtract(const Duration(days: 2))
+            .millisecondsSinceEpoch;
+      expect(player.recoverInjuryDays(now), isTrue);
+      expect(player.injuredDaysRemaining, 10);
+    });
+
+    test('injury date, length and end date are stored', () {
+      final now = DateTime(2026, 5, 4, 12);
+      final player = PlayerProfile.generated(name: 'Sakat', isGoalkeeper: false)
+        ..dayaniklilikGucu = 60;
+      player.applyInjury(12, now);
+      expect(player.injuredDaysRemaining, 12);
+      expect(player.injuryTotalDays, 12);
+      expect(player.injuryStartDate, now);
+      expect(player.injuryEndDate, isNotNull);
+      expect(player.injuryEndDate!.isAfter(now), isTrue);
+      // 12 injury days at 3 per real day = 4 real days.
+      expect(
+        player.injuryEndDate!.difference(now).inDays,
+        4,
+      );
+      final restored = PlayerProfile.fromJson(player.toJson());
+      expect(restored.injuryTotalDays, 12);
+      expect(restored.injuryStartedAt, player.injuryStartedAt);
+      expect(restored.injuryEndsAt, player.injuryEndsAt);
+
+      player.clearInjury();
+      expect(player.isInjured, isFalse);
+      expect(player.injuryEndDate, isNull);
     });
 
     test('injury timestamp survives JSON round trip', () {
@@ -808,6 +849,57 @@ void main() {
       final restored = PlayerProfile.fromJson(player.toJson());
       expect(restored.injuredDaysRemaining, 5);
       expect(restored.injuryUpdatedAt, 123456789);
+    });
+  });
+
+  group('jersey management', () {
+    test('custom kits can be created, set as default and deleted', () {
+      final team = SavedTeamProfile.create(
+        ownerAccountId: 'acc',
+        name: 'Test Takim',
+        playerIds: const ['p1'],
+      );
+      final startCount = team.jerseyKits.length;
+      team.addJerseyKit(
+        const JerseyKit(
+          name: 'Ozel Gece',
+          shirtColor: Color(0xff123456),
+          shortsColor: Color(0xff000000),
+          socksColor: Color(0xff123456),
+          numberColor: Color(0xffffffff),
+          goalkeeperShirtColor: Color(0xff00ff00),
+          isCustom: true,
+        ),
+      );
+      expect(team.jerseyKits.length, startCount + 1);
+      expect(team.activeKit.name, 'Ozel Gece');
+      expect(team.activeKit.isCustom, isTrue);
+
+      final customIndex = team.activeKitIndex;
+      expect(team.deleteJerseyKit(customIndex), isTrue);
+      expect(team.jerseyKits.any((kit) => kit.name == 'Ozel Gece'), isFalse);
+      // A custom kit is simply gone, it is not remembered.
+      expect(team.hiddenKitNames.contains('Ozel Gece'), isFalse);
+    });
+
+    test('a deleted ready-made kit never comes back after a reload', () {
+      final team = SavedTeamProfile.create(
+        ownerAccountId: 'acc',
+        name: 'Test Takim',
+        playerIds: const ['p1'],
+      );
+      expect(team.deleteJerseyKit(0), isTrue);
+      final removed = team.hiddenKitNames;
+      expect(removed, isNotEmpty);
+
+      final reloaded = SavedTeamProfile.fromJson(
+        team.toJson(),
+        fallbackOwnerAccountId: 'acc',
+      );
+      expect(
+        reloaded.jerseyKits.any((kit) => kit.name == removed.first),
+        isFalse,
+      );
     });
   });
 

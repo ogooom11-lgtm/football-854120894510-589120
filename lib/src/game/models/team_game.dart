@@ -205,14 +205,43 @@ class TeamGame {
     return null;
   }
 
+  /// Closest player to [point]. Returns null when nobody is available so a
+  /// match can never freeze because a team ran out of outfield players.
+  PlayerGame? closestToOrNull(Vec2 point, {bool includeGoalkeeper = false}) {
+    PlayerGame? best;
+    var bestDistance = double.infinity;
+    for (final player in players) {
+      if (player.isSentOff) {
+        continue;
+      }
+      if (!includeGoalkeeper && player.isGoalkeeper) {
+        continue;
+      }
+      final distance = player.pos.distanceTo(point);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = player;
+      }
+    }
+    return best;
+  }
+
   PlayerGame closestTo(Vec2 point, {bool includeGoalkeeper = false}) {
-    final available = players.where((player) => !player.isSentOff);
-    final candidates = includeGoalkeeper
-        ? available
-        : available.where((player) => !player.isGoalkeeper);
-    return candidates.reduce(
-      (a, b) => a.pos.distanceTo(point) <= b.pos.distanceTo(point) ? a : b,
+    final found = closestToOrNull(
+      point,
+      includeGoalkeeper: includeGoalkeeper,
     );
+    if (found != null) {
+      return found;
+    }
+    // Fall back to any player on the roster before giving up completely.
+    for (final player in players) {
+      if (!includeGoalkeeper && player.isGoalkeeper) {
+        continue;
+      }
+      return player;
+    }
+    return players.first;
   }
 
   void resetPositions() {
