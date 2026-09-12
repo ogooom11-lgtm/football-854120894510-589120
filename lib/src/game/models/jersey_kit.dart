@@ -92,7 +92,54 @@ class JerseyKit {
 
 /// Predefined team kits for quick selection.
 class JerseyFactory {
-  static List<JerseyKit> defaultKits() => [
+  /// Ready-made kits the admin removed for EVERY team. They are hidden here
+  /// once and never come back, whatever a team does.
+  static final Set<String> hiddenKitNames = <String>{};
+
+  /// Extra colors the admin added. They show up in every kit editor.
+  static final List<JerseyColor> extraPalette = <JerseyColor>[];
+
+  /// Loads the admin settings (removed kits + extra colors) from the save.
+  static void applyAdminSettings({
+    Iterable<String>? hiddenNames,
+    Iterable<JerseyColor>? colors,
+  }) {
+    hiddenKitNames
+      ..clear()
+      ..addAll(hiddenNames ?? const <String>[]);
+    extraPalette
+      ..clear()
+      ..addAll(colors ?? const <JerseyColor>[]);
+  }
+
+  /// Hides a ready-made kit globally (admin "delete default jersey").
+  static void hideKit(String name) => hiddenKitNames.add(name);
+
+  /// Brings a ready-made kit back (used by the restore button).
+  static bool restoreKit(String name) => hiddenKitNames.remove(name);
+
+  static void addPaletteColor(JerseyColor color) {
+    final exists = extraPalette.any(
+      (item) => item.color.toARGB32() == color.color.toARGB32(),
+    );
+    if (!exists) {
+      extraPalette.add(color);
+    }
+  }
+
+  static void removePaletteColor(JerseyColor color) => extraPalette.removeWhere(
+        (item) => item.color.toARGB32() == color.color.toARGB32(),
+      );
+
+  /// All ready-made kits that are still available (admin deletions removed).
+  static List<JerseyKit> defaultKits() =>
+      _allDefaultKits().where((kit) => !hiddenKitNames.contains(kit.name)).toList();
+
+  /// Every ready-made kit, including the ones the admin removed. Used by the
+  /// admin panel so a removed kit can be restored.
+  static List<JerseyKit> allDefaultKits() => _allDefaultKits();
+
+  static List<JerseyKit> _allDefaultKits() => [
         // Home kit
         const JerseyKit(
           name: 'Ic Saha (Ev)',
@@ -208,8 +255,12 @@ class JerseyFactory {
     Iterable<JerseyKit>? saved, {
     Iterable<String> hiddenNames = const <String>[],
   }) {
-    final hidden = hiddenNames.toSet();
-    final result = saved?.toList() ?? <JerseyKit>[];
+    final hidden = <String>{...hiddenKitNames, ...hiddenNames};
+    // A kit the admin removed disappears from every team, even from the
+    // ones that already had it saved. Custom kits are never hidden.
+    final result = (saved ?? const <JerseyKit>[])
+        .where((kit) => kit.isCustom || !hidden.contains(kit.name))
+        .toList();
     for (final kit in defaultKits()) {
       if (hidden.contains(kit.name)) {
         continue;
@@ -218,12 +269,21 @@ class JerseyFactory {
         result.add(kit);
       }
     }
+    // Safety net: a team always keeps at least one kit to wear.
+    if (result.isEmpty) {
+      final available = defaultKits();
+      final fallback = available.isNotEmpty ? available : _allDefaultKits();
+      if (fallback.isNotEmpty) {
+        result.add(fallback.first);
+      }
+    }
     return result;
   }
 
   /// Colors offered when the user builds a new kit.
-  static List<JerseyColor> palette() => const [
-        JerseyColor('Beyaz', Color(0xfff5f7f5)),
+  static List<JerseyColor> palette() => <JerseyColor>[
+        ...extraPalette,
+        const JerseyColor('Beyaz', Color(0xfff5f7f5)),
         JerseyColor('Siyah', Color(0xff111418)),
         JerseyColor('Kirmizi', Color(0xffe53935)),
         JerseyColor('Bordo', Color(0xff7f1734)),
@@ -246,7 +306,7 @@ class JerseyFactory {
         JerseyColor('Gri', Color(0xff607d8b)),
         JerseyColor('Fildisi', Color(0xfffff8e1)),
         JerseyColor('Zeytin', Color(0xff827717)),
-        JerseyColor('Lila', Color(0xffb39ddb)),
+        const JerseyColor('Lila', Color(0xffb39ddb)),
       ];
 
   static List<JerseyKit> redTeamKits() => [
@@ -283,4 +343,18 @@ class JerseyColor {
 
   final String name;
   final Color color;
+
+  /// Hex text shown in the admin palette editor, e.g. "#e53935".
+  String get hex =>
+      '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'value': color.toARGB32(),
+      };
+
+  static JerseyColor fromJson(Map<String, dynamic> json) => JerseyColor(
+        json['name'] as String? ?? 'Ozel',
+        Color(json['value'] as int? ?? 0xffffffff),
+      );
 }

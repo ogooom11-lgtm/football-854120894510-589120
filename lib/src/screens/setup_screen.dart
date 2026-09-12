@@ -3390,9 +3390,16 @@ class _SetupScreenState extends State<SetupScreen> {
     String label,
   ) {
     if (team.jerseyKits.isEmpty) {
-      team.jerseyKits = JerseyFactory.defaultKits();
+      // The admin may have removed every ready-made kit — in that case the
+      // team falls back to the full list so it always has something to wear.
+      final available = JerseyFactory.defaultKits();
+      team.jerseyKits =
+          available.isNotEmpty ? available : JerseyFactory.allDefaultKits();
     }
     final kits = team.jerseyKits;
+    if (kits.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final value = selectedIndex.clamp(0, kits.length - 1).toInt();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,

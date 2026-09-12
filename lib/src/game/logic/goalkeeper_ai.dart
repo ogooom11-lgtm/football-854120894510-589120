@@ -78,6 +78,27 @@ class GoalkeeperAi {
     }
 
     keeper.goalkeeperPrediction = null;
+
+    // Corner against us: the keeper guards his line. He only leaves it when
+    // the ball really drops close to his goal — a corner that is still
+    // floating out on the flank must never pull him off his line.
+    final cornerAgainst = engine.restartKind == RestartKind.corner &&
+        engine.restartTeamId != team.id;
+    if (cornerAgainst) {
+      final nearOwnGoal = engine.isInPenaltyBox(ball.pos, team.id) &&
+          ball.pos.distanceTo(context.goalCenter) < 110;
+      if (!nearOwnGoal) {
+        final holdTarget = _positioningTarget(keeper, team, context, stats);
+        _setState(
+          keeper,
+          GoalkeeperState.positioning,
+          GoalkeeperAction.position,
+        );
+        _moveWithAcceleration(keeper, holdTarget, stats, dt);
+        return;
+      }
+    }
+
     final crossThreat = context.isCross &&
         engine.isInPenaltyBox(ball.pos, team.id) &&
         ball.owner == null;

@@ -2250,8 +2250,18 @@ class MatchEngine {
                   a.number.isEven ? 0.35 : -0.35,
                 ).normalized();
           final overlap = minDistance - distance;
-          a.pos = a.pos - direction * (overlap / 2);
-          b.pos = b.pos + direction * (overlap / 2);
+          // A keeper lying on the ground after a dive must not be pushed
+          // around — he keeps his spot and the other player steps aside.
+          final aDown = a.isGoalkeeper && a.keeperGroundTimer > 0;
+          final bDown = b.isGoalkeeper && b.keeperGroundTimer > 0;
+          if (!aDown && !bDown) {
+            a.pos = a.pos - direction * (overlap / 2);
+            b.pos = b.pos + direction * (overlap / 2);
+          } else if (aDown && !bDown) {
+            b.pos = b.pos + direction * overlap;
+          } else if (bDown && !aDown) {
+            a.pos = a.pos - direction * overlap;
+          }
           a.keepInsideField();
           b.keepInsideField();
         }

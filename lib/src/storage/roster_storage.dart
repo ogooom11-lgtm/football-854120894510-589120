@@ -6,6 +6,7 @@ import '../game/enums/match_mode.dart';
 import '../game/enums/ai_difficulty.dart';
 import '../game/enums/ai_play_style.dart';
 import '../game/models/formation.dart';
+import '../game/models/jersey_kit.dart';
 import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
@@ -138,8 +139,18 @@ class SavedGameData {
     this.redPlayStyle = AiPlayStyle.balanced,
     List<FinishedMatchSummary>? matchArchive,
     List<TransferRequest>? transferRequests,
+    Set<String>? hiddenKitNames,
+    Iterable<JerseyColor>? paletteColors,
   }) : matchArchive = matchArchive ?? <FinishedMatchSummary>[],
-       transferRequests = transferRequests ?? <TransferRequest>[];
+       transferRequests = transferRequests ?? <TransferRequest>[],
+       hiddenKitNames = hiddenKitNames ?? <String>{},
+       paletteColors = paletteColors?.toList() ?? <JerseyColor>[] {
+    // Keep the jersey factory in sync with the admin settings of this save.
+    JerseyFactory.applyAdminSettings(
+      hiddenNames: this.hiddenKitNames,
+      colors: this.paletteColors,
+    );
+  }
 
   final List<SavedAccountProfile> accounts;
   String activeAccountId;
@@ -165,6 +176,12 @@ class SavedGameData {
   AiPlayStyle redPlayStyle;
   final List<FinishedMatchSummary> matchArchive;
   final List<TransferRequest> transferRequests;
+
+  /// Ready-made kits the admin removed for every team.
+  final Set<String> hiddenKitNames;
+
+  /// Extra jersey colors the admin added to the palette.
+  final List<JerseyColor> paletteColors;
 
   List<TransferRequest> get pendingTransfers =>
       transferRequests.where((request) => request.isPending).toList();
@@ -316,6 +333,12 @@ class SavedGameData {
       loggedInAccountIds.add(activeAccountId);
     }
 
+    final hiddenKitNames = Set<String>.from(
+      json['hiddenKitNames'] as List<dynamic>? ?? const [],
+    );
+    final paletteColors = (json['paletteColors'] as List<dynamic>? ?? const [])
+        .map((item) => JerseyColor.fromJson(item as Map<String, dynamic>))
+        .toList();
     final players = (json['players'] as List<dynamic>? ?? [])
         .map((item) => PlayerProfile.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -441,6 +464,8 @@ class SavedGameData {
                   ),
                 )
                 .toList(),
+        hiddenKitNames: hiddenKitNames,
+        paletteColors: paletteColors,
       );
   }
 
@@ -506,6 +531,8 @@ class SavedGameData {
       'transferRequests': transferRequests
           .map((request) => request.toJson())
           .toList(),
+      'hiddenKitNames': hiddenKitNames.toList(),
+      'paletteColors': paletteColors.map((color) => color.toJson()).toList(),
     };
   }
 }

@@ -141,6 +141,40 @@ void main() {
     });
   });
 
+  group('admin jersey settings', () {
+    test('a removed ready-made kit is gone for every team', () {
+      final data = SavedGameData.defaults();
+      final team = data.blueTeam;
+      final removed = team.jerseyKits.first;
+      data.hiddenKitNames.add(removed.name);
+      data.paletteColors.add(const JerseyColor('Ozel', Color(0xff123456)));
+      JerseyFactory.applyAdminSettings(
+        hiddenNames: data.hiddenKitNames,
+        colors: data.paletteColors,
+      );
+      expect(JerseyFactory.defaultKits().length, 12);
+      expect(
+        JerseyFactory.defaultKits().any((kit) => kit.name == removed.name),
+        isFalse,
+      );
+      // Even a team that already had it saved loses it.
+      expect(
+        JerseyFactory
+            .completeKits([removed])
+            .any((kit) => kit.name == removed.name),
+        isFalse,
+      );
+      // The new color is offered when a team builds a kit.
+      expect(JerseyFactory.palette().any((color) => color.name == 'Ozel'), isTrue);
+
+      final restored = SavedGameData.fromJson(data.toJson());
+      expect(restored.hiddenKitNames.contains(removed.name), isTrue);
+      expect(restored.paletteColors.single.name, 'Ozel');
+      // Leave the global factory state clean for the other tests.
+      JerseyFactory.applyAdminSettings();
+    });
+  });
+
   group('realistic shot calculator', () {
     const weak = PlayerShootingStats(
       shooting: 0.55,

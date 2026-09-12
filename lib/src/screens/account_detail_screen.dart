@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../game/enums/ai_play_style.dart';
 import '../game/enums/team_id.dart';
 import '../game/models/formation.dart';
+import '../game/models/jersey_kit.dart';
 import '../game/models/match_event.dart';
 import '../game/models/player_profile.dart';
 import '../game/models/team_profile.dart';
@@ -244,6 +245,11 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
               ),
             ),
             actions: [
+              OutlinedButton.icon(
+                onPressed: () => _showKitManager(data),
+                icon: const Icon(Icons.style, size: 18),
+                label: const Text('Forma ve renkler'),
+              ),
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Kapat'),
@@ -251,6 +257,382 @@ class _AccountDetailScreenState extends State<AccountDetailScreen>
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Admin kit manager: delete a ready-made jersey, bring it back, and add
+  /// new colors that can be used when a team builds its own kit.
+  Future<void> _showKitManager(SavedGameData data) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> persist() async {
+            JerseyFactory.applyAdminSettings(
+              hiddenNames: data.hiddenKitNames,
+              colors: data.paletteColors,
+            );
+            await _storage.save(data);
+            if (mounted) setState(() {});
+            setDialogState(() {});
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xff102019),
+            title: const Text('Forma ve renk yonetimi'),
+            content: SizedBox(
+              width: 560,
+              height: 520,
+              child: DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    const TabBar(
+                      tabs: [
+                        Tab(text: 'Hazir formalar'),
+                        Tab(text: 'Renk paleti'),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          // ---- ready-made kits ---------------------------
+                          ListView(
+                            children: [
+                              const Text(
+                                'Silinen hazir forma hicbir takima geri '
+                                'gelmez. Istersen geri de getirebilirsin.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              for (final kit in JerseyFactory.allDefaultKits())
+                                _kitAdminRow(
+                                  kit,
+                                  hidden: data.hiddenKitNames.contains(
+                                    kit.name,
+                                  ),
+                                  onToggle: () async {
+                                    final name = kit.name;
+                                    if (data.hiddenKitNames.contains(name)) {
+                                      data.hiddenKitNames.remove(name);
+                                      JerseyFactory.restoreKit(name);
+                                    } else {
+                                      data.hiddenKitNames.add(name);
+                                      JerseyFactory.hideKit(name);
+                                    }
+                                    await persist();
+                                  },
+                                ),
+                            ],
+                          ),
+                          // ---- palette ------------------------------------
+                          ListView(
+                            children: [
+                              const Text(
+                                'Bu renkler butun takimlarin forma '
+                                'duzenleyicisinde gorunur.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FilledButton.icon(
+                                onPressed: () async {
+                                  final color = await _showColorEditor();
+                                  if (color == null) return;
+                                  data.paletteColors.add(color);
+                                  JerseyFactory.addPaletteColor(color);
+                                  await persist();
+                                },
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('Yeni renk ekle'),
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final entry
+                                      in JerseyFactory.palette())
+                                    _paletteChip(
+                                      entry,
+                                      removable: data.paletteColors.any(
+                                        (item) =>
+                                            item.color.toARGB32() ==
+                                            entry.color.toARGB32(),
+                                      ),
+                                      onDelete: () async {
+                                        data.paletteColors.removeWhere(
+                                          (item) =>
+                                              item.color.toARGB32() ==
+                                              entry.color.toARGB32(),
+                                        );
+                                        JerseyFactory.removePaletteColor(
+                                          entry,
+                                        );
+                                        await persist();
+                                      },
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Kapat'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// One ready-made kit row of the admin panel.
+  Widget _kitAdminRow(
+    JerseyKit kit, {
+    required bool hidden,
+    required Future<void> Function() onToggle,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: hidden ? 0.03 : 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: hidden ? 0.06 : 0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          _adminSwatch(kit.shirtColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.shortsColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.socksColor),
+          const SizedBox(width: 5),
+          _adminSwatch(kit.goalkeeperShirtColor, small: true),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              kit.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: hidden ? Colors.white38 : Colors.white,
+                decoration: hidden ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: hidden ? 'Geri getir' : 'Formayi sil',
+            icon: Icon(
+              hidden ? Icons.restore_from_trash : Icons.delete_outline,
+              color: hidden ? Colors.greenAccent : Colors.redAccent,
+              size: 19,
+            ),
+            onPressed: onToggle,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paletteChip(
+    JerseyColor entry, {
+    required bool removable,
+    required Future<void> Function() onDelete,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: entry.color,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.white24),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(entry.name, style: const TextStyle(fontSize: 12)),
+          if (removable) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: onDelete,
+              child: const Icon(
+                Icons.close,
+                size: 15,
+                color: Colors.redAccent,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Dialog that creates a new jersey color (name + RGB sliders + hex).
+  Future<JerseyColor?> _showColorEditor() async {
+    final nameController = TextEditingController(text: 'Ozel renk');
+    var red = 30;
+    var green = 160;
+    var blue = 220;
+    return showDialog<JerseyColor>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setEditorState) {
+          Color current() => Color.fromARGB(
+            255,
+            red,
+            green,
+            blue,
+          );
+          String hexText() =>
+              '#${red.toRadixString(16).padLeft(2, '0')}'
+              '${green.toRadixString(16).padLeft(2, '0')}'
+              '${blue.toRadixString(16).padLeft(2, '0')}';
+          return AlertDialog(
+            backgroundColor: const Color(0xff102019),
+            title: const Text('Yeni forma rengi'),
+            content: SizedBox(
+              width: 380,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 62,
+                      decoration: BoxDecoration(
+                        color: current(),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Center(
+                        child: Text(
+                          hexText().toUpperCase(),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            shadows: [
+                              Shadow(color: Colors.black45, blurRadius: 6),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Renk adi',
+                        isDense: true,
+                      ),
+                    ),
+                    _colorSlider('Kirmizi', red, const Color(0xffe53935), (
+                      value,
+                    ) {
+                      setEditorState(() => red = value.round());
+                    }),
+                    _colorSlider('Yesil', green, const Color(0xff43a047), (
+                      value,
+                    ) {
+                      setEditorState(() => green = value.round());
+                    }),
+                    _colorSlider('Mavi', blue, const Color(0xff1e88e5), (
+                      value,
+                    ) {
+                      setEditorState(() => blue = value.round());
+                    }),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Iptal'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final name = nameController.text.trim();
+                  Navigator.pop(
+                    context,
+                    JerseyColor(
+                      name.isEmpty ? hexText() : name,
+                      current(),
+                    ),
+                  );
+                },
+                child: const Text('Ekle'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _colorSlider(
+    String label,
+    int value,
+    Color accent,
+    ValueChanged<double> onChanged,
+  ) {
+    return Row(
+      children: [
+        SizedBox(width: 58, child: Text(label, style: const TextStyle(fontSize: 12))),
+        Expanded(
+          child: Slider(
+            value: value.toDouble().clamp(0, 255).toDouble(),
+            min: 0,
+            max: 255,
+            activeColor: accent,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '$value',
+            style: const TextStyle(fontSize: 12, color: Colors.white60),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _adminSwatch(Color color, {bool small = false}) {
+    final size = small ? 13.0 : 18.0;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: Colors.white24),
       ),
     );
   }
