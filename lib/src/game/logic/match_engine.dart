@@ -17,6 +17,9 @@ import '../models/player_profile.dart';
 import '../models/shooting.dart';
 import '../models/team_game.dart';
 import '../models/team_setup.dart';
+import '../tactics/tactical_engine.dart';
+import '../tactics/team_play_state.dart';
+import '../tactics/team_shape_kind.dart';
 import 'ball_physics.dart';
 import 'goalkeeper_ai.dart';
 import 'offside_logic.dart';
@@ -106,6 +109,17 @@ class MatchEngine {
   late final double extraSecondStoppage;
   bool finished = false;
   TeamId? winner;
+
+  // ---- Tactical state machine (plan items 3, 16 and 29) ----------------
+  final TacticalEngine _tacticalEngine = const TacticalEngine();
+  final Map<TeamId, TacticalContext> _tacticalContexts = {};
+  TeamId? _currentPossessor;
+  TeamId? _previousPossessor;
+
+  /// How long the current possession has lasted — drives the transition
+  /// windows of plan item 16. Public so tests and debug tooling can inspect
+  /// (or pin) the state machine.
+  double possessionStateTimer = 0;
 
   MatchBanner? banner;
   bool varReviewActive = false;
@@ -347,6 +361,189 @@ class MatchEngine {
         : TeamMode.defense;
   }
 
+  // ----------------------------------------------------------------------
+  // Team play states (plan items 3, 16 and 29)
+  // ----------------------------------------------------------------------
+
+  /// Advances the possession bookkeeping and rebuilds both teams' tactical
+  /// contexts. Runs every tick before the player AI so every decision uses
+  /// the same, consistent tactical picture.
+  void _tickPlayStates(double dt) {
+    final owner = ball.owner?.teamId;
+    if (owner != _currentPossessor) {
+      _previousPossessor = _currentPossessor;
+      _currentPossessor = owner;
+      possessionStateTimer = 0;
+    } else {
+      possessionStateTimer += dt;
+    }
+    _tacticalContexts.clear();
+    for (final team in [blueTeam, redTeam]) {
+      final state = currentPlayState(team);
+      final shape = shapeKindFor(team, state);
+      _tacticalContexts[team.id] = _tacticalEngine.evaluate(
+        engine: this,
+        team: team,
+        playState: state,
+        shapeKind: shape,
+      );
+    }
+  }
+
+  /// The five game states (plan item 3): possession, attacking transition,
+  /// organised defence, defensive transition and pressing.
+  TeamPlayState currentPlayState(TeamGame team) {
+    final override = team.id == TeamId.blue
+        ? blueTacticalOverride
+        : redTacticalOverride;
+    final owner = ball.owner?.teamId;
+    if (owner == team.id) {
+      // Counter-press survived → quick vertical attack right after winning
+      // the ball (plan item 16: exploit the space before the opponent
+      // re-organises).
+      final justWon =
+          _previousPossessor != null && _previousPossessor != team.id;
+      final window = _attackingTransitionWindow(team);
+      if (justWon && possessionStateTimer < window && _spaceAheadFor(team)) {
+        return TeamPlayState.attackingTransition;
+      }
+      return TeamPlayState.possession;
+    }
+    if (owner != null) {
+      if (override == TeamMode.press) {
+        return TeamPlayState.pressing;
+      }
+      // Just lost the ball: the brief defensive transition in which the
+      // nearest players counter-press and the rest return to shape; if the
+      // press fails the team settles into the organised defence.
+      final justLost = _previousPossessor == team.id;
+      final window = _defensiveTransitionWindow(team);
+      if (justLost && possessionStateTimer < window) {
+        return TeamPlayState.defensiveTransition;
+      }
+      return TeamPlayState.organizedDefense;
+    }
+    // Loose ball: press it when it is inside the team's pressing trigger
+    // zone, otherwise hold the organised shape.
+    if (override == TeamMode.defense) {
+      return TeamPlayState.organizedDefense;
+    }
+    return _insidePressTrigger(team)
+        ? TeamPlayState.pressing
+        : TeamPlayState.organizedDefense;
+  }
+
+  double _attackingTransitionWindow(TeamGame team) {
+    final style = playStyleFor(team.id);
+    return 1.6 + style.tempoFactor * 1.1;
+  }
+
+  double _defensiveTransitionWindow(TeamGame team) {
+    final style = playStyleFor(team.id);
+    return 1.2 + style.counterPressIntensity * 2.2;
+  }
+
+  /// Is there space to run into ahead of [team]? Used to decide whether a
+  /// ball won deep becomes a fast attack or a build-up (plan item 16).
+  bool _spaceAheadFor(TeamGame team) {
+    final opponent = opponentOf(team);
+    final d = team.attackDirection;
+    final mostAdvanced = team.players
+        .where((player) => !player.isGoalkeeper && !player.isSentOff)
+        .fold<double>(0.0, (best, player) {
+      final advance = ((player.pos.x -
+                  (team.side == TeamSide.left
+                      ? GameConstants.leftBound
+                      : GameConstants.rightBound)) *
+              d /
+              GameConstants.pitchWidth)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      return math.max(best, advance);
+    });
+    var opponentsBehind = 0;
+    for (final player in opponent.players) {
+      if (player.isGoalkeeper || player.isSentOff) {
+        continue;
+      }
+      final advance = ((player.pos.x -
+                  (team.side == TeamSide.left
+                      ? GameConstants.leftBound
+                      : GameConstants.rightBound)) *
+              d /
+              GameConstants.pitchWidth)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      if (advance < mostAdvanced - 0.06) {
+        opponentsBehind++;
+      }
+    }
+    return opponentsBehind >= 2 ||
+        playStyleFor(team.id).tempoFactor >= 1.4;
+  }
+
+  bool _insidePressTrigger(TeamGame team) {
+    final style = playStyleFor(team.id);
+    final d = team.attackDirection;
+    final ownGoalX = team.side == TeamSide.left
+        ? GameConstants.leftBound
+        : GameConstants.rightBound;
+    final ballAdvance =
+        ((ball.pos.x - ownGoalX) * d / GameConstants.pitchWidth)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    // Higher pressing intensity moves the trigger line toward the halfway
+    // line; chasing a result also pushes the team up to win the ball
+    // (plan item 17).
+    final chasing = (team.score - opponentOf(team).score) < 0;
+    final trigger = 0.96 - style.pressingIntensity * 0.42 - (chasing ? 0.06 : 0.0);
+    return ballAdvance >= trigger.clamp(0.30, 0.95).toDouble();
+  }
+
+  /// Which formation shape the team currently expresses (plan items 4, 24):
+  /// the official formation never changes, its behaviour does.
+  TeamShapeKind shapeKindFor(TeamGame team, TeamPlayState state) =>
+      switch (state) {
+        TeamPlayState.possession => TeamShapeKind.attacking,
+        TeamPlayState.attackingTransition => TeamShapeKind.attacking,
+        TeamPlayState.organizedDefense => TeamShapeKind.defensive,
+        TeamPlayState.defensiveTransition => TeamShapeKind.transition,
+        TeamPlayState.pressing => TeamShapeKind.pressing,
+      };
+
+  /// The tactical context of the current tick (plan item 29). Rebuilt in
+  /// [_tickPlayStates]; falls back to a fresh evaluation when queried before
+  /// the first tick.
+  TacticalContext tacticalContextFor(TeamGame team) {
+    final cached = _tacticalContexts[team.id];
+    if (cached != null) {
+      return cached;
+    }
+    final state = currentPlayState(team);
+    final context = _tacticalEngine.evaluate(
+      engine: this,
+      team: team,
+      playState: state,
+      shapeKind: shapeKindFor(team, state),
+    );
+    _tacticalContexts[team.id] = context;
+    return context;
+  }
+
+  /// The x coordinate of the opponent's second-last defender — the offside
+  /// line the attackers play against (plan item 10).
+  double offsideLineFor(TeamGame attackingTeam) {
+    final defending = opponentOf(attackingTeam);
+    final d = attackingTeam.attackDirection;
+    final defenders = [...defending.players]
+      ..sort(
+        (a, b) => d == 1
+            ? b.pos.x.compareTo(a.pos.x)
+            : a.pos.x.compareTo(b.pos.x),
+      );
+    return defenders.length > 1 ? defenders[1].pos.x : defenders.first.pos.x;
+  }
+
   bool get lateCloseGamePressure {
     final closeScore = (blueTeam.score - redTeam.score).abs() <= 1;
     final lateRegulation =
@@ -485,6 +682,7 @@ class MatchEngine {
       player.minutesThisMatch += elapsedGameMinutes;
     }
     _trackPossession(dt);
+    _tickPlayStates(dt);
     _tickSetPieceAttack(dt);
     _checkPeriodEnd();
     _tickAiAutoControl(dt);
@@ -1308,7 +1506,7 @@ class MatchEngine {
       high: high,
       goalKick: goalKick,
     );
-    final PlayerGame? target =
+    final PlayerGame target =
         // Distribution always looks for a team-mate in the direction the
         // keeper is facing before it falls back to the nearest option.
         directionTarget ??
@@ -1327,8 +1525,6 @@ class MatchEngine {
                 team,
               ));
     final forward = Vec2(team.attackDirection.toDouble(), 0);
-    // The keeper plays the ball where he is actually looking.
-    final facingDirection = keeper.lastDirection.normalized(forward);
     ball.pos = keeper.pos +
         forward * (keeper.radius + GameConstants.ballRadius + 8);
     final clampedPower = power.clamp(0.72, goalKick ? 2.35 : 1.35).toDouble();
@@ -1341,7 +1537,7 @@ class MatchEngine {
         .toDouble();
     releaseFromPlayer(
       keeper,
-      target == null ? facingDirection : target.pos - ball.pos,
+      target.pos - ball.pos,
       kickPower,
       type: high ? KickType.highPass : KickType.pass,
       target: target,
@@ -2806,7 +3002,14 @@ class MatchEngine {
   ) {
     final shooter =
         ball.owner ??
-        shooting.players.firstWhere((p) => p.role == PlayerRole.striker);
+        shooting.players.firstWhere(
+          (p) => p.role == PlayerRole.striker,
+          // A striker-less system (4-6-0) still needs a penalty taker.
+          orElse: () => shooting.players.firstWhere(
+            (p) => !p.isSentOff && !p.isGoalkeeper,
+            orElse: () => shooting.players.first,
+          ),
+        );
     final goalX = shooting.side == TeamSide.left
         ? GameConstants.rightBound + 28
         : GameConstants.leftBound - 28;
@@ -5201,7 +5404,6 @@ class MatchEngine {
   }
 
   Vec2 _aiMovementTarget(TeamGame team, PlayerGame controlled, Vec2 ballPos) {
-    final difficulty = aiDifficulty;
     final style = playStyleFor(team.id);
 
     // If we have the ball, move towards opponent goal

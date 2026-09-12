@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../config/game_constants.dart';
+import '../enums/ai_play_style.dart';
 import '../enums/kick_type.dart';
 import '../enums/player_role.dart';
 import '../enums/ai_difficulty.dart';
@@ -607,8 +608,9 @@ class PlayerAi {
     final roleShotBias = switch (player.role) {
       PlayerRole.striker => 34.0,
       PlayerRole.leftWing || PlayerRole.rightWing => 22.0,
+      PlayerRole.attackingMidfielder => 22.0,
       PlayerRole.midfieldLeft || PlayerRole.midfieldRight => 17.0,
-      PlayerRole.sweeper => 8.0,
+      PlayerRole.sweeper || PlayerRole.defensiveMidfielder => 8.0,
       _ => -12.0,
     };
     final shotScore =
@@ -783,19 +785,25 @@ class PlayerAi {
         PlayerRole.striker ||
         PlayerRole.leftWing ||
         PlayerRole.rightWing => 132,
+        PlayerRole.attackingMidfielder => 112,
         PlayerRole.midfieldLeft || PlayerRole.midfieldRight => 96,
         // The back line joins the attack, but it stays a line: the push is
         // scaled by the team's playing style so a defensive team still
         // keeps its shape and the offside line stays sensible.
         PlayerRole.leftWingBack || PlayerRole.rightWingBack => 104,
+        PlayerRole.leftBack || PlayerRole.rightBack => 96,
         PlayerRole.sweeper => 96,
+        PlayerRole.defensiveMidfielder => 74,
         PlayerRole.centerBackLeft || PlayerRole.centerBackRight => 92,
         PlayerRole.goalkeeper => 0,
       },
       TeamMode.defense => switch (player.role) {
         PlayerRole.striker => -22,
         PlayerRole.leftWing || PlayerRole.rightWing => -58,
+        PlayerRole.attackingMidfielder => -66,
         PlayerRole.midfieldLeft || PlayerRole.midfieldRight => -78,
+        PlayerRole.defensiveMidfielder => -88,
+        PlayerRole.leftBack || PlayerRole.rightBack => -92,
         PlayerRole.leftWingBack || PlayerRole.rightWingBack => -96,
         PlayerRole.sweeper => -104,
         PlayerRole.centerBackLeft || PlayerRole.centerBackRight => -86,
@@ -804,8 +812,11 @@ class PlayerAi {
       TeamMode.press => switch (player.role) {
         PlayerRole.striker => 74,
         PlayerRole.leftWing || PlayerRole.rightWing => 62,
+        PlayerRole.attackingMidfielder => 46,
         PlayerRole.midfieldLeft || PlayerRole.midfieldRight => 40,
+        PlayerRole.defensiveMidfielder => 38,
         PlayerRole.leftWingBack || PlayerRole.rightWingBack => 34,
+        PlayerRole.leftBack || PlayerRole.rightBack => 32,
         PlayerRole.sweeper => 26,
         PlayerRole.centerBackLeft || PlayerRole.centerBackRight => 22,
         PlayerRole.goalkeeper => 0,
@@ -934,6 +945,40 @@ class PlayerAi {
         if (mode == TeamMode.attack) {
           base.x += d * 16;
         }
+      case PlayerRole.leftBack:
+        // A fullback holds a slightly deeper wide lane than a wing-back: he
+        // overlaps only when the team is really attacking.
+        base.y =
+            GameConstants.topBound +
+            GameConstants.pitchHeight * (mode == TeamMode.attack ? 0.20 : 0.27);
+        if (ball.pos.y < GameConstants.virtualHeight / 2) {
+          base.x += d * (mode == TeamMode.attack ? 36 : 0);
+        }
+      case PlayerRole.rightBack:
+        base.y =
+            GameConstants.topBound +
+            GameConstants.pitchHeight * (mode == TeamMode.attack ? 0.80 : 0.73);
+        if (ball.pos.y > GameConstants.virtualHeight / 2) {
+          base.x += d * (mode == TeamMode.attack ? 36 : 0);
+        }
+      case PlayerRole.defensiveMidfielder:
+        // The holding midfielder screens the space in front of the back
+        // line: central, always goal-side of the ball.
+        base.y =
+            GameConstants.virtualHeight / 2 +
+            (ballY - GameConstants.virtualHeight / 2) * 0.20;
+        if (mode == TeamMode.defense) {
+          base.x -= d * 18;
+        }
+      case PlayerRole.attackingMidfielder:
+        // The playmaker stays central and a line ahead of the midfielders so
+        // he is always available between the opponent's lines.
+        base.y =
+            GameConstants.virtualHeight / 2 +
+            (ballY - GameConstants.virtualHeight / 2) * 0.24;
+        if (mode == TeamMode.attack) {
+          base.x += d * 28;
+        }
       case PlayerRole.goalkeeper:
         break;
     }
@@ -967,12 +1012,16 @@ class PlayerAi {
       PlayerRole.striker => Vec2(goalMouthX, centerY),
       PlayerRole.leftWing => Vec2(goalMouthX - d * 18, centerY - 58),
       PlayerRole.rightWing => Vec2(goalMouthX - d * 18, centerY + 58),
+      PlayerRole.attackingMidfielder => Vec2(goalMouthX - d * 58, centerY),
       PlayerRole.midfieldLeft => Vec2(goalMouthX - d * 58, centerY - 26),
       PlayerRole.midfieldRight => Vec2(goalMouthX - d * 58, centerY + 26),
       PlayerRole.leftWingBack => Vec2(goalMouthX - d * 98, centerY - 92),
       PlayerRole.rightWingBack => Vec2(goalMouthX - d * 98, centerY + 92),
+      PlayerRole.leftBack => Vec2(goalMouthX - d * 108, centerY - 86),
+      PlayerRole.rightBack => Vec2(goalMouthX - d * 108, centerY + 86),
       PlayerRole.centerBackLeft => Vec2(goalMouthX - d * 118, centerY - 46),
       PlayerRole.centerBackRight => Vec2(goalMouthX - d * 118, centerY + 46),
+      PlayerRole.defensiveMidfielder => Vec2(goalMouthX - d * 128, centerY),
       PlayerRole.sweeper => Vec2(goalMouthX - d * 136, centerY),
       PlayerRole.goalkeeper => player.homePos.copy(),
     };
